@@ -62,9 +62,69 @@ jobs:
           name: test-results-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/*.xml
           if-no-files-found: error
-  release:
+  report:
     needs: verify
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/living-proof-labs/livingproof-capability-report:1.0.0
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: portable-results-${{ github.event.pull_request.head.sha || github.sha }}
+          path: bundle
+      - name: Validate and grade portable capability evidence
+        run: |
+          livingproof-capability-report --version
+          livingproof-capability-report validate bundle/manifest.json
+          mkdir reports
+          livingproof-capability-report grade bundle/manifest.json -o reports/report.json
+          livingproof-capability-report render reports/report.json --format html -o reports/report.html
+          livingproof-capability-report render reports/report.json --format csv -o reports/report.csv
+          (cd reports && sha256sum report.* > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        id: reports
+        with:
+          name: capability-reports-${{ github.event.pull_request.head.sha || github.sha }}
+          path: reports/
+          if-no-files-found: error
+      - name: Capability decisions and downloadable reports
+        env:
+          REPORT_URL: ${{ steps.reports.outputs.artifact-url }}
+        run: |
+          python - <<'PYCODE'
+          import html, json, os
+          report = json.load(open("reports/report.json"))
+          results = {r["id"]: r for r in report["source_bundle"]["results"]}
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as stream:
+              stream.write("## Capability decisions\n\n")
+              stream.write("Fixture demonstration, not robot safety certification. JUnit above records expectation tests separately.\n\n")
+              stream.write("[Download offline HTML, lossless JSON and flattened CSV](" + os.environ["REPORT_URL"] + ")\n\n")
+              stream.write("<table><tr><th>Result</th><th>Contract revision</th><th>Fixture version</th><th>Grade</th></tr>")
+              for decision in report["decisions"]:
+                  result = results[decision["result_id"]]
+                  values = [result["id"], result["spec"]["revision"], result["system"]["version"], decision["status"]]
+                  stream.write("<tr>" + "".join("<td>" + html.escape(v) + "</td>" for v in values) + "</tr>")
+              stream.write("</table>\n")
+          PYCODE
+  release:
+    needs: [verify, report]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
     uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@v2.0.3
+  release-reports:
+    needs: [report, release]
+    if: needs.release.outputs.published == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: capability-reports-${{ github.sha }}
+          path: reports
+      - name: Attach the verified reports to this producer release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release.outputs.git-tag }}
+        run: gh release upload "$RELEASE_TAG" reports/report.* reports/SHA256SUMS --repo "$GITHUB_REPOSITORY"

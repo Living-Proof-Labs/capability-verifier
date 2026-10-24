@@ -123,3 +123,17 @@ Fixture set 1.0.0 retains 120 ms pass, mandatory failure and missing-time exampl
 Fixture set 2.0.0 adds a genuinely different 300 ms observation: PASS under the old
 contract, FAIL under the strict contract. Environments and revisions remain explicit.
 JUnit still reports whether tests matched expectations, not a capability grade.
+
+The dedicated `report` job consumes
+[Living Proof Labs capability report v1.0.0](https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/tag/v1.0.0)
+as its versioned job-container image. It downloads the portable bundle, invokes
+the installed reporting command, and attaches offline HTML, lossless JSON and
+flattened CSV. The run summary shows each capability decision and an artifact
+link; JUnit above continues to show expectation-test results separately. The job
+has no reporter source checkout, pip installation, Task or Docker-in-Docker.
+GitHub Actions manages the job container startup and runs steps through a shell;
+normal Docker usage keeps the reporting command as the convenience entrypoint.
+
+On a published producer release, the same verified report files and their SHA-256
+checksums are attached as public release assets. This provides stable, versioned
+downloads in addition to the workflow artifacts.
