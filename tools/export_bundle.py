@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -73,7 +74,10 @@ def export(destination):
                     "original_result": original,
                 }
             )
-    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    commit = (
+        os.environ.get("SOURCE_COMMIT")
+        or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    )
     bundle = {
         "schema_version": "1.0.0",
         "producer": {"id": "capability-verifier", "version": "1.1.0", "commit": commit},

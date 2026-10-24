@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 version: '3'
+env:
+  SOURCE_COMMIT:
+    sh: git rev-parse HEAD
 tasks:
   setup:
     cmds:
