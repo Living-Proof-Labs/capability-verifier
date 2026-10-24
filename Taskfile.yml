@@ -17,3 +17,7 @@ tasks:
     desc: Build the runtime and execute the fixture hello-world
     cmds:
       - docker compose run --build --rm verifier demo
+  bundle:
+    desc: Export portable result bundles through the prepared runtime
+    cmds:
+      - docker compose run --build --rm verifier bundle

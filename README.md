@@ -107,3 +107,19 @@ copyright Living Proof Labs contributors, from the immutable catalog version
 linked above, unmodified. See that catalog's license scope and
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). This attribution does not
 imply endorsement or certification.
+
+## Portable reporting input
+
+`task bundle` creates `artifacts/bundle/manifest.json` and relative evidence files.
+Copy the complete directory to a reporter; consumers do not need this repository.
+The version 1.0.0 manifest preserves the original verifier result, assessments,
+evidence hashes and provenance. Mock-agent and recorded human fixtures are labeled;
+no model or live human review is implied. Existing output is never overwritten.
+
+The compatibility matrix uses catalog [v1.1.1](https://github.com/Living-Proof-Labs/robot-capability-specs/tree/v1.1.1)
+(pause revision 1.0.0, 500 ms) and [v1.2.0](https://github.com/Living-Proof-Labs/robot-capability-specs/tree/v1.2.0)
+(pause revision 2.0.0, 250 ms). `reporting-specs.lock.json` records their commits.
+Fixture set 1.0.0 retains 120 ms pass, mandatory failure and missing-time examples.
+Fixture set 2.0.0 adds a genuinely different 300 ms observation: PASS under the old
+contract, FAIL under the strict contract. Environments and revisions remain explicit.
+JUnit still reports whether tests matched expectations, not a capability grade.

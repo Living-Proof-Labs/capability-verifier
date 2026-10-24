@@ -27,3 +27,7 @@ tasks:
     cmds:
       - task: check
       - task: test
+  bundle:
+    desc: Export portable results for both released contract revisions
+    cmds:
+      - uv run --locked --no-sync python tools/export_bundle.py artifacts/bundle
