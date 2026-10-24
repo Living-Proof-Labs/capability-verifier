@@ -80,6 +80,7 @@ jobs:
           livingproof-capability-report grade bundle/manifest.json -o reports/report.json
           livingproof-capability-report render reports/report.json --format html -o reports/report.html
           livingproof-capability-report render reports/report.json --format csv -o reports/report.csv
+          (cd reports && sha256sum report.* > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         id: reports
         with:
@@ -111,3 +112,19 @@ jobs:
     permissions:
       contents: write
     uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@v2.0.3
+  release-reports:
+    needs: [report, release]
+    if: needs.release.outputs.published == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: capability-reports-${{ github.sha }}
+          path: reports
+      - name: Attach the verified reports to this producer release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release.outputs.git-tag }}
+        run: gh release upload "$RELEASE_TAG" reports/report.* reports/SHA256SUMS --repo "$GITHUB_REPOSITORY"

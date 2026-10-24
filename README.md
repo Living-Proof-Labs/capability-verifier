@@ -133,3 +133,7 @@ link; JUnit above continues to show expectation-test results separately. The job
 has no reporter source checkout, pip installation, Task or Docker-in-Docker.
 GitHub Actions manages the job container startup and runs steps through a shell;
 normal Docker usage keeps the reporting command as the convenience entrypoint.
+
+On a published producer release, the same verified report files and their SHA-256
+checksums are attached as public release assets. This provides stable, versioned
+downloads in addition to the workflow artifacts.
