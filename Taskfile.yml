@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+version: '3'
+tasks:
+  setup:
+    cmds:
+      - docker compose build verifier
+  check:
+    cmds:
+      - docker compose run --build --rm verifier check
+  test:
+    cmds:
+      - docker compose run --build --rm verifier test
+  verify:
+    cmds:
+      - docker compose run --build --rm verifier verify
+  demo:
+    desc: Build the runtime and execute the fixture hello-world
+    cmds:
+      - docker compose run --build --rm verifier demo

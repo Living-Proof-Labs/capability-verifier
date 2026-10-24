@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+# Adapted from collaboration-guidelines/templates/python/Taskfile.yml at v2.0.3.
+version: '3'
+env:
+  UV_PYTHON_DOWNLOADS: never
+  PYTHONPATH: src
+tasks:
+  setup:
+    cmds:
+      - uv sync --locked --no-python-downloads
+      - task: specs:fetch
+  specs:fetch:
+    cmds:
+      - python tools/fetch_specs.py
+  check:
+    cmds:
+      - uv run --locked --no-sync ruff check .
+      - uv run --locked --no-sync ruff format --check .
+  test:
+    cmds:
+      - uv run --locked --no-sync pytest -v --junitxml=artifacts/results.xml
+  demo:
+    desc: Run released Gherkin examples and show retained verification reports
+    cmds:
+      - uv run --locked --no-sync pytest tests/test_reference.py -v -s --junitxml=artifacts/demo.xml
+  verify:
+    cmds:
+      - task: check
+      - task: test
