@@ -5,7 +5,20 @@ multiple evaluators, then apply an explicit grading policy. This is a determinis
 fixture demonstration, **not robot safety certification**. No robot, simulator,
 AI service, dashboard or server is required.
 
-From this checkout, with Docker Compose and Task 3.54.0 installed:
+Install [Git](https://git-scm.com/downloads),
+[Docker with Compose v2](https://docs.docker.com/compose/install/), and
+[Task 3.54.0](https://taskfile.dev/docs/installation), then start Docker.
+Host Python, uv and Node.js are not needed; the Dockerfile supplies the runtime.
+
+To run the known-good released demo from a fresh directory:
+
+```sh
+git clone --branch v1.0.1 https://github.com/Living-Proof-Labs/capability-verifier.git
+cd capability-verifier
+task demo
+```
+
+If you already have a checkout:
 
 ```sh
 task demo
@@ -29,7 +42,7 @@ verification result fails pytest and CI. `artifacts/demo.xml` retains each full
 report as a JUnit property, alongside separate expected/actual capability statuses; console output includes reports and individual tests.
 `task verify` runs static checks plus the complete test suite and writes
 `artifacts/results.xml`. Hosted CI uses these same commands and uploads JUnit;
-open the **Verify and release** run's **Summary** for the expanded test results and
+open [**Verify and release**](https://github.com/Living-Proof-Labs/capability-verifier/actions/workflows/verify.yml), choose a run, and open its **Summary** for the expanded test results and
 fixture verdict table, or the **Verification expectation tests** check for individual
 cases and failure annotations. The full suite includes the five fixture expectation
 tests; the demo reruns those same five, rather than adding five independent tests.
@@ -37,6 +50,13 @@ Raw XML remains downloadable as an artifact. Reporting also runs after test fail
 and never changes a failing test exit into success. Fork PRs receive the run summary
 but cannot create the additional check with their read-only token. No separate UI
 service is required.
+
+For a result you can view immediately, the
+[v1.0.1 test report](https://github.com/Living-Proof-Labs/capability-verifier/runs/120847135184)
+shows **26 passed, 0 failed, 0 skipped**. Its
+[run summary](https://github.com/Living-Proof-Labs/capability-verifier/actions/runs/40085341763)
+contains the fixture expected/actual verdict table; GitHub may require sign-in for
+run summaries and downloadable artifacts. The test-report page is publicly readable.
 
 The runner only collects JSON and hashes the evidence. A mandatory deterministic
 pause evaluator checks observations. The mock AI evaluator reads a clearly
