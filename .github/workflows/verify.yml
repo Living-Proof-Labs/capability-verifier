@@ -8,6 +8,9 @@ permissions:
   contents: read
 jobs:
   verify:
+    permissions:
+      contents: read
+      checks: write # Only for the test-report check; fork PR tokens remain read-only.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,6 +22,34 @@ jobs:
           version: '3.54.0'
       - run: task verify
       - run: task demo
+        if: ${{ !cancelled() }}
+      - name: Fixture capability verdicts (not robot certification)
+        if: ${{ !cancelled() }}
+        run: python tools/report_summary.py >> "$GITHUB_STEP_SUMMARY"
+      - name: Test results in run summary
+        if: ${{ !cancelled() }}
+        uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3.2.0
+        with:
+          name: Verification expectation tests
+          path: artifacts/results.xml
+          reporter: python-xunit
+          report-title: Verification tests — passing expectations are not capability certification
+          use-actions-summary: 'true'
+          collapsed: never
+          fail-on-error: 'true'
+          fail-on-empty: 'true'
+      - name: Test results check and failure annotations
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3.2.0
+        with:
+          name: Verification expectation tests
+          path: artifacts/results.xml
+          reporter: python-xunit
+          report-title: Verification tests — passing expectations are not capability certification
+          use-actions-summary: 'false'
+          collapsed: never
+          fail-on-error: 'true'
+          fail-on-empty: 'true'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
