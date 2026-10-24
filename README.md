@@ -29,7 +29,14 @@ verification result fails pytest and CI. `artifacts/demo.xml` retains each full
 report as a JUnit property, alongside separate expected/actual capability statuses; console output includes reports and individual tests.
 `task verify` runs static checks plus the complete test suite and writes
 `artifacts/results.xml`. Hosted CI uses these same commands and uploads JUnit;
-its logs and test artifact are the report, with no separate UI service.
+open the **Verify and release** run's **Summary** for the expanded test results and
+fixture verdict table, or the **Verification expectation tests** check for individual
+cases and failure annotations. The full suite includes the five fixture expectation
+tests; the demo reruns those same five, rather than adding five independent tests.
+Raw XML remains downloadable as an artifact. Reporting also runs after test failure,
+and never changes a failing test exit into success. Fork PRs receive the run summary
+but cannot create the additional check with their read-only token. No separate UI
+service is required.
 
 The runner only collects JSON and hashes the evidence. A mandatory deterministic
 pause evaluator checks observations. The mock AI evaluator reads a clearly
