@@ -1,0 +1,14 @@
+[
+  {
+    "repository": "https://github.com/Living-Proof-Labs/robot-capability-specs",
+    "tag": "v1.1.1",
+    "commit": "60b7572df9f5e5c5ab5757a0b4674da16de2b0df",
+    "revision": "1.0.0"
+  },
+  {
+    "repository": "https://github.com/Living-Proof-Labs/robot-capability-specs",
+    "tag": "v1.2.0",
+    "commit": "f06c4a17a55d649ff78961c7391f90e34fab929d",
+    "revision": "2.0.0"
+  }
+]

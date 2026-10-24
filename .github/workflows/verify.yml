@@ -21,6 +21,12 @@ jobs:
         with:
           version: '3.54.0'
       - run: task verify
+      - run: task bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portable-results-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/bundle/
+          if-no-files-found: error
       - run: task demo
         if: ${{ !cancelled() }}
       - name: Fixture capability verdicts (not robot certification)

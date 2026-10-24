@@ -1,0 +1,16 @@
+{
+  "requested": "paused",
+  "observed": "paused",
+  "elapsed_ms": 300,
+  "motion_inhibited": true,
+  "assessments": {
+    "mock-ai": {
+      "status": "PASS",
+      "rationale": "Scripted state agreement; timing assessed by deterministic rules"
+    },
+    "human-fixture": {
+      "status": "PASS",
+      "rationale": "Recorded state agreement, not a timing override"
+    }
+  }
+}
