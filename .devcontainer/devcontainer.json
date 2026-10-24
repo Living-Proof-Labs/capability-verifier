@@ -1,0 +1,7 @@
+{
+  "name": "Capability verifier runtime",
+  "build": {"dockerfile": "../Dockerfile", "context": ".."},
+  "overrideCommand": true,
+  "postCreateCommand": "task -t Taskfile.runtime.yml setup",
+  "customizations": {"vscode": {"extensions": ["ms-python.python"]}}
+}
