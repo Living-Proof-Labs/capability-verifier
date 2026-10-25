@@ -125,7 +125,7 @@ contract, FAIL under the strict contract. Environments and revisions remain expl
 JUnit still reports whether tests matched expectations, not a capability grade.
 
 The dedicated `report` job consumes
-[Living Proof Labs capability report v1.0.0](https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/tag/v1.0.0)
+[Living Proof Labs capability report v1.3.0](https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/tag/v1.3.0)
 as its versioned job-container image. It downloads the portable bundle, invokes
 the installed reporting command, and attaches offline HTML, lossless JSON and
 flattened CSV. The run summary shows each capability decision and an artifact
@@ -137,3 +137,10 @@ normal Docker usage keeps the reporting command as the convenience entrypoint.
 On a published producer release, the same verified report files and their SHA-256
 checksums are attached as public release assets. This provides stable, versioned
 downloads in addition to the workflow artifacts.
+
+The report job runs the same released multi-architecture image on native AMD64
+and ARM64 GitHub runners. It checks the changed slow-fixture verdict across the
+two released specification revisions and preserves insufficient evidence. Each
+job uploads its own reports; producer releases attach the verified AMD64 outputs,
+including a plain terminal table, before publishing the immutable release. This
+uses the optional draft assembly in collaboration-guidelines v2.2.0.
