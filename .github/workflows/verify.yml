@@ -64,9 +64,17 @@ jobs:
           if-no-files-found: error
   report:
     needs: verify
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     container:
-      image: ghcr.io/living-proof-labs/livingproof-capability-report:1.0.0
+      image: ghcr.io/living-proof-labs/livingproof-capability-report:1.3.0
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -80,11 +88,22 @@ jobs:
           livingproof-capability-report grade bundle/manifest.json -o reports/report.json
           livingproof-capability-report render reports/report.json --format html -o reports/report.html
           livingproof-capability-report render reports/report.json --format csv -o reports/report.csv
+          livingproof-capability-report render reports/report.json > reports/report.txt
+          grep -q 'Separate contexts' reports/report.txt
+          python - <<'PYCODE'
+          import json
+          report = json.load(open("reports/report.json"))
+          decisions = {d["result_id"]: d["status"] for d in report["decisions"]}
+          assert len(decisions) == 8
+          assert decisions["v1.1.1-slow"] == "PASS"
+          assert decisions["v1.2.0-slow"] == "FAIL"
+          assert decisions["v1.2.0-insufficient"] == "INSUFFICIENT_EVIDENCE"
+          PYCODE
           (cd reports && sha256sum report.* > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         id: reports
         with:
-          name: capability-reports-${{ github.event.pull_request.head.sha || github.sha }}
+          name: capability-reports-${{ matrix.architecture }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: reports/
           if-no-files-found: error
       - name: Capability decisions and downloadable reports
@@ -111,20 +130,25 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
-    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@v2.0.3
+    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@v2.2.0
+    with:
+      draft-release: true
   release-reports:
     needs: [report, release]
-    if: needs.release.outputs.published == 'true'
+    if: needs.release.outputs.draft-created == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: capability-reports-${{ github.sha }}
+          name: capability-reports-amd64-${{ github.sha }}
           path: reports
       - name: Attach the verified reports to this producer release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.release.outputs.git-tag }}
-        run: gh release upload "$RELEASE_TAG" reports/report.* reports/SHA256SUMS --repo "$GITHUB_REPOSITORY"
+        run: |
+          (cd reports && sha256sum -c SHA256SUMS)
+          gh release upload "$RELEASE_TAG" reports/report.* reports/SHA256SUMS --repo "$GITHUB_REPOSITORY"
+          gh release edit "$RELEASE_TAG" --draft=false --repo "$GITHUB_REPOSITORY"
