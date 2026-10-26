@@ -125,7 +125,7 @@ contract, FAIL under the strict contract. Environments and revisions remain expl
 JUnit still reports whether tests matched expectations, not a capability grade.
 
 The dedicated `report` job consumes
-[Living Proof Labs capability report v1.3.0](https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/tag/v1.3.0)
+[Living Proof Labs capability report v1.5.0](https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/tag/v1.5.0)
 as its versioned job-container image. It downloads the portable bundle, invokes
 the installed reporting command, and attaches offline HTML, lossless JSON and
 flattened CSV. The run summary shows each capability decision and an artifact
@@ -183,18 +183,15 @@ coordinates into a single grade.
 The adapter itself is an **unreleased feature-branch preview**, identified by the
 producer commit. The exception ends when its reviewed release is published; no
 future tag is claimed. Its source dependencies are already published releases.
-The original `task bundle` and installed reporter integration remain unchanged.
-Released reporter 1.4.0 can validate this additive shape but does not yet interpret
-execution compatibility; do not claim its grade of this matrix is authoritative.
-The reporter worker's coordinated compatibility support is required before matrix
-grading integration can be accepted. No reporter code is vendored or changed here.
+The original `task bundle` remains available. Both installed reporter integrations
+now consume released reporter v1.5.0, which supports execution compatibility.
+No reporter code is vendored or changed here.
 
-Once a compatible reporter image is available, run
-`REPORTER_IMAGE=<explicit-versioned-image> task matrix:report`. This uses only its
-installed command, validates and renders the matrix, and asserts all four expected
-decisions plus the controls. It intentionally fails for an incompatible old
-reporter; no successful grading claim is made until this passes. A locally built
-reporter preview must name its exact source commit and the temporary exception.
+Run `task matrix:report` to consume
+`ghcr.io/living-proof-labs/livingproof-capability-report:1.5.0`. This uses only its
+installed command, validates and renders the matrix under both policies, and
+asserts all four expected decisions plus the controls across JSON, HTML, CSV and
+terminal output. CI runs this same task and uploads the rendered outputs.
 Output is retained under `artifacts/matrix-report`; existing output is not replaced.
 
 Builds behind an existing provider trust bundle can set `HOST_BUILD_CA_FILE` to

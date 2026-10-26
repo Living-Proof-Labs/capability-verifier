@@ -23,6 +23,16 @@ jobs:
       - run: task verify
       - run: task matrix
         if: ${{ !cancelled() }}
+      - name: Verify matrix with released reporter 1.5.0
+        run: task matrix:report
+      - name: Retain installed reporter matrix outputs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: execution-matrix-reports-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/matrix-report/
+          retention-days: 14
+          if-no-files-found: error
       - name: Released execution matrix
         if: ${{ !cancelled() }}
         run: cat artifacts/matrix/summary.md >> "$GITHUB_STEP_SUMMARY"
@@ -86,7 +96,7 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     container:
-      image: ghcr.io/living-proof-labs/livingproof-capability-report:1.3.0
+      image: ghcr.io/living-proof-labs/livingproof-capability-report:1.5.0
     steps:
       - uses: actions/download-artifact@v4
         with:
