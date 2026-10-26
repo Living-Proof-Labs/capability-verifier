@@ -9,6 +9,7 @@ tasks:
     cmds:
       - uv sync --locked --no-python-downloads
       - task: specs:fetch
+      - task: matrix:fetch
   specs:fetch:
     cmds:
       - python tools/fetch_specs.py
@@ -31,3 +32,10 @@ tasks:
     desc: Export portable results for both released contract revisions
     cmds:
       - uv run --locked --no-sync python tools/export_bundle.py artifacts/bundle
+  matrix:fetch:
+    cmds:
+      - python tools/matrix_sources.py
+  matrix:
+    desc: Run released executor/spec combinations and retain portable evidence
+    cmds:
+      - uv run --locked --no-sync python tools/export_matrix.py artifacts/matrix

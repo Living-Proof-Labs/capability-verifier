@@ -21,6 +21,18 @@ jobs:
         with:
           version: '3.54.0'
       - run: task verify
+      - run: task matrix
+        if: ${{ !cancelled() }}
+      - name: Released execution matrix
+        if: ${{ !cancelled() }}
+        run: cat artifacts/matrix/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: execution-matrix-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/matrix/
+          retention-days: 14
+          if-no-files-found: error
       - run: task bundle
       - uses: actions/upload-artifact@v4
         with:

@@ -3,7 +3,12 @@ services:
   verifier:
     build:
       context: .
+      secrets:
+        - ca
       args:
         SOURCE_COMMIT: ${SOURCE_COMMIT:?Run through Task to record the source commit}
     volumes:
       - ./artifacts:/app/artifacts
+secrets:
+  ca:
+    file: ${HOST_BUILD_CA_FILE:-/dev/null}

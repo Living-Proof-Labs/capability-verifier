@@ -24,3 +24,11 @@ tasks:
     desc: Export portable result bundles through the prepared runtime
     cmds:
       - docker compose run --build --rm verifier bundle
+  matrix:
+    desc: Export four released execution coordinates plus separate evidence controls
+    cmds:
+      - docker compose run --build --rm verifier matrix
+  matrix:report:
+    desc: Check a versioned installed reporter image against the matrix and controls
+    cmds:
+      - bash tools/matrix_report.sh

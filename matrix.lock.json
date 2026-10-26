@@ -1,0 +1,20 @@
+{
+  "executors": [
+    {
+      "repository": "https://github.com/Living-Proof-Labs/capability-verifier",
+      "tag": "v1.0.1",
+      "commit": "0b23e8226f333152f137c04f3129dcc97ab7f761",
+      "fixture_version": "1.0.0",
+      "fixture": "pass",
+      "revisions": ["1.0.0"]
+    },
+    {
+      "repository": "https://github.com/Living-Proof-Labs/capability-verifier",
+      "tag": "v1.1.0",
+      "commit": "c590b05e647ae734f9cfa1b59d7e70ca66169eaa",
+      "fixture_version": "2.0.0",
+      "fixture": "slow",
+      "revisions": ["1.0.0", "2.0.0"]
+    }
+  ]
+}
