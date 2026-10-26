@@ -125,12 +125,13 @@ contract, FAIL under the strict contract. Environments and revisions remain expl
 JUnit still reports whether tests matched expectations, not a capability grade.
 
 The dedicated `report` job consumes
-[Living Proof Labs capability report v1.5.0](https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/tag/v1.5.0)
+[Living Proof Labs capability report v1.6.0](https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/tag/v1.6.0)
 as its versioned job-container image. It downloads the portable bundle, invokes
 the installed reporting command, and attaches offline HTML, lossless JSON and
 flattened CSV. The run summary shows each capability decision and an artifact
 link; JUnit above continues to show expectation-test results separately. The job
-has no reporter source checkout, pip installation, Task or Docker-in-Docker.
+uses Task for repository test orchestration, with no reporter source checkout,
+pip installation or Docker-in-Docker.
 GitHub Actions manages the job container startup and runs steps through a shell;
 normal Docker usage keeps the reporting command as the convenience entrypoint.
 
@@ -184,11 +185,11 @@ The adapter itself is an **unreleased feature-branch preview**, identified by th
 producer commit. The exception ends when its reviewed release is published; no
 future tag is claimed. Its source dependencies are already published releases.
 The original `task bundle` remains available. Both installed reporter integrations
-now consume released reporter v1.5.0, which supports execution compatibility.
+now consume released reporter v1.6.0, which supports execution compatibility.
 No reporter code is vendored or changed here.
 
 Run `task matrix:report` to consume
-`ghcr.io/living-proof-labs/livingproof-capability-report:1.5.0`. This uses only its
+`ghcr.io/living-proof-labs/livingproof-capability-report:1.6.0`. This uses only its
 installed command, validates and renders the matrix under both policies, and
 asserts all four expected decisions plus the controls across JSON, HTML, CSV and
 terminal output. CI runs this same task and uploads the rendered outputs.
