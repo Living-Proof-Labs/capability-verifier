@@ -1,5 +1,10 @@
 # Released matrix integration validation
 
+This records the historical v1.2.0 implementation verification with reporter 1.5.0.
+The portable demonstration work in [PR #10](https://github.com/Living-Proof-Labs/capability-verifier/pull/10)
+adopts reporter 1.6.0 and records its current verification separately; the evidence
+and pending-state observations below describe the earlier work.
+
 The matrix inputs are released catalogs v1.1.1/v1.2.0 and released verifier
 executors v1.0.1/v1.1.0. Their commits are locked in the repository. No new spec
 semantics or future tag is assumed. Shared guidance v4.1.0 resolves to

@@ -125,12 +125,13 @@ contract, FAIL under the strict contract. Environments and revisions remain expl
 JUnit still reports whether tests matched expectations, not a capability grade.
 
 The dedicated `report` job consumes
-[Living Proof Labs capability report v1.5.0](https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/tag/v1.5.0)
+[Living Proof Labs capability report v1.6.0](https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/tag/v1.6.0)
 as its versioned job-container image. It downloads the portable bundle, invokes
 the installed reporting command, and attaches offline HTML, lossless JSON and
 flattened CSV. The run summary shows each capability decision and an artifact
 link; JUnit above continues to show expectation-test results separately. The job
-has no reporter source checkout, pip installation, Task or Docker-in-Docker.
+uses Task for repository test orchestration, with no reporter source checkout,
+pip installation or Docker-in-Docker.
 GitHub Actions manages the job container startup and runs steps through a shell;
 normal Docker usage keeps the reporting command as the convenience entrypoint.
 
@@ -180,15 +181,15 @@ produces INSUFFICIENT_EVIDENCE in the separate controls; mandatory failure remai
 FAIL. Incompatible execution has no fabricated assessments. Never combine these
 coordinates into a single grade.
 
-The adapter itself is an **unreleased feature-branch preview**, identified by the
-producer commit. The exception ends when its reviewed release is published; no
-future tag is claimed. Its source dependencies are already published releases.
+The matrix adapter was published in [verifier v1.2.0](https://github.com/Living-Proof-Labs/capability-verifier/releases/tag/v1.2.0).
+Its producer commit identifies the source used for each execution; its source
+dependencies are also pinned to published releases.
 The original `task bundle` remains available. Both installed reporter integrations
-now consume released reporter v1.5.0, which supports execution compatibility.
+now consume released reporter v1.6.0, which supports execution compatibility.
 No reporter code is vendored or changed here.
 
 Run `task matrix:report` to consume
-`ghcr.io/living-proof-labs/livingproof-capability-report:1.5.0`. This uses only its
+`ghcr.io/living-proof-labs/livingproof-capability-report:1.6.0`. This uses only its
 installed command, validates and renders the matrix under both policies, and
 asserts all four expected decisions plus the controls across JSON, HTML, CSV and
 terminal output. CI runs this same task and uploads the rendered outputs.
@@ -203,3 +204,51 @@ declaration is emitted only for `INCOMPATIBLE` execution. Compatible records omi
 it and carry actual assessments; the reporter performs its normal supported-input
 checks. The matrix summary displays COMPATIBLE only after the adapter executes the
 released supported pair. Presence of valid evidence alone never asserts support.
+
+## Download and reproduce demonstration runs
+
+Run `task demo:runs` from a fresh checkout to produce `artifacts/demo-runs/`.
+The generated `CATALOG.md` maps five named ZIPs to their input manifests and
+explains the differences: baseline pass, strict timing failure, mandatory failure,
+missing measurement and the existing four-coordinate compatibility matrix.
+All observations, mock-agent conclusions and recorded human assessments are
+fixtures. No robot, simulator, model call or live human review is implied.
+
+Each ZIP is independently portable: `manifest.json`, its `evidence/` files,
+`report.json`, `report.html`, `report.csv`, `report.txt`, `provenance.json`,
+`SHA256SUMS` and a regeneration README. Extract each into a separate directory.
+Use installed **livingproof-capability-report 1.6.0**, or its versioned container,
+to validate the manifest, grade it and render the saved report. Evidence paths
+are relative to the manifest. HTML works offline; JSON retains the entire
+manifest and decisions; CSV and text are presentation formats. These are the
+reporter's existing schema 1.0.0 inputs and outputs, not a new interchange format.
+Your CI supplies its own manifests, observations and assessments to the same
+reporter commands; this verifier supplies illustrative recorded fixtures.
+
+Names follow `capability-verifier-<version>-<demo>-<bundle UUID>-<architecture>-<CI run>-<attempt>.zip`.
+Local/PR builds use an observed Git tag/distance/commit (and dirty marker when
+applicable), not an invented release number. New release attachments use the
+actual semantic-release tag; provenance retains the tested source identity and
+commit. Historical spec, executor, fixture and adapter versions in the manifest
+are unchanged. The matrix adapter's producer version identifies its export
+contract, not the version of the release distributing it.
+
+`collection_id` identifies one demo execution batch; `bundle_run_id` identifies
+one selected demonstration, and each result's `execution_id` identifies its
+capability execution. A shared result has the same execution ID across related
+manifests. Repeating execution creates new UUIDs. Repackaging preserves those
+UUIDs; CI run and attempt are separate provenance and filename components.
+The catalog does not average different spec/software versions into a grade.
+
+New releases attach five grouped ZIPs, `CATALOG.md` and `BUNDLE-SHA256SUMS`.
+Generic `report.*` and `SHA256SUMS` remain deprecated compatibility assets for
+existing consumers; they describe the older combined fixture export, not the
+new demo catalog. Published releases, including v1.2.0, are not rewritten.
+
+`task verify` tests identities, archive path safety and integrity. `task demo:runs`
+tests extraction and byte-identical report regeneration with the released image.
+CI repeats consumption on native AMD64 and ARM64 and publishes individual JUnit
+cases in run summaries; the verification check includes archive tests. Raw reports
+and bundles are retained for 14 days. Failed expectation tests fail CI even when
+the expected capability outcome is FAIL or INSUFFICIENT_EVIDENCE. Output directories
+must be new; move prior artifacts aside before repeating a local export.
