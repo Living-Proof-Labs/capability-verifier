@@ -3,7 +3,7 @@
   "producer": {
     "id": "capability-verifier-matrix",
     "version": "1.0.0",
-    "commit": "ecfd808635500097c04fc46dafb4a4df33e0dc6f"
+    "commit": "e40fd57e1c365c434e36941ecbc33ddc41984d8b"
   },
   "provenance": {
     "preview": true,
@@ -85,7 +85,7 @@
         }
       ],
       "provenance": {
-        "run_id": "a8cb594b-f0cc-4bef-8f44-f392a22017d9",
+        "run_id": "f602b30a-49a2-411d-96a7-22883f376a74",
         "role": "control",
         "fixture": {
           "id": "pause-fixtures",
@@ -105,11 +105,6 @@
         "runtime": {
           "id": "CPython",
           "version": "3.12.12"
-        },
-        "compatibility": {
-          "status": "COMPATIBLE",
-          "scope": "execution",
-          "reason": "Released executor implements selected revision"
         },
         "evidence_state": {
           "observation": "verified"
@@ -247,7 +242,7 @@
         }
       ],
       "provenance": {
-        "run_id": "a8cb594b-f0cc-4bef-8f44-f392a22017d9",
+        "run_id": "f602b30a-49a2-411d-96a7-22883f376a74",
         "role": "control",
         "fixture": {
           "id": "pause-fixtures",
@@ -267,11 +262,6 @@
         "runtime": {
           "id": "CPython",
           "version": "3.12.12"
-        },
-        "compatibility": {
-          "status": "COMPATIBLE",
-          "scope": "execution",
-          "reason": "Released executor implements selected revision"
         },
         "evidence_state": {
           "observation": "verified"
@@ -409,7 +399,7 @@
         }
       ],
       "provenance": {
-        "run_id": "a8cb594b-f0cc-4bef-8f44-f392a22017d9",
+        "run_id": "f602b30a-49a2-411d-96a7-22883f376a74",
         "role": "control",
         "fixture": {
           "id": "pause-fixtures",
@@ -429,11 +419,6 @@
         "runtime": {
           "id": "CPython",
           "version": "3.12.12"
-        },
-        "compatibility": {
-          "status": "COMPATIBLE",
-          "scope": "execution",
-          "reason": "Released executor implements selected revision"
         },
         "evidence_state": {
           "observation": "verified"
@@ -571,7 +556,7 @@
         }
       ],
       "provenance": {
-        "run_id": "a8cb594b-f0cc-4bef-8f44-f392a22017d9",
+        "run_id": "f602b30a-49a2-411d-96a7-22883f376a74",
         "role": "control",
         "fixture": {
           "id": "pause-fixtures",
@@ -591,11 +576,6 @@
         "runtime": {
           "id": "CPython",
           "version": "3.12.12"
-        },
-        "compatibility": {
-          "status": "COMPATIBLE",
-          "scope": "execution",
-          "reason": "Released executor implements selected revision"
         },
         "evidence_state": {
           "observation": "verified"

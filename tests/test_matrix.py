@@ -36,14 +36,20 @@ def test_released_execution_coordinate(matrix, catalog, executor, expected, reco
     )
     record_property("expected_capability_status", expected)
     record_property("actual_capability_status", result["original_result"]["status"])
-    record_property("compatibility", result["provenance"]["compatibility"]["status"])
+    record_property(
+        "compatibility",
+        result["provenance"].get("compatibility", {"status": "COMPATIBLE"})["status"],
+    )
     assert result["original_result"]["status"] == expected
     if expected == "INCOMPATIBLE":
         assert result["assessments"] == []
         assert result["provenance"]["compatibility"]["scope"] == "execution"
     else:
         assert len(result["assessments"]) == 3
-        assert result["provenance"]["compatibility"]["status"] == "COMPATIBLE"
+        assert (
+            result["provenance"].get("compatibility", {"status": "COMPATIBLE"})["status"]
+            == "COMPATIBLE"
+        )
 
 
 def test_evidence_survives_incompatible_executor_and_round_trip(matrix):
@@ -87,7 +93,10 @@ def test_controls_preserve_negative_and_missing_evidence(matrix, catalog, fixtur
         and r["provenance"]["fixture"]["path"] == f"fixtures/{fixture}.json"
     )
     assert result["provenance"]["role"] == "control"
-    assert result["provenance"]["compatibility"]["status"] == "COMPATIBLE"
+    assert (
+        result["provenance"].get("compatibility", {"status": "COMPATIBLE"})["status"]
+        == "COMPATIBLE"
+    )
     assert result["original_result"]["status"] == expected
 
 

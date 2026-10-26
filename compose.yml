@@ -11,4 +11,4 @@ services:
       - ./artifacts:/app/artifacts
 secrets:
   ca:
-    file: ${HOST_BUILD_CA_FILE:-/dev/null}
+    file: ${HOST_BUILD_CA_FILE:-./tools/empty-ca.pem}

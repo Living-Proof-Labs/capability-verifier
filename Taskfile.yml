@@ -6,27 +6,34 @@ env:
 tasks:
   setup:
     cmds:
+      - mkdir -p artifacts
       - docker compose build verifier
   check:
     cmds:
+      - mkdir -p artifacts
       - docker compose run --build --rm verifier check
   test:
     cmds:
+      - mkdir -p artifacts
       - docker compose run --build --rm verifier test
   verify:
     cmds:
+      - mkdir -p artifacts
       - docker compose run --build --rm verifier verify
   demo:
     desc: Build the runtime and execute the fixture hello-world
     cmds:
+      - mkdir -p artifacts
       - docker compose run --build --rm verifier demo
   bundle:
     desc: Export portable result bundles through the prepared runtime
     cmds:
+      - mkdir -p artifacts
       - docker compose run --build --rm verifier bundle
   matrix:
     desc: Export four released execution coordinates plus separate evidence controls
     cmds:
+      - mkdir -p artifacts
       - docker compose run --build --rm verifier matrix
   matrix:report:
     desc: Check a versioned installed reporter image against the matrix and controls

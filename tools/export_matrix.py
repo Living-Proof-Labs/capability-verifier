@@ -51,7 +51,7 @@ def record(contract, executor, fixture, destination, run_id, control=False):
             )
         )
     fixture_version = executor["fixture_version"] if fixture == "slow" else "1.0.0"
-    return {
+    result = {
         "id": f"{contract['tag']}-{executor['tag']}-{fixture}",
         "spec": {**contract, "capability": "pause"},
         "system": {"id": "pause-fixtures", "version": fixture_version},
@@ -92,6 +92,10 @@ def record(contract, executor, fixture, destination, run_id, control=False):
         "original_result": original,
     }
 
+    if compatible:
+        del result["provenance"]["compatibility"]
+    return result
+
 
 def export(destination, run_id=None):
     destination = Path(destination)
@@ -130,7 +134,7 @@ def export(destination, run_id=None):
         rows.append(
             f"| {r['spec']['tag']} | {r['provenance']['executor']['tag']} | "
             f"{r['provenance']['fixture']['path']} | "
-            f"{r['provenance']['compatibility']['status']} | "
+            f"{r['provenance'].get('compatibility', {'status': 'COMPATIBLE'})['status']} | "
             f"{r['original_result']['status']} |"
         )
     (destination / "summary.md").write_text("\n".join(rows) + "\n")

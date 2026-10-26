@@ -200,3 +200,9 @@ Output is retained under `artifacts/matrix-report`; existing output is not repla
 Builds behind an existing provider trust bundle can set `HOST_BUILD_CA_FILE` to
 that existing PEM bundle. It is a temporary BuildKit secret, never copied into the
 image. TLS verification stays enabled; no host trust or network setting changes.
+
+Contract alignment with reporter PR12: the optional `provenance.compatibility`
+declaration is emitted only for `INCOMPATIBLE` execution. Compatible records omit
+it and carry actual assessments; the reporter performs its normal supported-input
+checks. The matrix summary displays COMPATIBLE only after the adapter executes the
+released supported pair. Presence of valid evidence alone never asserts support.
