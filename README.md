@@ -125,7 +125,7 @@ contract, FAIL under the strict contract. Environments and revisions remain expl
 JUnit still reports whether tests matched expectations, not a capability grade.
 
 The dedicated `report` job consumes
-[Living Proof Labs capability report v1.3.0](https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/tag/v1.3.0)
+[Living Proof Labs capability report v1.5.0](https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/tag/v1.5.0)
 as its versioned job-container image. It downloads the portable bundle, invokes
 the installed reporting command, and attaches offline HTML, lossless JSON and
 flattened CSV. The run summary shows each capability decision and an artifact
@@ -144,3 +144,62 @@ two released specification revisions and preserves insufficient evidence. Each
 job uploads its own reports; producer releases attach the verified AMD64 outputs,
 including a plain terminal table, before publishing the immutable release. This
 uses the optional draft assembly in collaboration-guidelines v2.2.0.
+
+## Released execution compatibility matrix (preview)
+
+`task matrix` writes `artifacts/matrix/manifest.json`, relative evidence files,
+`controls.json` and `summary.md`. Copy the whole directory to a reporter. The main
+manifest contains exactly four coordinates; controls are a separate bundle.
+`task verify` runs each coordinate as an individually reported expectation test.
+
+| Catalog / pause revision | Executor v1.0.1, fixture 1.0.0 (120 ms) | Executor v1.1.0, fixture 2.0.0 (300 ms) |
+| --- | --- | --- |
+| v1.1.1 / 1.0.0, 500 ms | PASS | PASS |
+| v1.2.0 / 2.0.0, 250 ms | INCOMPATIBLE execution | FAIL |
+
+This is **execution compatibility**, not an evidence-schema change. Both released
+contracts use the same observations. Verifier v1.0.1 implements only the 500 ms
+contract; calling it for revision 2 would silently apply the wrong limit. The
+adapter rejects that pairing before assessment, preserving the valid 120 ms
+observation and digest. Verifier v1.1.0 implements both revisions and supplies the
+300 ms fixture. Its released exporter/evaluator code actually runs in a separate
+Python process; the matrix does not reimplement its threshold decisions.
+
+`matrix.lock.json` pins released executors and supported revisions;
+`reporting-specs.lock.json` pins released catalogs. Setup fetches each exact tag,
+verifies its commit, and execution rejects modified tracked source. The generated
+source cache is not edited or committed. Python runtime version, released executor,
+fixture identity/version/source, spec, run identifier and evidence hashes remain
+explicit. There is no robot, simulator, or live AI/human assessment.
+
+The existing portable schema stays at 1.0.0. Additive result provenance includes
+`run_id`, `fixture`, `executor`, `runtime`, `role`, `evidence_state`, and
+`compatibility` (`status`, `scope`, `reason`). A verified evidence digest means the
+bytes are intact, not that observations are complete. Missing elapsed time still
+produces INSUFFICIENT_EVIDENCE in the separate controls; mandatory failure remains
+FAIL. Incompatible execution has no fabricated assessments. Never combine these
+coordinates into a single grade.
+
+The adapter itself is an **unreleased feature-branch preview**, identified by the
+producer commit. The exception ends when its reviewed release is published; no
+future tag is claimed. Its source dependencies are already published releases.
+The original `task bundle` remains available. Both installed reporter integrations
+now consume released reporter v1.5.0, which supports execution compatibility.
+No reporter code is vendored or changed here.
+
+Run `task matrix:report` to consume
+`ghcr.io/living-proof-labs/livingproof-capability-report:1.5.0`. This uses only its
+installed command, validates and renders the matrix under both policies, and
+asserts all four expected decisions plus the controls across JSON, HTML, CSV and
+terminal output. CI runs this same task and uploads the rendered outputs.
+Output is retained under `artifacts/matrix-report`; existing output is not replaced.
+
+Builds behind an existing provider trust bundle can set `HOST_BUILD_CA_FILE` to
+that existing PEM bundle. It is a temporary BuildKit secret, never copied into the
+image. TLS verification stays enabled; no host trust or network setting changes.
+
+Contract alignment with reporter PR12: the optional `provenance.compatibility`
+declaration is emitted only for `INCOMPATIBLE` execution. Compatible records omit
+it and carry actual assessments; the reporter performs its normal supported-input
+checks. The matrix summary displays COMPATIBLE only after the adapter executes the
+released supported pair. Presence of valid evidence alone never asserts support.

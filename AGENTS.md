@@ -1,6 +1,6 @@
 # Working agreement
 
-Read and apply https://github.com/Living-Proof-Labs/collaboration-guidelines/blob/v2.0.3/AGENTS.md
+Read and apply https://github.com/Living-Proof-Labs/collaboration-guidelines/blob/v4.1.0/AGENTS.md
 and its relevant linked procedures at that same version. Links do not load instructions.
 
 Local additions: use `task verify` from the host, or `task -t Taskfile.runtime.yml

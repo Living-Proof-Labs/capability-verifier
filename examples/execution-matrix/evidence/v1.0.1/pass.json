@@ -1,0 +1,16 @@
+{
+  "requested": "paused",
+  "observed": "paused",
+  "elapsed_ms": 120,
+  "motion_inhibited": true,
+  "assessments": {
+    "mock-ai": {
+      "status": "PASS",
+      "rationale": "Scripted favorable rubric example"
+    },
+    "human-fixture": {
+      "status": "PASS",
+      "rationale": "Recorded favorable fixture review"
+    }
+  }
+}

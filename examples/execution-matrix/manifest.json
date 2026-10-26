@@ -1,0 +1,547 @@
+{
+  "schema_version": "1.0.0",
+  "producer": {
+    "id": "capability-verifier-matrix",
+    "version": "1.0.0",
+    "commit": "e40fd57e1c365c434e36941ecbc33ddc41984d8b"
+  },
+  "provenance": {
+    "preview": true,
+    "note": "Unreleased matrix adapter; sources use released tags"
+  },
+  "results": [
+    {
+      "id": "v1.1.1-v1.0.1-pass",
+      "spec": {
+        "repository": "https://github.com/Living-Proof-Labs/robot-capability-specs",
+        "tag": "v1.1.1",
+        "commit": "60b7572df9f5e5c5ab5757a0b4674da16de2b0df",
+        "revision": "1.0.0",
+        "capability": "pause"
+      },
+      "system": {
+        "id": "pause-fixtures",
+        "version": "1.0.0"
+      },
+      "environment": {
+        "id": "deterministic-fixture-no-robot",
+        "version": "1.0.0"
+      },
+      "evidence": [
+        {
+          "id": "observation",
+          "path": "evidence/v1.0.1/pass.json",
+          "sha256": "62f20434490defba9703b7cd0f09b060c1db671ce30e4289ca20dafb0ee78da0"
+        }
+      ],
+      "assessments": [
+        {
+          "evaluator": "pause-rules",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "Pause state and 500 ms limit assessed",
+          "mandatory": true,
+          "id": "pause-rules",
+          "kind": "deterministic",
+          "evidence_ids": [
+            "observation"
+          ],
+          "provenance": {
+            "source": "released recorded fixture; no live review",
+            "mock": false
+          }
+        },
+        {
+          "evaluator": "mock-ai",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "MOCK AI; no model was called: Scripted favorable rubric example",
+          "mandatory": false,
+          "id": "mock-ai",
+          "kind": "mock-agent",
+          "evidence_ids": [
+            "observation"
+          ],
+          "provenance": {
+            "source": "released recorded fixture; no live review",
+            "mock": true
+          }
+        },
+        {
+          "evaluator": "human-fixture",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "HUMAN FIXTURE; no live review: Recorded favorable fixture review",
+          "mandatory": false,
+          "id": "human-fixture",
+          "kind": "human",
+          "evidence_ids": [
+            "observation"
+          ],
+          "provenance": {
+            "source": "released recorded fixture; no live review",
+            "mock": false
+          }
+        }
+      ],
+      "provenance": {
+        "run_id": "f602b30a-49a2-411d-96a7-22883f376a74",
+        "role": "matrix",
+        "fixture": {
+          "id": "pause-fixtures",
+          "version": "1.0.0",
+          "repository": "https://github.com/Living-Proof-Labs/capability-verifier",
+          "tag": "v1.0.1",
+          "commit": "0b23e8226f333152f137c04f3129dcc97ab7f761",
+          "path": "fixtures/pass.json"
+        },
+        "executor": {
+          "id": "capability-verifier",
+          "version": "1.0.1",
+          "repository": "https://github.com/Living-Proof-Labs/capability-verifier",
+          "tag": "v1.0.1",
+          "commit": "0b23e8226f333152f137c04f3129dcc97ab7f761"
+        },
+        "runtime": {
+          "id": "CPython",
+          "version": "3.12.12"
+        },
+        "evidence_state": {
+          "observation": "verified"
+        },
+        "simulator": null
+      },
+      "original_result": {
+        "status": "PASS",
+        "assessments": [
+          {
+            "evaluator": "pause-rules",
+            "version": "1.0.0",
+            "status": "PASS",
+            "rationale": "Pause state and 500 ms limit assessed",
+            "mandatory": true
+          },
+          {
+            "evaluator": "mock-ai",
+            "version": "1.0.0",
+            "status": "PASS",
+            "rationale": "MOCK AI; no model was called: Scripted favorable rubric example",
+            "mandatory": false
+          },
+          {
+            "evaluator": "human-fixture",
+            "version": "1.0.0",
+            "status": "PASS",
+            "rationale": "HUMAN FIXTURE; no live review: Recorded favorable fixture review",
+            "mandatory": false
+          }
+        ],
+        "provenance": {
+          "spec": {
+            "repository": "https://github.com/Living-Proof-Labs/robot-capability-specs",
+            "tag": "v1.1.1",
+            "commit": "60b7572df9f5e5c5ab5757a0b4674da16de2b0df",
+            "revision": "1.0.0",
+            "capability": "pause"
+          },
+          "system": {
+            "id": "pause-fixtures",
+            "version": "1.0.0",
+            "fixture": "pass.json"
+          },
+          "simulator": null,
+          "runner": {
+            "id": "fixture-runner",
+            "version": "1.0.0"
+          },
+          "policy": {
+            "id": "all-required-v1",
+            "version": "1.0.0",
+            "members": [
+              "human-fixture",
+              "mock-ai",
+              "pause-rules"
+            ]
+          },
+          "evidence_sha256": "62f20434490defba9703b7cd0f09b060c1db671ce30e4289ca20dafb0ee78da0"
+        }
+      }
+    },
+    {
+      "id": "v1.1.1-v1.1.0-slow",
+      "spec": {
+        "repository": "https://github.com/Living-Proof-Labs/robot-capability-specs",
+        "tag": "v1.1.1",
+        "commit": "60b7572df9f5e5c5ab5757a0b4674da16de2b0df",
+        "revision": "1.0.0",
+        "capability": "pause"
+      },
+      "system": {
+        "id": "pause-fixtures",
+        "version": "2.0.0"
+      },
+      "environment": {
+        "id": "deterministic-fixture-no-robot",
+        "version": "1.0.0"
+      },
+      "evidence": [
+        {
+          "id": "observation",
+          "path": "evidence/v1.1.0/slow.json",
+          "sha256": "c75ad29c3a0d4bdf9e27c9a83c64395c455a7c2cee0b1004981849baf97bf24c"
+        }
+      ],
+      "assessments": [
+        {
+          "evaluator": "pause-rules",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "Pause state and 500 ms limit assessed",
+          "mandatory": true,
+          "id": "pause-rules",
+          "kind": "deterministic",
+          "evidence_ids": [
+            "observation"
+          ],
+          "provenance": {
+            "source": "released recorded fixture; no live review",
+            "mock": false
+          }
+        },
+        {
+          "evaluator": "mock-ai",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "MOCK AI; no model was called: Scripted state agreement; timing assessed by deterministic rules",
+          "mandatory": false,
+          "id": "mock-ai",
+          "kind": "mock-agent",
+          "evidence_ids": [
+            "observation"
+          ],
+          "provenance": {
+            "source": "released recorded fixture; no live review",
+            "mock": true
+          }
+        },
+        {
+          "evaluator": "human-fixture",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "HUMAN FIXTURE; no live review: Recorded state agreement, not a timing override",
+          "mandatory": false,
+          "id": "human-fixture",
+          "kind": "human",
+          "evidence_ids": [
+            "observation"
+          ],
+          "provenance": {
+            "source": "released recorded fixture; no live review",
+            "mock": false
+          }
+        }
+      ],
+      "provenance": {
+        "run_id": "f602b30a-49a2-411d-96a7-22883f376a74",
+        "role": "matrix",
+        "fixture": {
+          "id": "pause-fixtures",
+          "version": "2.0.0",
+          "repository": "https://github.com/Living-Proof-Labs/capability-verifier",
+          "tag": "v1.1.0",
+          "commit": "c590b05e647ae734f9cfa1b59d7e70ca66169eaa",
+          "path": "fixtures/slow.json"
+        },
+        "executor": {
+          "id": "capability-verifier",
+          "version": "1.1.0",
+          "repository": "https://github.com/Living-Proof-Labs/capability-verifier",
+          "tag": "v1.1.0",
+          "commit": "c590b05e647ae734f9cfa1b59d7e70ca66169eaa"
+        },
+        "runtime": {
+          "id": "CPython",
+          "version": "3.12.12"
+        },
+        "evidence_state": {
+          "observation": "verified"
+        },
+        "simulator": null
+      },
+      "original_result": {
+        "status": "PASS",
+        "assessments": [
+          {
+            "evaluator": "pause-rules",
+            "version": "1.0.0",
+            "status": "PASS",
+            "rationale": "Pause state and 500 ms limit assessed",
+            "mandatory": true
+          },
+          {
+            "evaluator": "mock-ai",
+            "version": "1.0.0",
+            "status": "PASS",
+            "rationale": "MOCK AI; no model was called: Scripted state agreement; timing assessed by deterministic rules",
+            "mandatory": false
+          },
+          {
+            "evaluator": "human-fixture",
+            "version": "1.0.0",
+            "status": "PASS",
+            "rationale": "HUMAN FIXTURE; no live review: Recorded state agreement, not a timing override",
+            "mandatory": false
+          }
+        ],
+        "provenance": {
+          "spec": {
+            "repository": "https://github.com/Living-Proof-Labs/robot-capability-specs",
+            "tag": "v1.1.1",
+            "commit": "60b7572df9f5e5c5ab5757a0b4674da16de2b0df",
+            "revision": "1.0.0",
+            "capability": "pause"
+          },
+          "system": {
+            "id": "pause-fixtures",
+            "version": "2.0.0",
+            "fixture": "slow.json"
+          },
+          "simulator": null,
+          "runner": {
+            "id": "fixture-runner",
+            "version": "1.0.0"
+          },
+          "policy": {
+            "id": "all-required-v1",
+            "version": "1.0.0",
+            "members": [
+              "human-fixture",
+              "mock-ai",
+              "pause-rules"
+            ]
+          },
+          "evidence_sha256": "c75ad29c3a0d4bdf9e27c9a83c64395c455a7c2cee0b1004981849baf97bf24c"
+        }
+      }
+    },
+    {
+      "id": "v1.2.0-v1.0.1-pass",
+      "spec": {
+        "repository": "https://github.com/Living-Proof-Labs/robot-capability-specs",
+        "tag": "v1.2.0",
+        "commit": "f06c4a17a55d649ff78961c7391f90e34fab929d",
+        "revision": "2.0.0",
+        "capability": "pause"
+      },
+      "system": {
+        "id": "pause-fixtures",
+        "version": "1.0.0"
+      },
+      "environment": {
+        "id": "deterministic-fixture-no-robot",
+        "version": "1.0.0"
+      },
+      "evidence": [
+        {
+          "id": "observation",
+          "path": "evidence/v1.0.1/pass.json",
+          "sha256": "62f20434490defba9703b7cd0f09b060c1db671ce30e4289ca20dafb0ee78da0"
+        }
+      ],
+      "assessments": [],
+      "provenance": {
+        "run_id": "f602b30a-49a2-411d-96a7-22883f376a74",
+        "role": "matrix",
+        "fixture": {
+          "id": "pause-fixtures",
+          "version": "1.0.0",
+          "repository": "https://github.com/Living-Proof-Labs/capability-verifier",
+          "tag": "v1.0.1",
+          "commit": "0b23e8226f333152f137c04f3129dcc97ab7f761",
+          "path": "fixtures/pass.json"
+        },
+        "executor": {
+          "id": "capability-verifier",
+          "version": "1.0.1",
+          "repository": "https://github.com/Living-Proof-Labs/capability-verifier",
+          "tag": "v1.0.1",
+          "commit": "0b23e8226f333152f137c04f3129dcc97ab7f761"
+        },
+        "runtime": {
+          "id": "CPython",
+          "version": "3.12.12"
+        },
+        "compatibility": {
+          "status": "INCOMPATIBLE",
+          "scope": "execution",
+          "reason": "Released executor supports pause revision 1.0.0 only"
+        },
+        "evidence_state": {
+          "observation": "verified"
+        },
+        "simulator": null
+      },
+      "original_result": {
+        "status": "INCOMPATIBLE",
+        "assessments": []
+      }
+    },
+    {
+      "id": "v1.2.0-v1.1.0-slow",
+      "spec": {
+        "repository": "https://github.com/Living-Proof-Labs/robot-capability-specs",
+        "tag": "v1.2.0",
+        "commit": "f06c4a17a55d649ff78961c7391f90e34fab929d",
+        "revision": "2.0.0",
+        "capability": "pause"
+      },
+      "system": {
+        "id": "pause-fixtures",
+        "version": "2.0.0"
+      },
+      "environment": {
+        "id": "deterministic-fixture-no-robot",
+        "version": "1.0.0"
+      },
+      "evidence": [
+        {
+          "id": "observation",
+          "path": "evidence/v1.1.0/slow.json",
+          "sha256": "c75ad29c3a0d4bdf9e27c9a83c64395c455a7c2cee0b1004981849baf97bf24c"
+        }
+      ],
+      "assessments": [
+        {
+          "evaluator": "pause-rules",
+          "version": "1.1.0",
+          "status": "FAIL",
+          "rationale": "Pause state and 500 ms limit assessed; strict revision uses 250 ms inclusive limit",
+          "mandatory": true,
+          "id": "pause-rules",
+          "kind": "deterministic",
+          "evidence_ids": [
+            "observation"
+          ],
+          "provenance": {
+            "source": "released recorded fixture; no live review",
+            "mock": false
+          }
+        },
+        {
+          "evaluator": "mock-ai",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "MOCK AI; no model was called: Scripted state agreement; timing assessed by deterministic rules",
+          "mandatory": false,
+          "id": "mock-ai",
+          "kind": "mock-agent",
+          "evidence_ids": [
+            "observation"
+          ],
+          "provenance": {
+            "source": "released recorded fixture; no live review",
+            "mock": true
+          }
+        },
+        {
+          "evaluator": "human-fixture",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "HUMAN FIXTURE; no live review: Recorded state agreement, not a timing override",
+          "mandatory": false,
+          "id": "human-fixture",
+          "kind": "human",
+          "evidence_ids": [
+            "observation"
+          ],
+          "provenance": {
+            "source": "released recorded fixture; no live review",
+            "mock": false
+          }
+        }
+      ],
+      "provenance": {
+        "run_id": "f602b30a-49a2-411d-96a7-22883f376a74",
+        "role": "matrix",
+        "fixture": {
+          "id": "pause-fixtures",
+          "version": "2.0.0",
+          "repository": "https://github.com/Living-Proof-Labs/capability-verifier",
+          "tag": "v1.1.0",
+          "commit": "c590b05e647ae734f9cfa1b59d7e70ca66169eaa",
+          "path": "fixtures/slow.json"
+        },
+        "executor": {
+          "id": "capability-verifier",
+          "version": "1.1.0",
+          "repository": "https://github.com/Living-Proof-Labs/capability-verifier",
+          "tag": "v1.1.0",
+          "commit": "c590b05e647ae734f9cfa1b59d7e70ca66169eaa"
+        },
+        "runtime": {
+          "id": "CPython",
+          "version": "3.12.12"
+        },
+        "evidence_state": {
+          "observation": "verified"
+        },
+        "simulator": null
+      },
+      "original_result": {
+        "status": "FAIL",
+        "assessments": [
+          {
+            "evaluator": "pause-rules",
+            "version": "1.1.0",
+            "status": "FAIL",
+            "rationale": "Pause state and 500 ms limit assessed; strict revision uses 250 ms inclusive limit",
+            "mandatory": true
+          },
+          {
+            "evaluator": "mock-ai",
+            "version": "1.0.0",
+            "status": "PASS",
+            "rationale": "MOCK AI; no model was called: Scripted state agreement; timing assessed by deterministic rules",
+            "mandatory": false
+          },
+          {
+            "evaluator": "human-fixture",
+            "version": "1.0.0",
+            "status": "PASS",
+            "rationale": "HUMAN FIXTURE; no live review: Recorded state agreement, not a timing override",
+            "mandatory": false
+          }
+        ],
+        "provenance": {
+          "spec": {
+            "repository": "https://github.com/Living-Proof-Labs/robot-capability-specs",
+            "tag": "v1.2.0",
+            "commit": "f06c4a17a55d649ff78961c7391f90e34fab929d",
+            "revision": "2.0.0",
+            "capability": "pause"
+          },
+          "system": {
+            "id": "pause-fixtures",
+            "version": "2.0.0",
+            "fixture": "slow.json"
+          },
+          "simulator": null,
+          "runner": {
+            "id": "fixture-runner",
+            "version": "1.0.0"
+          },
+          "policy": {
+            "id": "all-required-v1",
+            "version": "1.0.0",
+            "members": [
+              "human-fixture",
+              "mock-ai",
+              "pause-rules"
+            ]
+          },
+          "evidence_sha256": "c75ad29c3a0d4bdf9e27c9a83c64395c455a7c2cee0b1004981849baf97bf24c"
+        }
+      }
+    }
+  ]
+}

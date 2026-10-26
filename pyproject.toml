@@ -17,3 +17,4 @@ markers = ["reference_v1: released catalog revision 1 scenarios"]
 
 [tool.ruff]
 line-length = 100
+extend-exclude = [".matrix-sources", ".specs"]
