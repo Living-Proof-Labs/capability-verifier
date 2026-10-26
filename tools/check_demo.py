@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import tempfile
+import time
 import unittest
 import xml.etree.ElementTree as ET
 import zipfile
@@ -58,18 +59,34 @@ class PublishedResult(unittest.TextTestResult):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.xml = ET.Element("testsuite", name="Installed reporter archive consumption")
+        self.started = time.perf_counter()
 
     def startTest(self, test):
         super().startTest(test)
-        self.case = ET.SubElement(self.xml, "testcase", name=test.id(), classname="demo_archives")
+        self.case_started = time.perf_counter()
+        self.case = ET.SubElement(
+            self.xml,
+            "testcase",
+            name=test.id(),
+            classname="demo_archives",
+            file="tools/check_demo.py",
+        )
+
+    def stopTest(self, test):
+        self.case.set("time", f"{time.perf_counter() - self.case_started:.6f}")
+        super().stopTest(test)
 
     def addFailure(self, test, err):
         super().addFailure(test, err)
-        ET.SubElement(self.case, "failure").text = self._exc_info_to_string(err, test)
+        ET.SubElement(self.case, "failure", message=str(err[1])).text = self._exc_info_to_string(
+            err, test
+        )
 
     def addError(self, test, err):
         super().addError(test, err)
-        ET.SubElement(self.case, "error").text = self._exc_info_to_string(err, test)
+        ET.SubElement(self.case, "error", message=str(err[1])).text = self._exc_info_to_string(
+            err, test
+        )
 
 
 def check(inputs, destination, version, architecture, junit):
@@ -142,6 +159,8 @@ def check(inputs, destination, version, architecture, junit):
 
         case("deliberate_publisher_failure", deliberate_failure)
     result = unittest.TextTestRunner(verbosity=2, resultclass=PublishedResult).run(suite)
+    result.xml.set("time", f"{time.perf_counter() - result.started:.6f}")
+    result.xml.set("skipped", "0")
     result.xml.set("tests", str(result.testsRun))
     result.xml.set("failures", str(len(result.failures)))
     result.xml.set("errors", str(len(result.errors)))

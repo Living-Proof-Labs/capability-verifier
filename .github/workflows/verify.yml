@@ -50,11 +50,6 @@ jobs:
           retention-days: 14
           if-no-files-found: error
       - run: task demo:runs
-        env:
-          DEMO_TEST_FAILURE: '1'
-      - name: Portable demonstration catalog
-        if: ${{ !cancelled() }}
-        run: cat artifacts/demo-runs/CATALOG.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
@@ -63,12 +58,20 @@ jobs:
           retention-days: 14
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        id: demo-bundles
         if: ${{ !cancelled() }}
         with:
           name: verifier-${{ steps.identity.outputs.version }}-demo-runs-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/demo-runs/
           retention-days: 14
           if-no-files-found: error
+      - name: Portable demonstration catalog
+        if: ${{ !cancelled() }}
+        env:
+          BUNDLE_URL: ${{ steps.demo-bundles.outputs.artifact-url }}
+        run: |
+          echo "Five fixture demonstrations with manifests, evidence, four report formats and checksums. See the included CATALOG.md." >> "$GITHUB_STEP_SUMMARY"
+          echo "[Download the catalog and portable ZIPs]($BUNDLE_URL)" >> "$GITHUB_STEP_SUMMARY"
       - run: task bundle
       - uses: actions/upload-artifact@v4
         with:

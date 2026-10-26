@@ -128,6 +128,8 @@ def build(inputs, destination, version, architecture):
         bundle = json.loads(manifest.read_text())
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "run"
+            if any(path.is_symlink() for path in manifest.parent.rglob("*")):
+                raise ValueError("Symlink input is unsupported")
             shutil.copytree(manifest.parent, root)
             reporter("validate", "manifest.json", cwd=root)
             reporter("grade", "manifest.json", "-o", "report.json", cwd=root)
