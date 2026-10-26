@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
-REPORTER_IMAGE=${REPORTER_IMAGE:-ghcr.io/living-proof-labs/livingproof-capability-report:1.5.0}
+REPORTER_IMAGE=${REPORTER_IMAGE:-ghcr.io/living-proof-labs/livingproof-capability-report:1.6.0}
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 test -s "$root/artifacts/matrix/manifest.json"
 mkdir "$root/artifacts/matrix-report"

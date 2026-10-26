@@ -39,3 +39,7 @@ tasks:
     desc: Run released executor/spec combinations and retain portable evidence
     cmds:
       - uv run --locked --no-sync python tools/export_matrix.py artifacts/matrix
+  demo:inputs:
+    desc: Export five related manifests from released executions
+    cmds:
+      - uv run --locked --no-sync python tools/export_demo.py artifacts/demo-inputs

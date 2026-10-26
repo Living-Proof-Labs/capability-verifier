@@ -8,6 +8,8 @@ permissions:
   contents: read
 jobs:
   verify:
+    outputs:
+      source-version: ${{ steps.identity.outputs.version }}
     permissions:
       contents: read
       checks: write # Only for the test-report check; fork PR tokens remain read-only.
@@ -17,13 +19,17 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+          fetch-depth: 0
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2
         with:
           version: '3.54.0'
+      - name: Identify verifier source
+        id: identity
+        run: echo "version=$(git describe --tags --always --long)" >> "$GITHUB_OUTPUT"
       - run: task verify
       - run: task matrix
         if: ${{ !cancelled() }}
-      - name: Verify matrix with released reporter 1.5.0
+      - name: Verify matrix with released reporter 1.6.0
         run: task matrix:report
       - name: Retain installed reporter matrix outputs
         if: ${{ !cancelled() }}
@@ -43,6 +49,26 @@ jobs:
           path: artifacts/matrix/
           retention-days: 14
           if-no-files-found: error
+      - run: task demo:runs
+        env:
+          DEMO_TEST_FAILURE: '1'
+      - name: Portable demonstration catalog
+        if: ${{ !cancelled() }}
+        run: cat artifacts/demo-runs/CATALOG.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: verifier-demo-inputs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/demo-inputs/
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: verifier-${{ steps.identity.outputs.version }}-demo-runs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/demo-runs/
+          retention-days: 14
+          if-no-files-found: error
       - run: task bundle
       - uses: actions/upload-artifact@v4
         with:
@@ -59,7 +85,7 @@ jobs:
         uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3.2.0
         with:
           name: Verification expectation tests
-          path: artifacts/results.xml
+          path: artifacts/results.xml,artifacts/archives.xml
           reporter: python-xunit
           report-title: Verification tests — passing expectations are not capability certification
           use-actions-summary: 'true'
@@ -71,7 +97,7 @@ jobs:
         uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3.2.0
         with:
           name: Verification expectation tests
-          path: artifacts/results.xml
+          path: artifacts/results.xml,artifacts/archives.xml
           reporter: python-xunit
           report-title: Verification tests — passing expectations are not capability certification
           use-actions-summary: 'false'
@@ -83,6 +109,7 @@ jobs:
         with:
           name: test-results-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/*.xml
+          retention-days: 14
           if-no-files-found: error
   report:
     needs: verify
@@ -96,8 +123,49 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     container:
-      image: ghcr.io/living-proof-labs/livingproof-capability-report:1.5.0
+      image: ghcr.io/living-proof-labs/livingproof-capability-report:1.6.0
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2
+        with:
+          version: '3.54.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: verifier-demo-inputs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/demo-inputs
+      - name: Extract and regenerate demo archives with installed reporter
+        env:
+          DEMO_VERSION: ${{ needs.verify.outputs.source-version }}
+          DEMO_ARCH: ${{ matrix.architecture }}
+        run: task -t Taskfile.reporter.yml test
+      - name: Native archive test results
+        if: ${{ !cancelled() }}
+        uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3.2.0
+        with:
+          name: Archive consumption ${{ matrix.architecture }}
+          path: artifacts/archives.xml
+          reporter: python-xunit
+          use-actions-summary: 'true'
+          fail-on-error: 'true'
+          fail-on-empty: 'true'
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: verifier-${{ needs.verify.outputs.source-version }}-runs-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/demo-runs/
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: archive-tests-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/archives.xml
+          retention-days: 14
+          if-no-files-found: error
       - uses: actions/download-artifact@v4
         with:
           name: portable-results-${{ github.event.pull_request.head.sha || github.sha }}
@@ -156,12 +224,26 @@ jobs:
     with:
       draft-release: true
   release-reports:
-    needs: [report, release]
+    needs: [verify, report, release]
     if: needs.release.outputs.draft-created == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2
+        with:
+          version: '3.54.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: verifier-${{ needs.verify.outputs.source-version }}-runs-amd64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: verified-runs
+      - name: Name bundles for the actual new release
+        env:
+          RELEASE_TAG: ${{ needs.release.outputs.git-tag }}
+        run: task -t Taskfile.reporter.yml release
       - uses: actions/download-artifact@v4
         with:
           name: capability-reports-amd64-${{ github.sha }}
@@ -172,5 +254,7 @@ jobs:
           RELEASE_TAG: ${{ needs.release.outputs.git-tag }}
         run: |
           (cd reports && sha256sum -c SHA256SUMS)
+          # Generic legacy report files remain available for existing links.
           gh release upload "$RELEASE_TAG" reports/report.* reports/SHA256SUMS --repo "$GITHUB_REPOSITORY"
+          gh release upload "$RELEASE_TAG" release-runs/*.zip release-runs/CATALOG.md release-runs/BUNDLE-SHA256SUMS --repo "$GITHUB_REPOSITORY"
           gh release edit "$RELEASE_TAG" --draft=false --repo "$GITHUB_REPOSITORY"

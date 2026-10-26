@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# Inside the released reporter container, or release runner (stdlib packaging only).
+version: '3'
+tasks:
+  test:
+    cmds:
+      - python tools/check_demo.py artifacts/demo-inputs artifacts/demo-runs --version "$DEMO_VERSION" --architecture "$DEMO_ARCH" --junit artifacts/archives.xml
+  release:
+    cmds:
+      - python tools/run_archives.py release verified-runs release-runs --version "$RELEASE_TAG"
+      - mv release-runs/SHA256SUMS release-runs/BUNDLE-SHA256SUMS

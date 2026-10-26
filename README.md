@@ -203,3 +203,51 @@ declaration is emitted only for `INCOMPATIBLE` execution. Compatible records omi
 it and carry actual assessments; the reporter performs its normal supported-input
 checks. The matrix summary displays COMPATIBLE only after the adapter executes the
 released supported pair. Presence of valid evidence alone never asserts support.
+
+## Download and reproduce demonstration runs
+
+Run `task demo:runs` from a fresh checkout to produce `artifacts/demo-runs/`.
+The generated `CATALOG.md` maps five named ZIPs to their input manifests and
+explains the differences: baseline pass, strict timing failure, mandatory failure,
+missing measurement and the existing four-coordinate compatibility matrix.
+All observations, mock-agent conclusions and recorded human assessments are
+fixtures. No robot, simulator, model call or live human review is implied.
+
+Each ZIP is independently portable: `manifest.json`, its `evidence/` files,
+`report.json`, `report.html`, `report.csv`, `report.txt`, `provenance.json`,
+`SHA256SUMS` and a regeneration README. Extract each into a separate directory.
+Use installed **livingproof-capability-report 1.6.0**, or its versioned container,
+to validate the manifest, grade it and render the saved report. Evidence paths
+are relative to the manifest. HTML works offline; JSON retains the entire
+manifest and decisions; CSV and text are presentation formats. These are the
+reporter's existing schema 1.0.0 inputs and outputs, not a new interchange format.
+Your CI supplies its own manifests, observations and assessments to the same
+reporter commands; this verifier supplies illustrative recorded fixtures.
+
+Names follow `capability-verifier-<version>-<demo>-<bundle UUID>-<architecture>-<CI run>-<attempt>.zip`.
+Local/PR builds use an observed Git tag/distance/commit (and dirty marker when
+applicable), not an invented release number. New release attachments use the
+actual semantic-release tag; provenance retains the tested source identity and
+commit. Historical spec, executor, fixture and adapter versions in the manifest
+are unchanged. The matrix adapter's producer version identifies its export
+contract, not the version of the release distributing it.
+
+`collection_id` identifies one demo execution batch; `bundle_run_id` identifies
+one selected demonstration, and each result's `execution_id` identifies its
+capability execution. A shared result has the same execution ID across related
+manifests. Repeating execution creates new UUIDs. Repackaging preserves those
+UUIDs; CI run and attempt are separate provenance and filename components.
+The catalog does not average different spec/software versions into a grade.
+
+New releases attach five grouped ZIPs, `CATALOG.md` and `BUNDLE-SHA256SUMS`.
+Generic `report.*` and `SHA256SUMS` remain deprecated compatibility assets for
+existing consumers; they describe the older combined fixture export, not the
+new demo catalog. Published releases, including v1.2.0, are not rewritten.
+
+`task verify` tests identities, archive path safety and integrity. `task demo:runs`
+tests extraction and byte-identical report regeneration with the released image.
+CI repeats consumption on native AMD64 and ARM64 and publishes individual JUnit
+cases in run summaries; the verification check includes archive tests. Raw reports
+and bundles are retained for 14 days. Failed expectation tests fail CI even when
+the expected capability outcome is FAIL or INSUFFICIENT_EVIDENCE. Output directories
+must be new; move prior artifacts aside before repeating a local export.
