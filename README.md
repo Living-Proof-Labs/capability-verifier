@@ -181,9 +181,9 @@ produces INSUFFICIENT_EVIDENCE in the separate controls; mandatory failure remai
 FAIL. Incompatible execution has no fabricated assessments. Never combine these
 coordinates into a single grade.
 
-The adapter itself is an **unreleased feature-branch preview**, identified by the
-producer commit. The exception ends when its reviewed release is published; no
-future tag is claimed. Its source dependencies are already published releases.
+The matrix adapter was published in [verifier v1.2.0](https://github.com/Living-Proof-Labs/capability-verifier/releases/tag/v1.2.0).
+Its producer commit identifies the source used for each execution; its source
+dependencies are also pinned to published releases.
 The original `task bundle` remains available. Both installed reporter integrations
 now consume released reporter v1.6.0, which supports execution compatibility.
 No reporter code is vendored or changed here.
