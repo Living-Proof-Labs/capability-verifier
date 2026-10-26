@@ -145,16 +145,6 @@ jobs:
           DEMO_VERSION: ${{ needs.verify.outputs.source-version }}
           DEMO_ARCH: ${{ matrix.architecture }}
         run: task -t Taskfile.reporter.yml test
-      - name: Native archive test results
-        if: ${{ !cancelled() }}
-        uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3.2.0
-        with:
-          name: Archive consumption ${{ matrix.architecture }}
-          path: artifacts/archives.xml
-          reporter: python-xunit
-          use-actions-summary: 'true'
-          fail-on-error: 'true'
-          fail-on-empty: 'true'
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
@@ -218,8 +208,31 @@ jobs:
                   stream.write("<tr>" + "".join("<td>" + html.escape(v) + "</td>" for v in values) + "</tr>")
               stream.write("</table>\n")
           PYCODE
+  report-results:
+    needs: report
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-tests-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: native-results
+      - name: Native archive test results
+        uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3.2.0
+        with:
+          name: Native archive consumption
+          path: native-results/**/archives.xml
+          reporter: python-xunit
+          use-actions-summary: 'true'
+          collapsed: never
+          fail-on-error: 'true'
+          fail-on-empty: 'true'
   release:
-    needs: [verify, report]
+    needs: [verify, report, report-results]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
