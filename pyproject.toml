@@ -7,11 +7,19 @@ license = "Apache-2.0"
 dependencies = []
 
 [dependency-groups]
-dev = ["pytest==8.4.2", "pytest-bdd==8.1.0", "ruff==0.14.2"]
+dev = [
+    "playwright==1.64.1",
+    "pytest==8.4.2",
+    "pytest-bdd==8.1.0",
+    "ruff==0.14.2",
+    "zensical==0.0.73",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 addopts = "-ra"
+testpaths = ["tests"]
+norecursedirs = ["tests/docs"]
 junit_family = "legacy"
 markers = ["reference_v1: released catalog revision 1 scenarios"]
 

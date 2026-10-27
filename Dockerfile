@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 FROM ghcr.io/astral-sh/uv:0.12.23 AS uv
-FROM python:3.12.12-slim-bookworm
+FROM python:3.12.12-slim-bookworm AS runtime
 COPY --from=uv /uv /usr/local/bin/uv
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl && rm -rf /var/lib/apt/lists/*
 # Official, pinned installer verifies the released binary checksum. No Node/npm needed.
@@ -18,3 +18,8 @@ RUN --mount=type=secret,id=ca,required=false \
     task -t Taskfile.runtime.yml setup
 ENTRYPOINT ["task", "-t", "Taskfile.runtime.yml"]
 CMD ["demo"]
+
+# Browser tooling is isolated from the existing fixture runtime.
+FROM runtime AS documentation
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+RUN uv run --locked --no-sync playwright install --with-deps chromium

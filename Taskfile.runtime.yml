@@ -43,3 +43,15 @@ tasks:
     desc: Export five related manifests from released executions
     cmds:
       - uv run --locked --no-sync python tools/export_demo.py artifacts/demo-inputs
+  docs:
+    desc: Build the Markdown manual from current verification results
+    cmds:
+      - uv run --locked --no-sync python tools/docs.py
+  docs:test:setup:
+    desc: Install the pinned Chromium browser for manual verification
+    cmds:
+      - uv run --locked --no-sync playwright install chromium
+  test:docs:
+    desc: Exercise manual pages, assets, search, navigation and themes
+    cmds:
+      - uv run --locked --no-sync pytest tests/docs -v --junitxml=artifacts/docs-tests.xml

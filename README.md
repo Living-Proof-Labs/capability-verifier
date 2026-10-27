@@ -70,6 +70,12 @@ version, evidence digest, runner/evaluator/policy versions, and null simulator
 provenance because no simulator is involved. Pause does not imply an emergency
 stop. Emergency stop is not universally equivalent to removing power.
 
+## Documentation preview
+
+[Build and review the Markdown manual](docs/documentation.md). The tested HTML
+preview is retained in CI for 14 days. Public Pages activation remains pending;
+no live manual is claimed yet.
+
 ## Development
 
 Use `task setup`, `task check`, `task test`, `task verify` or `task demo` on the
@@ -96,7 +102,7 @@ No proprietary code or data is included.
 
 Open a focused draft PR with a Conventional Commit title. Ready and merge only
 after validation and authorization; release automation uses
-[collaboration-guidelines v2.0.3](https://github.com/Living-Proof-Labs/collaboration-guidelines/tree/v2.0.3).
+[collaboration-guidelines v2.2.0](https://github.com/Living-Proof-Labs/collaboration-guidelines/tree/v2.2.0).
 GitHub release notes are generated; no generated changelog or version bumps are
 committed. The Python project version is a development placeholder; release tags
 identify published source.

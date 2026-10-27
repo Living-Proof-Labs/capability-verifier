@@ -2,7 +2,7 @@
 version: '3'
 env:
   SOURCE_COMMIT:
-    sh: git rev-parse HEAD
+    sh: 'if [ -n "$SOURCE_COMMIT" ]; then echo "$SOURCE_COMMIT"; else git rev-parse HEAD; fi'
 tasks:
   setup:
     cmds:
@@ -53,3 +53,15 @@ tasks:
     cmds:
       - task: demo:inputs
       - task: demo:report
+  docs:
+    desc: Build the Markdown manual in the shared runtime
+    cmds:
+      - docker compose run --build --rm documentation docs
+  docs:test:setup:
+    desc: Prepare the pinned documentation browser in the shared runtime
+    cmds:
+      - docker compose build documentation
+  test:docs:
+    desc: Verify the manual in the shared runtime
+    cmds:
+      - docker compose run --build --rm documentation test:docs
