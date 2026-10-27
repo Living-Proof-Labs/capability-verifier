@@ -119,7 +119,66 @@ def test_themes_and_mobile_navigation(browser_page):
     page.set_viewport_size({"width": 390, "height": 844})
     page.goto(base)
     page.locator('label.md-header__button[for="__drawer"]').first.click()
-    page.get_by_role("link", name="Task reference", exact=True).first.click()
+    page.locator("label.md-nav__link").filter(has_text="Reference").click()
+    page.get_by_role("link", name="Tasks", exact=True).first.click()
     page.wait_for_url("**/tasks.html")
     assert page.locator("h1").inner_text().rstrip("¶") == "Task reference"
     page.screenshot(path=str(SITE.parent / "mobile-manual.png"), full_page=True)
+
+
+def test_shared_discovery_and_preserved_bookmarks():
+    commit = json.loads((SITE / "build.json").read_text())["commit"]
+    for name in (
+        "index.html",
+        "tasks.html",
+        "scenarios.html",
+        "provenance.html",
+        "pages.html",
+        "docs/documentation.html",
+        "docs/matrix-validation.html",
+        "docs/contributing.html",
+        "docs/license.html",
+    ):
+        content = (SITE / name).read_text()
+        links = Links(content).links
+        assert "https://docs.livingprooflabs.com/" in links
+        assert f"https://github.com/Living-Proof-Labs/capability-verifier/tree/{commit}" in links
+        assert "https://github.com/Living-Proof-Labs/capability-verifier/issues" in links
+        assert "Docs: development" in content
+    bookmarks = {
+        "index.html": [
+            "documentation-preview",
+            "portable-reporting-input",
+            "released-execution-compatibility-matrix-preview",
+        ],
+        "docs/documentation.html": ["publication-pending-delivery"],
+        "provenance.html": ["version-context"],
+        "tasks.html": ["demoruns", "matrixreport"],
+    }
+    for name, anchors in bookmarks.items():
+        assert set(anchors) <= Links((SITE / name).read_text()).ids
+    assert "development placeholder" in (SITE / "provenance.html").read_text()
+    assert "No line coverage is measured" in (SITE / "scenarios.html").read_text()
+
+
+def test_nested_keyboard_discovery_and_deep_link_reload(browser_page):
+    page, base = browser_page
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto(base + "docs/documentation.html#publication-pending-delivery")
+    page.reload()
+    assert page.locator("#publication-pending-delivery").count() == 1
+    page.goto(base + "docs/contributing.html")
+    page.keyboard.press("Tab")
+    for _ in range(40):
+        href = page.locator(":focus").get_attribute("href")
+        if href == "https://docs.livingprooflabs.com/":
+            break
+        page.keyboard.press("Tab")
+    else:
+        pytest.fail("Documentation home was not reachable by keyboard from a nested page")
+    page.goto(base + "tasks.html#demoruns")
+    page.reload()
+    assert page.locator("#demoruns").is_visible()
+    page.goto(base + "docs/license.html")
+    assert "Apache-2.0" in page.locator("article").inner_text()
+    assert "CC BY 4.0" in page.locator("article").inner_text()
