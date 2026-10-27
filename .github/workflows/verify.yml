@@ -77,6 +77,7 @@ jobs:
         with:
           name: portable-results-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/bundle/
+          retention-days: 14
           if-no-files-found: error
       - run: task demo
         if: ${{ !cancelled() }}
@@ -188,6 +189,7 @@ jobs:
         with:
           name: capability-reports-${{ matrix.architecture }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: reports/
+          retention-days: 14
           if-no-files-found: error
       - name: Capability decisions and downloadable reports
         env:
@@ -232,7 +234,7 @@ jobs:
           fail-on-error: 'true'
           fail-on-empty: 'true'
   release:
-    needs: [verify, report, report-results]
+    needs: [verify, report, report-results, documentation]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
@@ -274,3 +276,88 @@ jobs:
           gh release upload "$RELEASE_TAG" reports/report.* reports/SHA256SUMS --repo "$GITHUB_REPOSITORY"
           gh release upload "$RELEASE_TAG" release-runs/*.zip release-runs/CATALOG.md release-runs/BUNDLE-SHA256SUMS --repo "$GITHUB_REPOSITORY"
           gh release edit "$RELEASE_TAG" --draft=false --repo "$GITHUB_REPOSITORY"
+
+  documentation:
+    runs-on: ubuntu-24.04
+    env:
+      GITHUB_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e
+        with:
+          version: '3.54.0'
+      - run: task verify
+      - run: task docs
+        if: ${{ !cancelled() && hashFiles('artifacts/results.xml') != '' }}
+      - run: task test:docs
+        if: ${{ !cancelled() && hashFiles('artifacts/docs/html/build.json') != '' }}
+      - name: Visible documentation and fixture results
+        if: ${{ !cancelled() }}
+        uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a
+        with:
+          name: Documentation and fixture verification
+          path: artifacts/results.xml,artifacts/docs-tests.xml
+          reporter: python-xunit
+          use-actions-summary: 'true'
+          collapsed: never
+          fail-on-error: 'true'
+          fail-on-empty: 'true'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: preview
+        if: ${{ !cancelled() }}
+        with:
+          name: documentation-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            artifacts/docs/
+            artifacts/docs-tests.xml
+            artifacts/test-context.json
+          retention-days: 14
+          if-no-files-found: error
+      - name: Download the actual review artifact for layout verification
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: documentation-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/preview-extracted
+      - name: Verify shipped preview instructions against the extracted archive
+        run: task docs:archive:check
+      - name: Preview download
+        if: ${{ !cancelled() }}
+        env:
+          PREVIEW_URL: ${{ steps.preview.outputs.artifact-url }}
+        run: echo "[Manual preview and individual test evidence]($PREVIEW_URL) — 14-day retention. Extract all files and serve docs/html over loopback HTTP; see docs/documentation.md." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          path: artifacts/docs/html
+  documentation-deploy:
+    needs: [documentation, verify, report, report-results]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: capability-verifier-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check current main inside deployment lock
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          python - <<'PYCODE'
+          import json, os, urllib.request
+          url = 'https://api.github.com/repos/Living-Proof-Labs/capability-verifier/git/ref/heads/main'
+          with urllib.request.urlopen(url, timeout=30) as response:
+              current = json.load(response)['object']['sha']
+          if current != os.environ['EXPECTED_SHA']:
+              raise SystemExit('Refusing stale documentation: main advanced')
+          PYCODE
+      - uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+        id: deployment
