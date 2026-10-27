@@ -317,6 +317,13 @@ jobs:
             artifacts/test-context.json
           retention-days: 14
           if-no-files-found: error
+      - name: Download the actual review artifact for layout verification
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: documentation-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/preview-extracted
+      - name: Verify shipped preview instructions against the extracted archive
+        run: task docs:archive:check
       - name: Preview download
         if: ${{ !cancelled() }}
         env:

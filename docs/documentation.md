@@ -21,8 +21,12 @@ downloads the browser pinned by Playwright 1.64.1; no host settings change.
 
 Download the **documentation-<commit>** artifact from
 [Verify and release](https://github.com/Living-Proof-Labs/capability-verifier/actions/workflows/verify.yml)
-within 14 days. Extract the entire artifact and serve its `html` directory over
-loopback HTTP, for example `python -m http.server 8000 --bind 127.0.0.1 --directory html`.
+within 14 days. Extract the entire artifact. From the extracted artifact root,
+serve `docs/html` over loopback HTTP:
+
+```sh
+python -m http.server 8000 --bind 127.0.0.1 --directory docs/html
+```
 Open `http://127.0.0.1:8000/`. Direct Android content-provider opening is not verified.
 The artifact includes source hashes, build version/commit, test outcomes and JUnit.
 

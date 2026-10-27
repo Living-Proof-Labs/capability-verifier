@@ -65,3 +65,7 @@ tasks:
     desc: Verify the manual in the shared runtime
     cmds:
       - docker compose run --build --rm documentation test:docs
+  docs:archive:check:
+    desc: Check the downloaded artifact using its shipped preview instructions
+    cmds:
+      - docker compose run --build --rm verifier docs:archive:check

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+import hashlib
 import json
 import os
 import threading
@@ -53,6 +54,10 @@ def test_all_local_pages_assets_and_fragments():
 def test_version_and_real_results():
     info = json.loads((SITE / "build.json").read_text())
     results = json.loads((SITE / "feature-results.json").read_text())
+    assert (
+        info["sources"][".github/PAGES.md"]
+        == hashlib.sha256((SITE.parents[2] / ".github/PAGES.md").read_bytes()).hexdigest()
+    )
     assert len(info["commit"]) == 40
     assert len(results) == info["collected"] > 5
     assert len([r for r in results if r["id"].startswith("tests.test_reference::")]) == 5

@@ -55,3 +55,7 @@ tasks:
     desc: Exercise manual pages, assets, search, navigation and themes
     cmds:
       - uv run --locked --no-sync pytest tests/docs -v --junitxml=artifacts/docs-tests.xml
+  docs:archive:check:
+    desc: Check the downloaded artifact using its shipped preview instructions
+    cmds:
+      - uv run --locked --no-sync python tools/check_docs_archive.py

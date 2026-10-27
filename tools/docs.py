@@ -22,6 +22,7 @@ def source_identity():
             for p in (ROOT / directory).rglob("*")
             if p.is_file() and "__pycache__" not in p.parts and p.suffix in (".py", ".md", ".json")
         )
+    paths.append(ROOT / ".github/PAGES.md")
     paths.extend(ROOT.glob("*.md"))
     paths.extend(ROOT.glob("*.lock.json"))
     lock = json.loads((ROOT / "specs.lock.json").read_text())
