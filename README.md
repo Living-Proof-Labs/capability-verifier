@@ -7,6 +7,8 @@ multiple evaluators, then apply an explicit grading policy. This is a determinis
 fixture demonstration, **not robot safety certification**. No robot, simulator,
 AI service, dashboard or server is required.
 
+## Quickstart
+
 Install [Git](https://git-scm.com/downloads),
 [Docker with Compose v2](https://docs.docker.com/compose/install/), and
 [Task 3.54.0](https://taskfile.dev/docs/installation), then start Docker.

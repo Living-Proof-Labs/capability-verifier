@@ -2,18 +2,25 @@
 site_name: Capability verifier
 site_url: https://docs.livingprooflabs.com/capability-verifier/
 repo_url: https://github.com/Living-Proof-Labs/capability-verifier
+repo_name: Source
 use_directory_urls: false
 strict: true
 docs_dir: artifacts/docs/source
 site_dir: artifacts/docs/html
 nav:
+  - Documentation home: https://docs.livingprooflabs.com/
   - Start here: index.md
-  - Task reference: tasks.md
+  - Guides: docs/guides.md
+  - Reference:
+      - Tasks: tasks.md
   - Scenarios and results: scenarios.md
-  - Build and review: docs/documentation.md
-  - Historical matrix validation: docs/matrix-validation.md
-  - Pages preparation: pages.md
-  - Version context: provenance.md
+  - Verification: docs/documentation.md
+  - Contribute: docs/contributing.md
+  - Version and source: provenance.md
+  - Operations and history:
+      - Pages deployment: pages.md
+      - Historical matrix validation: docs/matrix-validation.md
+  - License: docs/license.md
 theme:
   name: zensical
   font: false

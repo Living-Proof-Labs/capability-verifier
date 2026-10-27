@@ -48,10 +48,10 @@ and runtime redesign are outside scope. The initial manual received
 Subsequent changes still require independent review of the delivered artifact.
 
 Shared standards are explicitly adopted at
-[collaboration-guidelines v5.0.0](https://github.com/Living-Proof-Labs/collaboration-guidelines/tree/v5.0.0),
-resolved to `dd4b0391a9a66fa7944f6655aac57c67d3f8c002`.
-See its [feature/results standard](https://github.com/Living-Proof-Labs/collaboration-guidelines/blob/v5.0.0/docs/developer-interface.md#observable-behavior-and-feature-coverage)
-and [independent review](https://github.com/Living-Proof-Labs/collaboration-guidelines/blob/v5.0.0/docs/independent-review.md).
+[collaboration-guidelines v6.0.0](https://github.com/Living-Proof-Labs/collaboration-guidelines/tree/v6.0.0),
+resolved to `52a2f274576dab20e96ee1152b6c8d187cfbf377`.
+See its [feature/results standard](https://github.com/Living-Proof-Labs/collaboration-guidelines/blob/v6.0.0/docs/developer-interface.md#observable-behavior-and-feature-coverage)
+and [independent review](https://github.com/Living-Proof-Labs/collaboration-guidelines/blob/v6.0.0/docs/independent-review.md).
 The existing release workflow pin stays v2.2.0 deliberately; this adoption does
 not upgrade release automation or the released runtime dependencies.
 
@@ -72,6 +72,9 @@ own source revision; this evidence does not establish later revisions or robot
 safety. Review downloads expire after 14 days; the live manual is the durable
 reading destination.
 
-Related reading: [Living Proof manual](https://docs.livingprooflabs.com/livingproof/).
-For reporter and specification contracts use the released source links in the
-README until their own rendered manuals have been verified.
+Related reading: [Living Proof manual](https://docs.livingprooflabs.com/livingproof/),
+[reporter manual](https://docs.livingprooflabs.com/livingproof-capability-report/)
+and [capability specifications](https://docs.livingprooflabs.com/robot-capability-specs/).
+These current manuals are reading aids; executable examples keep the exact released
+versions recorded in this repository. [Documentation home](https://docs.livingprooflabs.com/)
+owns the full organization directory.

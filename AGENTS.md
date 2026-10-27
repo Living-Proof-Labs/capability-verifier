@@ -1,6 +1,6 @@
 # Working agreement
 
-Read and apply https://github.com/Living-Proof-Labs/collaboration-guidelines/blob/v5.0.0/AGENTS.md
+Read and apply https://github.com/Living-Proof-Labs/collaboration-guidelines/blob/v6.0.0/AGENTS.md
 and its relevant linked procedures at that same version. Links do not load instructions.
 
 Local additions: use `task verify` from the host, or `task -t Taskfile.runtime.yml
@@ -17,3 +17,7 @@ Documentation adoption uses Zensical 0.0.73. Keep repository Markdown canonical;
 generate Task and executable-scenario references from the tested checkout.
 Pages deployment is approved only for main with scoped deployment permissions;
 the parent coordinates repository settings and independent review.
+
+Current rendered manuals, Documentation home and source-directory links are
+intentional navigation exceptions to version pinning. Guidance, executable
+examples, dependencies and release workflows retain explicit released pins.
