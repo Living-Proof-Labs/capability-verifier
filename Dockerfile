@@ -23,3 +23,6 @@ CMD ["demo"]
 FROM runtime AS documentation
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 RUN uv run --locked --no-sync playwright install --with-deps chromium
+
+# Plain docker build keeps the original runtime as its default output.
+FROM runtime AS default

@@ -24,6 +24,8 @@ def source_identity():
         )
     paths.extend(ROOT.glob("*.md"))
     paths.extend(ROOT.glob("*.lock.json"))
+    lock = json.loads((ROOT / "specs.lock.json").read_text())
+    paths.extend(ROOT / ".specs" / name for name in lock["files"])
     return {
         str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths)
     }
@@ -41,6 +43,8 @@ def build():
     if context["commit"] != commit:
         raise ValueError("Verification revision changed; run task verify")
     report = ROOT / "artifacts/results.xml"
+    if hashlib.sha256(report.read_bytes()).hexdigest() != context["junit_sha256"]:
+        raise ValueError("JUnit differs from the completed verification run")
     cases = ET.parse(report).findall(".//testcase")
     if not cases or len(cases) != context["collected"]:
         raise ValueError("Missing or incomplete verification results")
