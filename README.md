@@ -1,5 +1,7 @@
 # Capability verifier
 
+**[Start here: documentation](https://docs.livingprooflabs.com/capability-verifier/)**
+
 A small Python reference for Living Proof Labs: collect evidence, assess it with
 multiple evaluators, then apply an explicit grading policy. This is a deterministic
 fixture demonstration, **not robot safety certification**. No robot, simulator,
@@ -70,11 +72,14 @@ version, evidence digest, runner/evaluator/policy versions, and null simulator
 provenance because no simulator is involved. Pause does not imply an emergency
 stop. Emergency stop is not universally equivalent to removing power.
 
-## Documentation preview
+<span id="documentation-preview"></span>
 
-[Build and review the Markdown manual](docs/documentation.md). The tested HTML
-preview is retained in CI for 14 days. Public Pages activation remains pending;
-no live manual is claimed yet.
+## Documentation
+
+Read the [published manual](https://docs.livingprooflabs.com/capability-verifier/)
+or [build and review it locally](docs/documentation.md). Tested HTML previews
+remain available in CI for 14 days. The manual records its source revision and
+verification results.
 
 ## Development
 

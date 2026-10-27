@@ -43,8 +43,9 @@ AMD64/ARM64 CI integration, not a claim made by source pytest results.
 Before this change there was no browsable manual or generated Task/scenario
 inventory. The initial manual covers existing fixture inputs, execution, manifests,
 version provenance and report bundles. Full API documentation, new simulator work,
-and runtime redesign are outside scope. Independent installed-artifact review is
-still required; the author cannot supply independent review evidence.
+and runtime redesign are outside scope. The initial manual received
+[independent review](https://github.com/Living-Proof-Labs/capability-verifier/pull/12#issuecomment-6434036027).
+Subsequent changes still require independent review of the delivered artifact.
 
 Shared standards are explicitly adopted at
 [collaboration-guidelines v5.0.0](https://github.com/Living-Proof-Labs/collaboration-guidelines/tree/v5.0.0),
@@ -54,16 +55,22 @@ and [independent review](https://github.com/Living-Proof-Labs/collaboration-guid
 The existing release workflow pin stays v2.2.0 deliberately; this adoption does
 not upgrade release automation or the released runtime dependencies.
 
-## Publication pending delivery
+<span id="publication-pending-delivery"></span>
 
-The intended URL is `https://docs.livingprooflabs.com/capability-verifier/`.
-It is not a verified live manual. [Pages preparation](../.github/PAGES.md) names
-exact settings and permissions needed. Scoped approval permits main-only deployment, with Pages-write and identity-token
-permissions confined to the deployment job. The parent coordinates repository
-settings. No domain or DNS change is included.
-After activation and independent review, verify the deployed revision, navigation,
-search results, themes, related manuals and assets under the project path. Only
-then add the prominent live README link and documentation-directory entry.
+## Published manual
+
+Read the [Capability verifier manual](https://docs.livingprooflabs.com/capability-verifier/).
+[Run 40452638380](https://github.com/Living-Proof-Labs/capability-verifier/actions/runs/40452638380)
+deployed source `29b5a250bfc902cd526381dabdc33fb80999535f`. Live browser verification
+on 2026-10-27 confirmed valid TLS, that exact source/run identity, Task `demo:runs`
+and scenario navigation, matrix search to `matrix:report` and refresh, dark theme,
+and the distinction between fixture test outcomes and capability statuses.
+
+[Pages deployment](../.github/PAGES.md) records the main-only workflow and scoped
+deployment permissions. Future deployments must repeat live checks against their
+own source revision; this evidence does not establish later revisions or robot
+safety. Review downloads expire after 14 days; the live manual is the durable
+reading destination.
 
 Related reading: [Living Proof manual](https://docs.livingprooflabs.com/livingproof/).
 For reporter and specification contracts use the released source links in the
