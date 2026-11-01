@@ -10,6 +10,8 @@ RUN --mount=type=secret,id=ca,required=false \
     sh /tmp/install-task.sh -b /usr/local/bin v3.54.0 && rm /tmp/install-task.sh
 ARG SOURCE_COMMIT
 ENV SOURCE_COMMIT=${SOURCE_COMMIT}
+ARG LIVINGPROOF_VERIFIER_VERSION
+ENV LIVINGPROOF_VERIFIER_VERSION=${LIVINGPROOF_VERIFIER_VERSION}
 WORKDIR /app
 ENV UV_PYTHON_DOWNLOADS=never PYTHONPATH=/app/src
 COPY . .

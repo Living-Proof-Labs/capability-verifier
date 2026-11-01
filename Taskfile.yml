@@ -3,6 +3,8 @@ version: '3'
 env:
   SOURCE_COMMIT:
     sh: 'if [ -n "$SOURCE_COMMIT" ]; then echo "$SOURCE_COMMIT"; else git rev-parse HEAD; fi'
+  LIVINGPROOF_VERIFIER_VERSION:
+    sh: 'if [ -n "$LIVINGPROOF_VERIFIER_VERSION" ]; then echo "$LIVINGPROOF_VERIFIER_VERSION"; else git describe --tags --abbrev=0 2>/dev/null | sed "s/^v//"; fi'
 tasks:
   setup:
     cmds:

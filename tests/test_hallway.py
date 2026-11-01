@@ -3,9 +3,14 @@
 
 import copy
 import importlib.util
+import os
 import hashlib
 import json
 import re
+import shutil
+import subprocess
+import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -375,3 +380,42 @@ def test_missing_trials_use_the_planned_n():
     s = hallway.aggregate(trials, PLAN)
     assert (s["k"], s["n"], s["grade"]) == (18, 20, hallway.INSUFFICIENT)
     assert s["wilson95"] == hallway.wilson(18, 20) == [0.6990, 0.9721]
+
+
+def test_export_needs_no_git(tmp_path, monkeypatch):
+    """Images exclude .git: the producer version comes from the env or package metadata."""
+    tree = tmp_path / "tree"
+    shutil.copytree(Path(__file__).parents[1] / "tools", tree / "tools")
+    for name in ("hallway-specs.lock.json", "pyproject.toml"):
+        shutil.copy(Path(__file__).parents[1] / name, tree)
+    src = tmp_path / "evidence"
+    src.mkdir()
+    manifest = _manifest(src)
+    env = {
+        **os.environ,
+        "SOURCE_COMMIT": "0" * 40,
+        "GIT_CEILING_DIRECTORIES": str(tmp_path),
+        "PATH": os.environ["PATH"],
+        "PYTHONPATH": str(Path(__file__).parents[1] / "src"),
+    }
+    assert not (tree / ".git").exists()
+    for version, expected in (("v1.4.2", "1.4.2"), ("", None)):
+        out = tmp_path / f"verified-{expected}"
+        env["LIVINGPROOF_VERIFIER_VERSION"] = version
+        subprocess.run(
+            [sys.executable, "tools/verify_hallway.py", str(manifest), str(out), "--prototype"],
+            cwd=tree,
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        producer = json.loads((out / "bundle" / "manifest.json").read_text())["producer"]
+        assert producer["commit"] == "0" * 40
+        declared = tomllib.loads((tree / "pyproject.toml").read_text())["project"]["version"]
+        assert producer["version"] == (expected or declared)
+
+
+def test_producer_version_rejects_a_non_release(monkeypatch):
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "main")
+    with pytest.raises(ValueError, match="not X.Y.Z"):
+        _tool().producer_version()

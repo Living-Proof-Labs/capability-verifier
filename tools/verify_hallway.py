@@ -11,17 +11,39 @@ which writes the placeholder tag ``v0.0.0`` and says so in every result's proven
 """
 
 import argparse
+import importlib.metadata
 import json
 import os
 import re
 import shutil
 import tempfile
+import tomllib
 import subprocess
 from pathlib import Path
 
 from capability_verifier import hallway
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def producer_version() -> str:
+    """X.Y.Z for the bundle producer, never from git (images have no .git).
+
+    LIVINGPROOF_VERIFIER_VERSION (set by Task from the nearest release tag, or by a release
+    build) wins; otherwise the installed package metadata, or pyproject's declared
+    [project].version when the package is not installed.
+    """
+    raw = os.environ.get("LIVINGPROOF_VERIFIER_VERSION", "").strip()
+    if not raw:
+        try:
+            raw = importlib.metadata.version("capability-verifier")
+        except importlib.metadata.PackageNotFoundError:
+            # Not installed (the image runs from PYTHONPATH): the declared project version.
+            raw = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    version = raw.removeprefix("v")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise ValueError(f"verifier version {raw!r} is not X.Y.Z")
+    return version
 
 
 def export(manifest_path: Path, out: Path, prototype: bool = False) -> dict:
@@ -129,15 +151,11 @@ def _export(manifest_path: Path, out: Path, prototype: bool) -> dict:
         os.environ.get("SOURCE_COMMIT")
         or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     )
-    described = subprocess.check_output(
-        ["git", "describe", "--tags", "--abbrev=0"], cwd=ROOT, text=True
-    ).strip()
-    # The schema takes X.Y.Z only: the nearest release tag; 'commit' names the exact head.
     bundle = {
         "schema_version": "1.0.0",
         "producer": {
             "id": "capability-verifier",
-            "version": described.removeprefix("v"),
+            "version": producer_version(),
             "commit": commit,
         },
         "results": results,
