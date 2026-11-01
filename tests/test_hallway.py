@@ -189,34 +189,40 @@ def any_missing(ctx):
     assert ctx["missing"]["status"] == hallway.INSUFFICIENT
 
 
-@given("<trials> trial results of one configuration")
-def results(ctx):
+@given(
+    parsers.parse("{trials:d} trial results of one configuration, of which {passed:d} pass"),
+    target_fixture="trial_set",
+)
+def results(trials, passed):
+    return [{"status": hallway.PASS}] * passed + [{"status": hallway.FAIL}] * (trials - passed)
+
+
+@when("the trial results are aggregated", target_fixture="agg")
+def aggregated(trial_set):
+    return hallway.aggregate(trial_set, PLAN)
+
+
+@then(
+    parsers.parse(
+        "the result reports {passed:d} of {trials:d} with Wilson 95% interval {low:f} to {high:f}"
+    )
+)
+def wilson(agg, passed, trials, low, high):
+    assert (agg["k"], agg["n"]) == (passed, trials)
+    assert agg["wilson95"] == [low, high]
+
+
+@then(parsers.parse("the grade is {grade} because at least {required_passes:d} trials must pass"))
+def grade(agg, grade, required_passes):
+    assert PLAN["required_passes"] == required_passes
+    assert agg["grade"] == grade
+
+
+def test_insufficient_evidence_blocks_a_pass_it_could_change():
+    """Not in the catalog's Examples: 17 PASS + 1 INSUFFICIENT + 2 FAIL of 20 (needs 18)."""
     ok = {"status": hallway.PASS}
-    ctx["sets"] = {
-        18: [ok] * 18 + [{"status": hallway.FAIL}] * 2,
-        17: [ok] * 17 + [{"status": hallway.FAIL}] * 3,
-        "unsure": [ok] * 17 + [{"status": hallway.INSUFFICIENT}] + [{"status": hallway.FAIL}] * 2,
-    }
-
-
-@when("the trial results are aggregated")
-def aggregated(ctx):
-    ctx["agg"] = {k: hallway.aggregate(v, PLAN) for k, v in ctx["sets"].items()}
-
-
-@then("the result reports passed trials k of N with its Wilson 95% interval")
-def wilson(ctx):
-    a = ctx["agg"][17]
-    assert (a["k"], a["n"]) == (17, 20)
-    assert a["wilson95"] == [0.6396, 0.9476]
-    assert hallway.wilson(12, 20) == [0.3866, 0.7812]  # matches the step 2 G1 stock run
-
-
-@then("the grade is PASS only if at least <required_passes> trials pass")
-def grade(ctx):
-    assert ctx["agg"][18]["grade"] == hallway.PASS
-    assert ctx["agg"][17]["grade"] == hallway.FAIL
-    assert ctx["agg"]["unsure"]["grade"] == hallway.INSUFFICIENT
+    unsure = [ok] * 17 + [{"status": hallway.INSUFFICIENT}] + [{"status": hallway.FAIL}] * 2
+    assert hallway.aggregate(unsure, PLAN)["grade"] == hallway.INSUFFICIENT
 
 
 def _manifest(tmp_path, plan=PLAN, failing_seed=None):
