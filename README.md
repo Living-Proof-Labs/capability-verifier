@@ -301,8 +301,10 @@ jobs:
     permissions: {contents: read, pull-requests: write}
 ```
 
-The robot repository provides the lock, a `pyproject.toml` runner source and a Taskfile with
-`setup` and `evidence`. Inputs `repository`, `ref`, `configurations` and `artifact-prefix`
+The robot repository provides the lock, `pins.json`, `tests/` and a `pyproject.toml` with
+the runner source and `[tool.livingproof] adapter = "<module>:ROBOT"`. The workflow runs
+lint, profile validation and the robot's tests (`check`, disable with `check: false`) and
+the evidence through `livingproof_sim_mujoco.evidence`; no robot Taskfile targets are used. Inputs `repository`, `ref`, `configurations` and `artifact-prefix`
 let a cross-robot workflow call it once per robot. `python3 -m capability_verifier.repin
 --root ROBOT_REPO --check` (or `runner=vX.Y.Z verifier=… reporter=…`) replaces the robot
 repositories' `tools/repin.py`.

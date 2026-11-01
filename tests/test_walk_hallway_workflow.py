@@ -28,3 +28,17 @@ def test_capability_fail_is_not_a_ci_failure_and_reporter_posts_the_comment():
     assert "livingproof-capability-report comment --repo" in STEPS
     assert "pr_comment.py" not in STEPS and "gh api" not in STEPS
     assert "pull-requests: write" in STEPS
+
+
+def test_check_and_evidence_need_no_robot_taskfile():
+    assert "task " not in STEPS and "go-task/setup-task" not in STEPS
+    assert '["tool"]["livingproof"]["adapter"]' in STEPS
+    assert 'python -m livingproof_sim_mujoco.evidence "$ADAPTER"' in STEPS
+    for step in (
+        "ruff check .",
+        "ruff format --check .",
+        "pytest tests --junitxml",
+        "uv sync --locked",
+    ):
+        assert step in STEPS, step
+    assert "if: inputs.check" in STEPS
