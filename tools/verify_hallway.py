@@ -114,8 +114,9 @@ def export(manifest_path: Path, out: Path, prototype: bool = False) -> dict:
         or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     )
     described = subprocess.check_output(
-        ["git", "describe", "--tags", "--always"], cwd=ROOT, text=True
+        ["git", "describe", "--tags", "--abbrev=0"], cwd=ROOT, text=True
     ).strip()
+    # The schema takes X.Y.Z only: the nearest release tag; 'commit' names the exact head.
     bundle = {
         "schema_version": "1.0.0",
         "producer": {
