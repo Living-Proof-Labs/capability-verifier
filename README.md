@@ -308,3 +308,12 @@ the evidence through `livingproof_sim_mujoco.evidence`; no robot Taskfile target
 let a cross-robot workflow call it once per robot. `python3 -m capability_verifier.repin
 --root ROBOT_REPO --check` (or `runner=vX.Y.Z verifier=… reporter=…`) replaces the robot
 repositories' `tools/repin.py`.
+
+The `media` job (on by default, `media: false` to skip) runs `livingproof_sim_mujoco.media`:
+an MCAP file for every trial and a video for the first PASS and the first FAIL seed, each
+re-run checked against its evidence sha256. It uploads `<prefix>mcap-<configuration>` and
+`<prefix>video-<configuration>-seed-NN-{pass,fail}` artifacts and writes their
+`artifact-url`s and the run URL to `<prefix>links-<configuration>`, which the report job
+passes to `grade --evidence-links`; the reporter renders them in report.md, report.json and
+the PR comment. Needs a runner with the `media` extra (>= 1.6.0) and reporter >= 1.11.0. A
+media failure never blocks the report; it is then rendered without links.

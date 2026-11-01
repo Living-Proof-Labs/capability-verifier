@@ -42,3 +42,21 @@ def test_check_and_evidence_need_no_robot_taskfile():
     ):
         assert step in STEPS, step
     assert "if: inputs.check" in STEPS
+
+
+def test_media_links_are_named_artifacts_handed_to_the_reporter():
+    assert "if: inputs.media" in STEPS
+    assert 'python -m livingproof_sim_mujoco.media "$ADAPTER"' in STEPS
+    for name in ("mcap-", "video-", "links-"):
+        assert "${{ inputs.artifact-prefix }}" + name in STEPS, name
+    for step in (
+        "steps.mcap.outputs.artifact-url",
+        "steps.video-pass.outputs.artifact-url",
+        "steps.video-fail.outputs.artifact-url",
+        "actions/runs/${{ github.run_id }}",
+    ):
+        assert step in STEPS, step
+    assert "--evidence-links links/evidence-links.json" in STEPS
+    # the report never waits on media succeeding, and links are rendered only by the reporter
+    assert "needs: [plan, verify, media]" in STEPS
+    assert "needs.verify.result == 'success'" in STEPS
