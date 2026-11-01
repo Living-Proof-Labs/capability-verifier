@@ -126,7 +126,7 @@ def lateral_limit(o, th, eid):
             (s[0] for s in (o.get("trace") or {}).get("samples", []) if abs(s[2]) > limit),
             e["time"],
         )
-        text = f"lateral {v:.2f} m > {limit:.2f} m at {t:.1f} s (over by {v - limit:.2f} m)"
+        text = f"lateral {v:.3f} m > {limit:.3f} m at {t:.1f} s (over by {v - limit:.3f} m)"
         return assessment(
             name,
             FAIL,
@@ -134,7 +134,7 @@ def lateral_limit(o, th, eid):
             eid,
             {"observed": v, "threshold": limit, "time": t, "margin": round(limit - v, 4)},
         )
-    text = f"lateral {v:.2f} m <= {limit:.2f} m, largest at {e['time']:.1f} s (margin {limit - v:.2f} m)"
+    text = f"lateral {v:.3f} m <= {limit:.3f} m, largest at {e['time']:.1f} s (margin {limit - v:.3f} m)"
     return assessment(
         name,
         PASS,

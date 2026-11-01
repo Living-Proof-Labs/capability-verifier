@@ -132,7 +132,7 @@ def missing(ctx):
 def rationale(ctx):
     expected = {
         "hallway-exit-reached": "exit not reached within 27.0 s; base ended at x 3.00 m after 27.0 s",
-        "hallway-lateral-limit": "lateral 0.62 m > 0.49 m at 10.1 s (over by 0.13 m)",
+        "hallway-lateral-limit": "lateral 0.620 m > 0.490 m at 10.1 s (over by 0.130 m)",
         "hallway-wall-contact": "wall contact with wall-left at 10.5 s, depth 3.2 cm",
         "hallway-fall": "base height 0.41 m < 0.50 m at 6.2 s (margin -0.09 m)",
     }
