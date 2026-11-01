@@ -3,7 +3,8 @@
 #   check (lint, profiles, robot tests) | plan (lock -> matrix, repin --check) -> evidence
 #   (livingproof_sim_mujoco.evidence on the robot's adapter) -> verify (this verifier at the lock's commit) ->
 #   media (MCAP for every trial, video for the first PASS and FAIL seeds, named artifacts and
-#   their URLs) -> report (reporter image from the lock, with the run and artifact links) ->
+#   their URLs) -> report (reporter image from the lock: renders bundle 1.1.0 decisions on
+#   reporter >= 2.0.0, grades bundle 1.0.0 below it; with the run and artifact links) ->
 #   comment (reporter image `comment`).
 # Every ref comes from the robot repository's verification.lock.json; nothing is pinned here.
 # A capability FAIL is the result, not a CI failure. One call = one robot lock, so a
@@ -118,6 +119,7 @@ jobs:
       verifier-version: ${{ steps.lock.outputs.verifier-version }}
       reporter-image: ${{ steps.lock.outputs.reporter-image }}
       media-capable: ${{ steps.capability.outputs.media-capable }}
+      bundle-version: ${{ steps.capability.outputs.bundle-version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -145,8 +147,11 @@ jobs:
             echo "verifier-version=$(jq -r '.releases.verifier.tag | ltrimstr("v")' verification.lock.json)"
             echo "reporter-image=$(jq -r '.releases.reporter.image + ":" + (.releases.reporter.tag | ltrimstr("v")) + "@" + .releases.reporter.digest' verification.lock.json)"
           } >> "$GITHUB_OUTPUT"
-      - name: Media capability from the locks (runner >= 1.6.0 with mcap, reporter >= 1.11.0)
-        # Robots still on runner 1.5.0 / reporter 1.10.0 skip media instead of failing it.
+      - name: Media and bundle capability from the locks
+        # Media needs runner >= 1.6.0 with mcap and reporter >= 1.11.0; robots still on runner
+        # 1.5.0 / reporter 1.10.0 skip media instead of failing it. Bundle 1.1.0 (the verifier's
+        # own decisions, rendered by the reporter, never regraded) needs verifier >= 1.9.0 and
+        # reporter >= 2.0.0; anything older keeps bundle 1.0.0 and the reporter's grade.
         id: capability
         working-directory: robot
         run: |
@@ -155,13 +160,16 @@ jobs:
           def version(text):
               return tuple(int(part) for part in text.lstrip("v").split(".")[:3])
           packages = {p["name"]: p["version"] for p in tomllib.load(open("uv.lock", "rb"))["package"]}
-          reporter = json.load(open("verification.lock.json"))["releases"]["reporter"]["tag"]
+          releases = json.load(open("verification.lock.json"))["releases"]
+          reporter, verifier = releases["reporter"]["tag"], releases["verifier"]["tag"]
           capable = (
               version(packages.get("livingproof-sim-mujoco", "0")) >= (1, 6, 0)
               and "mcap" in packages
               and version(reporter) >= (1, 11, 0)
           )
           print(f"media-capable={str(capable).lower()}")
+          assessed = version(verifier) >= (1, 9, 0) and version(reporter) >= (2, 0, 0)
+          print(f"bundle-version={'1.1.0' if assessed else '1.0.0'}")
           PY
       - name: Capability verifier at the locked release (for repin)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -238,8 +246,13 @@ jobs:
         with:
           name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
           path: evidence
-      - name: Assess every trial (no grade here)
-        run: PYTHONPATH=src uv run --no-sync python tools/verify_hallway.py evidence/manifest.json verified
+      - name: Assess every trial (bundle 1.1.0 also carries the verifier's decisions)
+        env:
+          BUNDLE_VERSION: ${{ needs.plan.outputs.bundle-version }}
+        run: |
+          set --
+          if [ "$BUNDLE_VERSION" != 1.0.0 ]; then set -- --bundle-version "$BUNDLE_VERSION"; fi
+          PYTHONPATH=src uv run --no-sync python tools/verify_hallway.py "$@" evidence/manifest.json verified
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -378,14 +391,20 @@ jobs:
         with:
           name: ${{ inputs.artifact-prefix }}links-${{ matrix.configuration }}
           path: links
-      - name: Validate, grade and render (a capability FAIL exits 0)
+      - name: Validate, then render the verifier's decisions or grade (a capability FAIL exits 0)
+        env:
+          BUNDLE_VERSION: ${{ needs.plan.outputs.bundle-version }}
         run: |
           livingproof-capability-report --version
           livingproof-capability-report validate verified/bundle/manifest.json
           mkdir reports
           set --
           if [ -f links/evidence-links.json ]; then set -- --evidence-links links/evidence-links.json; fi
-          livingproof-capability-report grade verified/bundle/manifest.json "$@" -o reports/report.json
+          if [ "$BUNDLE_VERSION" = 1.0.0 ]; then
+            livingproof-capability-report grade verified/bundle/manifest.json "$@" -o reports/report.json
+          else
+            livingproof-capability-report render verified/bundle/manifest.json "$@" --format json -o reports/report.json
+          fi
           livingproof-capability-report render reports/report.json --format markdown -o reports/report.md
           livingproof-capability-report render reports/report.json --format html -o reports/report.html
           livingproof-capability-report render reports/report.json > reports/report.txt

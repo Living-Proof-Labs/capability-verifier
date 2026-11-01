@@ -325,9 +325,15 @@ an MCAP file for every trial and a video for the first PASS and the first FAIL s
 re-run checked against its evidence sha256. It uploads `<prefix>mcap-<configuration>` and
 `<prefix>video-<configuration>-seed-NN-{pass,fail}` artifacts and writes their
 `artifact-url`s and the run URL to `<prefix>links-<configuration>`, which the report job
-passes to `grade --evidence-links`; the reporter renders them in report.md, report.json and
+passes to `--evidence-links` (of `grade` or `render`, below); the reporter renders them in report.md, report.json and
 the PR comment. It runs only when the robot's locks can use it (`uv.lock` has
 livingproof-sim-mujoco >= 1.6.0 with the `media` extra, and the reporter tag is >= 1.11.0);
 robots still on older pins skip it instead of failing. A skipped or failed media job never
 blocks the report or the PR comment; the report is then rendered without links. Release
 uploads use `--clobber`, so re-running a partly uploaded release still publishes it.
+
+Which bundle the chain writes follows the robot's lock. With verifier >= 1.9.0 and
+reporter >= 2.0.0, `verify` writes bundle 1.1.0 (the verifier's own decisions and run
+assessments) and the report job calls the reporter's `render` on it, which grades
+nothing. Any older pair keeps bundle 1.0.0 and the reporter's `grade`, so robots pinned to
+reporter 1.x keep working unchanged. Both paths produce the same report.md and PR comment.
