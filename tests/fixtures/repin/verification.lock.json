@@ -1,0 +1,56 @@
+{
+  "format": "livingproof-verification-lock/1.0.0",
+  "scenario": "walk-hallway@0.1.0",
+  "$comment": "releases is the one place release refs live. PENDING_RELEASE entries are filled by `task repin -- runner=vX.Y.Z verifier=vX.Y.Z reporter=vX.Y.Z` once those tags exist; `task repin:check` fails while any remain.",
+  "releases": {
+    "specs": {
+      "repository": "Living-Proof-Labs/robot-capability-specs",
+      "tag": "v1.6.1",
+      "commit": "0bdf1db3f975b044692c0b8f1ec37737ad8b889f"
+    },
+    "runner": {
+      "repository": "Living-Proof-Labs/livingproof-sim-mujoco",
+      "tag": "v1.4.1",
+      "commit": "95ecbd3aae3cfcf81a684398fbf7651281e4eb3a"
+    },
+    "verifier": {
+      "repository": "Living-Proof-Labs/capability-verifier",
+      "tag": "v1.5.0",
+      "commit": "c3aab9ea977b07ee395d20720bd4bbbac7305283"
+    },
+    "reporter": {
+      "repository": "Living-Proof-Labs/livingproof-capability-report",
+      "tag": "v1.9.0",
+      "commit": "e60fddec27d3e27b541764a78460d7fece144b3f",
+      "image": "ghcr.io/living-proof-labs/livingproof-capability-report",
+      "digest": "sha256:a7ef8603f44cc5296962e97e8153f9f40e145ef7a631e562a905adefa6fe386e"
+    }
+  },
+  "world": {
+    "id": "hallway-open",
+    "version": "0.1.0",
+    "repository": "Living-Proof-Labs/livingproof-worlds",
+    "tag": "v1.1.0",
+    "commit": "9b3e7119aa93a3370383227fb30bd39a9dd72b4b"
+  },
+  "configurations": [
+    {
+      "name": "stock",
+      "version": "1.1.0",
+      "path": "configurations/stock.json",
+      "sha256": "fd25cf73d41b76c84ef89ef9500586664f848a713d708ca2d3165aca72db9f77"
+    },
+    {
+      "name": "playground",
+      "version": "1.0.0",
+      "path": "configurations/playground.json",
+      "sha256": "a10f322a115e734365d5fb0b967611b73349e92a58f8268f55ba6cd7ee404270"
+    }
+  ],
+  "plan": {
+    "trials": 20,
+    "seeds": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+    "command_speed": 0.5,
+    "required_passes": 18
+  }
+}

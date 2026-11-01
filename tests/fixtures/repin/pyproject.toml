@@ -1,0 +1,43 @@
+[project]
+name = "livingproof-unitree-g1"
+version = "0.1.0"
+description = "Unitree G1 robot package: pinned model, published controllers and the hallway walk check"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "mujoco==3.17.0",
+    "numpy>=1.26",
+    "pyyaml>=6",
+    "imageio[ffmpeg]>=2.34",
+    "livingproof-sim-mujoco[torch]",
+    "jsonschema>=4.26.0",
+    "referencing>=0.37.0",
+]
+
+[dependency-groups]
+dev = ["pytest==8.4.2", "ruff==0.14.2"]
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lpl_g1"]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+# The runner. PENDING_RELEASE: `task repin -- runner=v1.4.0` rewrites this line to the released
+# tag (verification.lock.json releases.runner). 3de1a91 predates hallway.observe, so
+# `task evidence` needs the repin; lint and unit tests do not.
+livingproof-sim-mujoco = { git = "https://github.com/Living-Proof-Labs/livingproof-sim-mujoco.git", tag = "v1.4.1" }
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
