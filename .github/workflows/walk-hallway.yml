@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # Reusable walk-hallway verification chain for one robot repository:
-#   plan (lock -> matrix, repin --check) -> evidence (robot repo's `task setup` and
-#   `task evidence CONFIGURATION=…`) -> verify (this verifier at the lock's commit) ->
+#   check (lint, profiles, robot tests) | plan (lock -> matrix, repin --check) -> evidence
+#   (livingproof_sim_mujoco.evidence on the robot's adapter) -> verify (this verifier at the lock's commit) ->
 #   report (reporter image from the lock) -> comment (reporter image `comment`).
 # Every ref comes from the robot repository's verification.lock.json; nothing is pinned here.
 # A capability FAIL is the result, not a CI failure. One call = one robot lock, so a
 # cross-robot compare.yml fans out by calling this workflow once per robot repository and
 # merging the verified-* bundles it uploads.
 #
-# Robot repository contract: verification.lock.json, pyproject.toml (runner source), and a
-# Taskfile with `setup` and `evidence` (writes artifacts/evidence/<configuration>/).
+# Robot repository contract: verification.lock.json, pins.json, tests/, and a pyproject.toml
+# with the runner source and `[tool.livingproof] adapter = "<module>:<object>"` (a
+# livingproof_sim_mujoco.evidence Robot adapter). CI needs no robot Taskfile targets.
 #
 #   jobs:
 #     walk-hallway:
@@ -39,6 +40,10 @@ on:
         description: Post or update the PR comment (same-repository pull requests only)
         type: boolean
         default: true
+      check:
+        description: Run lint, profile validation and the robot repository's tests
+        type: boolean
+        default: true
     outputs:
       configurations:
         description: JSON list of the configurations that ran
@@ -49,6 +54,53 @@ on:
 permissions:
   contents: read
 jobs:
+  check:
+    if: inputs.check
+    runs-on: ubuntu-24.04
+    env:
+      MUJOCO_GL: osmesa
+      PYOPENGL_PLATFORM: osmesa
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
+      - run: python3 -m pip install --user uv==0.13.6
+      - name: Setup (locked environment, pinned upstream files)
+        run: |
+          uv sync --locked
+          uv run --no-sync python -c "from pathlib import Path; from livingproof_sim_mujoco import pins; print(len(pins.fetch(Path('.'))), 'pinned files verified')"
+      - name: Robot adapter from pyproject.toml
+        id: adapter
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+          print("ref=" + tomllib.load(open("pyproject.toml", "rb"))["tool"]["livingproof"]["adapter"])
+          PY
+      - run: uv run --no-sync ruff check .
+      - run: uv run --no-sync ruff format --check .
+      - name: Robot and configuration profiles valid
+        env:
+          ADAPTER: ${{ steps.adapter.outputs.ref }}
+        run: |
+          uv run --no-sync python - <<'PY'
+          import importlib, os
+          module, name = os.environ["ADAPTER"].split(":")
+          robot = getattr(importlib.import_module(module), name)
+          names = [c["name"] for c in robot.robot()["configurations"]]
+          for n in names:
+              robot.configuration(n)
+          print("profiles valid:", ", ".join(names))
+          PY
+      - run: mkdir -p artifacts && uv run --no-sync pytest tests --junitxml=artifacts/tests.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ !cancelled() }}
+        with:
+          name: ${{ inputs.artifact-prefix }}tests
+          path: artifacts/tests.xml
+          retention-days: 14
   plan:
     runs-on: ubuntu-24.04
     outputs:
@@ -111,13 +163,23 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           persist-credentials: false
-      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e
-        with:
-          version: '3.54.0'
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
       - run: python3 -m pip install --user uv==0.13.6
-      - run: task setup
-      - run: task evidence CONFIGURATION="$CONFIGURATION"
+      - name: Setup (locked environment, pinned upstream files)
+        run: |
+          uv sync --locked
+          uv run --no-sync python -c "from pathlib import Path; from livingproof_sim_mujoco import pins; print(len(pins.fetch(Path('.'))), 'pinned files verified')"
+      - name: Robot adapter from pyproject.toml
+        id: adapter
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+          print("ref=" + tomllib.load(open("pyproject.toml", "rb"))["tool"]["livingproof"]["adapter"])
+          PY
+      - name: Evidence (observations only, no grade)
+        env:
+          ADAPTER: ${{ steps.adapter.outputs.ref }}
+        run: uv run --no-sync python -m livingproof_sim_mujoco.evidence "$ADAPTER" "$CONFIGURATION" "artifacts/evidence/$CONFIGURATION"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
