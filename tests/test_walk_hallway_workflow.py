@@ -109,3 +109,41 @@ def test_release_uploads_replace_assets_so_a_rerun_still_publishes():
     verify = (Path(__file__).parents[1] / ".github/workflows/verify.yml").read_text()
     uploads = [line for line in verify.splitlines() if "gh release upload" in line]
     assert uploads and all("--clobber" in line for line in uploads)
+
+
+def test_pre_and_dev_releases_fail_closed_and_never_count_as_the_release(tmp_path):
+    import json
+    import subprocess
+    import sys
+
+    def run(reporter, runner="1.6.0"):
+        (tmp_path / "uv.lock").write_text(
+            f'[[package]]\nname = "livingproof-sim-mujoco"\nversion = "{runner}"\n\n'
+            '[[package]]\nname = "mcap"\nversion = "1.6.0"\n'
+        )
+        (tmp_path / "verification.lock.json").write_text(
+            json.dumps({"releases": {"reporter": {"tag": reporter}}})
+        )
+        done = subprocess.run(
+            [sys.executable, "-c", _capability_script()],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+        )
+        assert done.returncode == 0, done.stderr  # no crash on any tag
+        return done.stdout.strip(), done.stderr
+
+    assert run("v1.11.0rc1")[0] == "media-capable=false"
+    assert "reporter v1.11.0rc1 is a pre-release or dev release" in run("v1.11.0rc1")[1]
+    out, err = run("v2.0.0.dev1")
+    assert out == "media-capable=false" and "v2.0.0.dev1 is a pre-release or dev" in err
+    out, err = run("v1.11.0", runner="1.6.0rc2")
+    assert out == "media-capable=false" and "livingproof-sim-mujoco 1.6.0rc2" in err
+    out, err = run("not-a-version")
+    assert out == "media-capable=false" and "not a PEP 440 version" in err
+    assert run("v1.11.0.post1") == ("media-capable=true", "")  # a post-release is a release
+
+
+def test_capability_installs_pinned_packaging_before_the_gate():
+    block = WORKFLOW[WORKFLOW.index("id: capability") :]
+    assert block.index("pip install --user packaging==") < block.index("<<'PY'")

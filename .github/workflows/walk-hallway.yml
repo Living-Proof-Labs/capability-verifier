@@ -147,19 +147,33 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       - name: Media capability from the locks (runner >= 1.6.0 with mcap, reporter >= 1.11.0)
         # Robots still on runner 1.5.0 / reporter 1.10.0 skip media instead of failing it.
+        # Versions compare by PEP 440; a pre-release or dev tag never counts as the release.
         id: capability
         working-directory: robot
         run: |
+          python3 -m pip install --user packaging==26.3
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, tomllib
-          def version(text):
-              return tuple(int(part) for part in text.lstrip("v").split(".")[:3])
+          import json, sys, tomllib
+          from packaging.version import InvalidVersion, Version
+          def at_least(what, text, minimum):
+              # PEP 440. Fails closed: a pre-release, dev release or unparsable version is
+              # never the final release it precedes (1.7.0rc1 and 2.0.0.dev1 are not >= x.y.0).
+              try:
+                  version = Version(text)
+              except InvalidVersion:
+                  print(f"::warning::{what} {text!r} is not a PEP 440 version; treated as below {minimum}", file=sys.stderr)
+                  return False
+              if version.is_prerelease or version.is_devrelease:
+                  print(f"::warning::{what} {text} is a pre-release or dev release; treated as below {minimum}", file=sys.stderr)
+                  return False
+              return version >= Version(minimum)
           packages = {p["name"]: p["version"] for p in tomllib.load(open("uv.lock", "rb"))["package"]}
           reporter = json.load(open("verification.lock.json"))["releases"]["reporter"]["tag"]
+          runner = packages.get("livingproof-sim-mujoco", "0")
           capable = (
-              version(packages.get("livingproof-sim-mujoco", "0")) >= (1, 6, 0)
+              at_least("runner livingproof-sim-mujoco", runner, "1.6.0")
               and "mcap" in packages
-              and version(reporter) >= (1, 11, 0)
+              and at_least("reporter", reporter, "1.11.0")
           )
           print(f"media-capable={str(capable).lower()}")
           PY
