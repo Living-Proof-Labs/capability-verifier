@@ -288,3 +288,21 @@ Human and agent conclusions enter through `recorded=` and are judged by the same
 changes only the `"tag"` line (and `"commit"` if the release commit differs).
 
     PYTHONPATH=src python tools/verify_hallway.py <evidence>/manifest.json <out> [--prototype]
+
+## Reusable walk-hallway workflow (robot repositories)
+
+A robot repository's whole CI chain is one call; every ref comes from its
+`verification.lock.json`:
+
+```yaml
+jobs:
+  walk-hallway:
+    uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@<release commit>
+    permissions: {contents: read, pull-requests: write}
+```
+
+The robot repository provides the lock, a `pyproject.toml` runner source and a Taskfile with
+`setup` and `evidence`. Inputs `repository`, `ref`, `configurations` and `artifact-prefix`
+let a cross-robot workflow call it once per robot. `python3 -m capability_verifier.repin
+--root ROBOT_REPO --check` (or `runner=vX.Y.Z verifier=… reporter=…`) replaces the robot
+repositories' `tools/repin.py`.

@@ -1,0 +1,217 @@
+# SPDX-License-Identifier: Apache-2.0
+# Reusable walk-hallway verification chain for one robot repository:
+#   plan (lock -> matrix, repin --check) -> evidence (robot repo's `task setup` and
+#   `task evidence CONFIGURATION=…`) -> verify (this verifier at the lock's commit) ->
+#   report (reporter image from the lock) -> comment (reporter image `comment`).
+# Every ref comes from the robot repository's verification.lock.json; nothing is pinned here.
+# A capability FAIL is the result, not a CI failure. One call = one robot lock, so a
+# cross-robot compare.yml fans out by calling this workflow once per robot repository and
+# merging the verified-* bundles it uploads.
+#
+# Robot repository contract: verification.lock.json, pyproject.toml (runner source), and a
+# Taskfile with `setup` and `evidence` (writes artifacts/evidence/<configuration>/).
+#
+#   jobs:
+#     walk-hallway:
+#       uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@<commit>
+#       permissions: {contents: read, pull-requests: write}
+name: walk-hallway
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: Robot repository to verify (default the caller)
+        type: string
+        default: ''
+      ref:
+        description: Robot repository ref (default the caller's ref)
+        type: string
+        default: ''
+      configurations:
+        description: JSON list of configuration names to run (default every one in the lock)
+        type: string
+        default: ''
+      artifact-prefix:
+        description: Prefix for artifact names, unique per call when fanning out
+        type: string
+        default: ''
+      comment:
+        description: Post or update the PR comment (same-repository pull requests only)
+        type: boolean
+        default: true
+    outputs:
+      configurations:
+        description: JSON list of the configurations that ran
+        value: ${{ jobs.plan.outputs.configurations }}
+      report-artifacts:
+        description: Download pattern for the per-configuration capability reports
+        value: ${{ inputs.artifact-prefix }}capability-report-*
+permissions:
+  contents: read
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      configurations: ${{ steps.lock.outputs.configurations }}
+      verifier-repository: ${{ steps.lock.outputs.verifier-repository }}
+      verifier-commit: ${{ steps.lock.outputs.verifier-commit }}
+      verifier-version: ${{ steps.lock.outputs.verifier-version }}
+      reporter-image: ${{ steps.lock.outputs.reporter-image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref }}
+          path: robot
+          persist-credentials: false
+      - name: Refs from verification.lock.json
+        id: lock
+        working-directory: robot
+        env:
+          ONLY: ${{ inputs.configurations }}
+        run: |
+          all=$(jq -c '[.configurations[].name]' verification.lock.json)
+          if [ -n "$ONLY" ]; then
+            configurations=$(jq -cn --argjson all "$all" --argjson only "$ONLY" \
+              'if ($only - $all) == [] then $only else error("not in the lock: \($only - $all)") end')
+          else
+            configurations=$all
+          fi
+          {
+            echo "configurations=$configurations"
+            echo "verifier-repository=$(jq -r '.releases.verifier.repository' verification.lock.json)"
+            echo "verifier-commit=$(jq -r '.releases.verifier.commit' verification.lock.json)"
+            echo "verifier-version=$(jq -r '.releases.verifier.tag | ltrimstr("v")' verification.lock.json)"
+            echo "reporter-image=$(jq -r '.releases.reporter.image + ":" + (.releases.reporter.tag | ltrimstr("v")) + "@" + .releases.reporter.digest' verification.lock.json)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Capability verifier at the locked release (for repin)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ steps.lock.outputs.verifier-repository }}
+          ref: ${{ steps.lock.outputs.verifier-commit }}
+          path: verifier
+          persist-credentials: false
+      - name: Every ref is a released tag
+        run: python3 verifier/src/capability_verifier/repin.py --root robot --check
+  evidence:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: ${{ fromJSON(needs.plan.outputs.configurations) }}
+    env:
+      CONFIGURATION: ${{ matrix.configuration }}
+      MUJOCO_GL: osmesa
+      PYOPENGL_PLATFORM: osmesa
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e
+        with:
+          version: '3.54.0'
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
+      - run: python3 -m pip install --user uv==0.13.6
+      - run: task setup
+      - run: task evidence CONFIGURATION="$CONFIGURATION"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
+          path: artifacts/evidence/${{ matrix.configuration }}/
+          retention-days: 30
+          if-no-files-found: error
+  verify:
+    needs: [plan, evidence]
+    runs-on: ubuntu-24.04
+    env:
+      LIVINGPROOF_VERIFIER_VERSION: ${{ needs.plan.outputs.verifier-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: ${{ fromJSON(needs.plan.outputs.configurations) }}
+    steps:
+      - name: Capability verifier at the locked release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ needs.plan.outputs.verifier-repository }}
+          ref: ${{ needs.plan.outputs.verifier-commit }}
+          persist-credentials: false
+      - run: python3 -m pip install --user uv==0.13.6
+      - run: uv sync --locked
+      - name: Walk-hallway catalog from the verifier's own lock
+        run: uv run --no-sync python tools/fetch_hallway_specs.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
+          path: evidence
+      - name: Assess every trial (no grade here)
+        run: PYTHONPATH=src uv run --no-sync python tools/verify_hallway.py evidence/manifest.json verified
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ${{ inputs.artifact-prefix }}verified-${{ matrix.configuration }}
+          path: verified/
+          retention-days: 30
+          if-no-files-found: error
+  report:
+    needs: [plan, verify]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: ${{ fromJSON(needs.plan.outputs.configurations) }}
+    container:
+      image: ${{ needs.plan.outputs.reporter-image }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact-prefix }}verified-${{ matrix.configuration }}
+          path: verified
+      - name: Validate, grade and render (a capability FAIL exits 0)
+        run: |
+          livingproof-capability-report --version
+          livingproof-capability-report validate verified/bundle/manifest.json
+          mkdir reports
+          livingproof-capability-report grade verified/bundle/manifest.json -o reports/report.json
+          livingproof-capability-report render reports/report.json --format markdown -o reports/report.md
+          livingproof-capability-report render reports/report.json --format html -o reports/report.html
+          livingproof-capability-report render reports/report.json > reports/report.txt
+          (cd reports && sha256sum report.* > SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ inputs.artifact-prefix }}capability-report-${{ matrix.configuration }}
+          path: reports/
+          retention-days: 30
+          if-no-files-found: error
+      - name: Capability report in job summary
+        run: cat reports/report.md >> "$GITHUB_STEP_SUMMARY"
+  comment:
+    # One PR comment for every configuration: the reporter renders and posts it (image
+    # `comment` subcommand, reporter >= 1.10.0), updated in place under its hidden marker.
+    needs: [plan, report]
+    if: >-
+      inputs.comment && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (inputs.repository == '' || inputs.repository == github.repository)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    container:
+      image: ${{ needs.plan.outputs.reporter-image }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: ${{ inputs.artifact-prefix }}capability-report-*
+          path: reports
+      - name: Post or update the capability-report comment
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: livingproof-capability-report comment --repo "$REPO" --pr "$PR" reports/*/report.md
