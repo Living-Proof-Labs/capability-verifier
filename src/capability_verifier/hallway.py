@@ -79,127 +79,158 @@ def _extreme(o, name):
     return e
 
 
-def exit_reached(o, th, eid):
+def _length(v, limit):
+    """Fewest decimals (at least 2) at which observed and limit no longer read as equal."""
+    for d in range(2, 7):
+        if f"{v:.{d}f}" != f"{limit:.{d}f}":
+            return f"{v:.{d}f}", f"{limit:.{d}f}"
+    return f"{v:.6g}", f"{limit:.6g}"
+
+
+def failure(check, observed, limit, unit, t, seed, **extra):
+    """Structured failed check, so a PR comment can group failures."""
+    return {
+        "check": check,
+        "observed": observed,
+        "limit": limit,
+        "unit": unit,
+        "t": None if t is None else round(t, 2),
+        "seed": seed,
+        **extra,
+    }
+
+
+def _seed(seed):
+    return f" (seed {seed})" if seed is not None else ""
+
+
+def _insufficient(name, what, eid, seed):
+    return assessment(
+        name, INSUFFICIENT, f"missing or malformed observation {what}{_seed(seed)}", eid
+    )
+
+
+def exit_reached(o, th, eid, seed=None):
     name = "hallway-exit-reached"
     if "exit_time" not in o or not (o["exit_time"] is None or _num(o["exit_time"])):
-        return assessment(name, INSUFFICIENT, "missing or malformed observation exit_time", eid)
+        return _insufficient(name, "exit_time", eid, seed)
     t, limit = o["exit_time"], th["time_limit"]
     if t is None:
-        last = (o.get("trace") or {}).get("samples") or [[None, None]]
-        x = last[-1][1]
-        where = (
-            f"; base ended at x {x:.2f} m after {o.get('duration_s', 0):.1f} s" if _num(x) else ""
+        end = o.get("duration_s") if _num(o.get("duration_s")) else limit
+        f = failure(name, None, limit, "s", end, seed)
+        text = f"exit not reached by {limit:.2f} s{_seed(seed)}"
+        return assessment(
+            name, FAIL, text, eid, {"observed": None, "threshold": limit, "failures": [f]}
         )
+    margin = round(limit - t, 4)
+    if t > limit:
+        f = failure(name, t, limit, "s", t, seed)
+        text = f"exit {t:.2f} s > {limit:.2f} s at {t:.2f} s{_seed(seed)}"
         return assessment(
             name,
             FAIL,
-            f"exit not reached within {limit:.1f} s{where}",
+            text,
             eid,
-            {"observed": None, "threshold": limit},
+            {"observed": t, "threshold": limit, "time": t, "margin": margin, "failures": [f]},
         )
-    margin = round(limit - t, 4)
-    ok = t <= limit
-    text = (
-        f"exit at {t:.1f} s {'<=' if ok else '>'} {limit:.1f} s "
-        f"({abs(margin):.1f} s {'spare' if ok else 'late'})"
-    )
+    text = f"exit at {t:.2f} s <= {limit:.2f} s ({margin:.2f} s spare){_seed(seed)}"
     return assessment(
-        name,
-        PASS if ok else FAIL,
-        text,
-        eid,
-        {"observed": t, "threshold": limit, "time": t, "margin": margin},
+        name, PASS, text, eid, {"observed": t, "threshold": limit, "time": t, "margin": margin}
     )
 
 
-def lateral_limit(o, th, eid):
+def lateral_limit(o, th, eid, seed=None):
     name = "hallway-lateral-limit"
     e = _extreme(o, "max_abs_lateral")
     if e is None:
-        return assessment(
-            name, INSUFFICIENT, "missing or malformed observation max_abs_lateral", eid
-        )
+        return _insufficient(name, "max_abs_lateral", eid, seed)
     v, limit = e["value"], th["lateral_limit"]
+    margin = round(limit - v, 6)
+    a, b = _length(v, limit)
     if v > limit:
         # First time over the limit, from the trace when it is present.
         t = next(
             (s[0] for s in (o.get("trace") or {}).get("samples", []) if abs(s[2]) > limit),
             e["time"],
         )
-        text = f"lateral {v:.3f} m > {limit:.3f} m at {t:.1f} s (over by {v - limit:.3f} m)"
+        f = failure(name, v, limit, "m", t, seed)
+        text = f"lateral {a} m > {b} m at {t:.2f} s{_seed(seed)}"
         return assessment(
             name,
             FAIL,
             text,
             eid,
-            {"observed": v, "threshold": limit, "time": t, "margin": round(limit - v, 4)},
+            {"observed": v, "threshold": limit, "time": t, "margin": margin, "failures": [f]},
         )
-    text = f"lateral {v:.3f} m <= {limit:.3f} m, largest at {e['time']:.1f} s (margin {limit - v:.3f} m)"
+    text = f"lateral {a} m <= {b} m, largest at {e['time']:.2f} s{_seed(seed)}"
     return assessment(
         name,
         PASS,
         text,
         eid,
-        {"observed": v, "threshold": limit, "time": e["time"], "margin": round(limit - v, 4)},
+        {"observed": v, "threshold": limit, "time": e["time"], "margin": margin},
     )
 
 
-def wall_contact(o, th, eid):
+def wall_contact(o, th, eid, seed=None):
     name = "hallway-wall-contact"
     contacts = o.get("wall_contacts")
     ok_shape = isinstance(contacts, list) and all(
         isinstance(c, dict) and _num(c.get("start")) and _num(c.get("depth")) for c in contacts
     )
     if not ok_shape:
-        return assessment(name, INSUFFICIENT, "missing or malformed observation wall_contacts", eid)
+        return _insufficient(name, "wall_contacts", eid, seed)
     if contacts:
+        fails = [
+            failure(name, c["depth"], 0.0, "m", c["start"], seed, wall=c.get("wall"))
+            for c in contacts
+        ]
         first = contacts[0]
-        deepest = max(c["depth"] for c in contacts)
-        more = (
-            f"; {len(contacts)} contacts, deepest {deepest * 100:.1f} cm"
-            if len(contacts) > 1
-            else ""
-        )
-        text = (
-            f"wall contact with {first.get('wall', 'a wall')} at {first['start']:.1f} s, "
-            f"depth {first['depth'] * 100:.1f} cm{more}"
-        )
+        a, _ = _length(first["depth"], 0.0)
+        more = f"; {len(contacts)} contacts" if len(contacts) > 1 else ""
+        text = f"wall contact depth {a} m at {first['start']:.2f} s{_seed(seed)}{more}"
         return assessment(
             name,
             FAIL,
             text,
             eid,
-            {"observed": len(contacts), "threshold": 0, "time": first["start"], "margin": -deepest},
+            {
+                "observed": len(contacts),
+                "threshold": 0,
+                "time": first["start"],
+                "margin": -max(c["depth"] for c in contacts),
+                "failures": fails,
+            },
         )
     samples = (o.get("trace") or {}).get("samples") or []
     if samples and len(samples[0]) > 4:
         closest = min(samples, key=lambda s: s[4])
-        text = f"no wall contact; closest {closest[4] * 100:.1f} cm at {closest[0]:.1f} s"
+        text = f"no wall contact; closest {closest[4]:.3f} m at {closest[0]:.2f} s{_seed(seed)}"
         details = {"observed": 0, "threshold": 0, "time": closest[0], "margin": closest[4]}
     else:
-        text, details = "no wall contact", {"observed": 0, "threshold": 0}
+        text, details = f"no wall contact{_seed(seed)}", {"observed": 0, "threshold": 0}
     return assessment(name, PASS, text, eid, details)
 
 
-def fall(o, th, eid):
+def fall(o, th, eid, seed=None):
     name = "hallway-fall"
     e = _extreme(o, "min_base_height")
     if e is None:
-        return assessment(
-            name, INSUFFICIENT, "missing or malformed observation min_base_height", eid
-        )
+        return _insufficient(name, "min_base_height", eid, seed)
     v, limit = e["value"], th["fall_height"]
-    ok = v >= limit
-    text = (
-        f"base height {v:.2f} m {'>=' if ok else '<'} {limit:.2f} m at {e['time']:.1f} s "
-        f"(margin {v - limit:.2f} m)"
-    )
+    a, b = _length(v, limit)
+    details = {"observed": v, "threshold": limit, "time": e["time"], "margin": round(v - limit, 6)}
+    if v < limit:
+        details["failures"] = [failure(name, v, limit, "m", e["time"], seed)]
+        return assessment(
+            name, FAIL, f"base height {a} m < {b} m at {e['time']:.2f} s{_seed(seed)}", eid, details
+        )
     return assessment(
         name,
-        PASS if ok else FAIL,
-        text,
+        PASS,
+        f"base height {a} m >= {b} m, lowest at {e['time']:.2f} s{_seed(seed)}",
         eid,
-        {"observed": v, "threshold": limit, "time": e["time"], "margin": round(v - limit, 4)},
+        details,
     )
 
 
@@ -221,19 +252,22 @@ def policy(assessments, required):
     return PASS
 
 
-def assess_trial(observation, th, eid, recorded=(), required_assessors=()):
+def assess_trial(observation, th, eid, recorded=(), required_assessors=(), seed=None):
     if observation.get("format") != OBSERVATION_FORMAT:
         assessments = [
-            assessment(n, INSUFFICIENT, "unknown observation format", eid) for n in EVALUATORS
+            assessment(n, INSUFFICIENT, f"unknown observation format{_seed(seed)}", eid)
+            for n in EVALUATORS
         ]
     else:
-        assessments = [EVALUATE[n](observation, th, eid) for n in EVALUATORS]
+        assessments = [EVALUATE[n](observation, th, eid, seed) for n in EVALUATORS]
     for r in recorded:  # human or agent conclusions, never generated here
         if r.get("assessor", {}).get("type") not in ASSESSOR_TYPES - {"deterministic"}:
             raise ValueError("recorded assessments must name a human or agent assessor")
         assessments.append(r)
     required = list(EVALUATORS) + list(required_assessors)
-    return {"status": policy(assessments, required), "assessments": assessments}
+    status = policy(assessments, required)
+    found = [f for a in assessments for f in a.get("details", {}).get("failures", [])]
+    return {"status": status, "assessments": assessments, "failures": found}
 
 
 def wilson(k, n, z=1.959963984540054):
@@ -305,7 +339,9 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
                 eid,
                 (recorded or {}).get(eid, ()),
                 plan.get("required_assessors", ()),
+                t["seed"],
             )
+        res.setdefault("failures", [])
         trials.append(
             {
                 "id": eid,
@@ -320,6 +356,7 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
         "policy": POLICY,
         "trials": trials,
         "summary": aggregate(trials, plan),
+        "failures": [f for t in trials for f in t["failures"]],
     }
 
 

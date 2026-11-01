@@ -272,7 +272,10 @@ must be new; move prior artifacts aside before repeating a local export.
 four deterministic evaluators: `hallway-exit-reached`, `hallway-lateral-limit`,
 `hallway-wall-contact` and `hallway-fall`. It judges each trial with `all-required-v1`, then
 aggregates k of N with a Wilson 95% interval. Each rationale names the check, the time and the
-margin, for example `lateral 0.620 m > 0.490 m at 10.1 s (over by 0.130 m)`.
+limit, the time (2 decimals) and the seed, for example `lateral 0.62 m > 0.49 m at 10.26 s (seed 7)` or
+`wall contact depth 0.03 m at 4.50 s (seed 2)`. Lengths gain decimals until observed and limit differ. Each
+failed check is also structured as `{check, observed, limit, unit, t, seed}` (plus `wall` for contacts),
+listed per assessment (`details.failures`), per trial and for the whole run (`failures`).
 
 The trial plan (trials, seeds, command speed, required passes) is read from the evidence
 manifest. The manifest echoes the robot repository's committed `verification.lock.json`, so

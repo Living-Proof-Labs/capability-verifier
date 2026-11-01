@@ -101,7 +101,7 @@ def resolved(ctx):
 def assess(ctx, evaluator, name):
     ctx["evaluator"], ctx["name"] = evaluator, name
     ctx["pass"] = hallway.EVALUATE[evaluator](ctx["passing"], ctx["th"], "t")
-    ctx["fail"] = hallway.EVALUATE[evaluator](FAILING[name], ctx["th"], "t")
+    ctx["fail"] = hallway.EVALUATE[evaluator](FAILING[name], ctx["th"], "t", 7)
 
 
 @then(
@@ -131,12 +131,28 @@ def missing(ctx):
 @then("the rationale names the check, the time and the margin")
 def rationale(ctx):
     expected = {
-        "hallway-exit-reached": "exit not reached within 27.0 s; base ended at x 3.00 m after 27.0 s",
-        "hallway-lateral-limit": "lateral 0.620 m > 0.490 m at 10.1 s (over by 0.130 m)",
-        "hallway-wall-contact": "wall contact with wall-left at 10.5 s, depth 3.2 cm",
-        "hallway-fall": "base height 0.41 m < 0.50 m at 6.2 s (margin -0.09 m)",
+        "hallway-exit-reached": "exit not reached by 27.00 s (seed 7)",
+        "hallway-lateral-limit": "lateral 0.62 m > 0.49 m at 10.10 s (seed 7)",
+        "hallway-wall-contact": "wall contact depth 0.03 m at 10.50 s (seed 7)",
+        "hallway-fall": "base height 0.41 m < 0.50 m at 6.20 s (seed 7)",
     }
     assert ctx["fail"]["rationale"] == expected[ctx["evaluator"]]
+    structured = {
+        "hallway-exit-reached": {"observed": None, "limit": 27.0, "unit": "s", "t": 27.0},
+        "hallway-lateral-limit": {"observed": 0.62, "limit": 0.49, "unit": "m", "t": 10.1},
+        "hallway-wall-contact": {
+            "observed": 0.032,
+            "limit": 0.0,
+            "unit": "m",
+            "t": 10.5,
+            "wall": "wall-left",
+        },
+        "hallway-fall": {"observed": 0.41, "limit": 0.5, "unit": "m", "t": 6.2},
+    }
+    assert ctx["fail"]["details"]["failures"] == [
+        {"check": ctx["evaluator"], "seed": 7, **structured[ctx["evaluator"]]}
+    ]
+    assert "failures" not in ctx["pass"]["details"]
     assert " s" in ctx["pass"]["rationale"]
 
 
@@ -261,3 +277,25 @@ def test_recorded_human_assessment_is_judged_by_the_same_policy():
     assert r["status"] == hallway.INSUFFICIENT
     with pytest.raises(ValueError):
         hallway.assess_trial(observation(), TH, "t", recorded=[copy.deepcopy(r["assessments"][0])])
+
+
+def test_lengths_never_read_as_equal():
+    o = observation(max_abs_lateral={"value": 0.4904, "time": 9.2})
+    a = hallway.lateral_limit(o, TH, "t", 17)
+    assert a["rationale"] == "lateral 0.4904 m > 0.4900 m at 10.10 s (seed 17)"
+    assert a["details"]["failures"][0]["observed"] == 0.4904
+
+
+def test_failures_are_collected_per_trial_and_run(tmp_path):
+    r = hallway.verify(_manifest(tmp_path, failing_seed=7))
+    assert r["failures"] == [
+        {
+            "check": "hallway-lateral-limit",
+            "observed": 0.62,
+            "limit": 0.49,
+            "unit": "m",
+            "t": 10.1,
+            "seed": 7,
+        }
+    ]
+    assert r["trials"][6]["failures"] == r["failures"] and r["trials"][0]["failures"] == []
