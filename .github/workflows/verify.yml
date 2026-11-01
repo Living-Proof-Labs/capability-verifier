@@ -273,8 +273,8 @@ jobs:
         run: |
           (cd reports && sha256sum -c SHA256SUMS)
           # Generic legacy report files remain available for existing links.
-          gh release upload "$RELEASE_TAG" reports/report.* reports/SHA256SUMS --repo "$GITHUB_REPOSITORY"
-          gh release upload "$RELEASE_TAG" release-runs/*.zip release-runs/CATALOG.md release-runs/BUNDLE-SHA256SUMS --repo "$GITHUB_REPOSITORY"
+          gh release upload "$RELEASE_TAG" reports/report.* reports/SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$RELEASE_TAG" release-runs/*.zip release-runs/CATALOG.md release-runs/BUNDLE-SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
           gh release edit "$RELEASE_TAG" --draft=false --repo "$GITHUB_REPOSITORY"
 
   documentation:

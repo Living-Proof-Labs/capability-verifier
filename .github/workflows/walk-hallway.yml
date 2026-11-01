@@ -117,6 +117,7 @@ jobs:
       verifier-commit: ${{ steps.lock.outputs.verifier-commit }}
       verifier-version: ${{ steps.lock.outputs.verifier-version }}
       reporter-image: ${{ steps.lock.outputs.reporter-image }}
+      media-capable: ${{ steps.capability.outputs.media-capable }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -144,6 +145,24 @@ jobs:
             echo "verifier-version=$(jq -r '.releases.verifier.tag | ltrimstr("v")' verification.lock.json)"
             echo "reporter-image=$(jq -r '.releases.reporter.image + ":" + (.releases.reporter.tag | ltrimstr("v")) + "@" + .releases.reporter.digest' verification.lock.json)"
           } >> "$GITHUB_OUTPUT"
+      - name: Media capability from the locks (runner >= 1.6.0 with mcap, reporter >= 1.11.0)
+        # Robots still on runner 1.5.0 / reporter 1.10.0 skip media instead of failing it.
+        id: capability
+        working-directory: robot
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, tomllib
+          def version(text):
+              return tuple(int(part) for part in text.lstrip("v").split(".")[:3])
+          packages = {p["name"]: p["version"] for p in tomllib.load(open("uv.lock", "rb"))["package"]}
+          reporter = json.load(open("verification.lock.json"))["releases"]["reporter"]["tag"]
+          capable = (
+              version(packages.get("livingproof-sim-mujoco", "0")) >= (1, 6, 0)
+              and "mcap" in packages
+              and version(reporter) >= (1, 11, 0)
+          )
+          print(f"media-capable={str(capable).lower()}")
+          PY
       - name: Capability verifier at the locked release (for repin)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -231,7 +250,7 @@ jobs:
   media:
     # Recordings for links, never a grade: every seed is re-run and must hash to its evidence.
     needs: [plan, verify]
-    if: inputs.media
+    if: inputs.media && needs.plan.outputs.media-capable == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -383,8 +402,9 @@ jobs:
     # One PR comment for every configuration: the reporter renders and posts it (image
     # `comment` subcommand, reporter >= 1.10.0), updated in place under its hidden marker.
     needs: [plan, report]
+    # Runs whatever media did (failed, skipped or disabled): only the report gates it.
     if: >-
-      inputs.comment && github.event_name == 'pull_request' &&
+      always() && needs.report.result == 'success' && inputs.comment && github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (inputs.repository == '' || inputs.repository == github.repository)
     runs-on: ubuntu-24.04
