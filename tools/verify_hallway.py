@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import subprocess
 from pathlib import Path
 
@@ -24,8 +25,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def export(manifest_path: Path, out: Path, prototype: bool = False) -> dict:
-    manifest_path = Path(manifest_path)
-    out.mkdir(parents=True, exist_ok=False)
+    """Build into a sibling temporary directory and move it to ``out`` only on success."""
+    out = Path(out)
+    if out.exists():
+        raise FileExistsError(f"{out} already exists")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{out.name}.", dir=out.parent))
+    try:
+        result = _export(Path(manifest_path), staging, prototype)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    staging.chmod(0o755)  # mkdtemp creates 0700
+    staging.rename(out)
+    return result
+
+
+def _export(manifest_path: Path, out: Path, prototype: bool) -> dict:
     lock = json.loads((ROOT / "hallway-specs.lock.json").read_text())
     released = re.fullmatch(r"v\d+\.\d+\.\d+", lock["tag"]) is not None
     if not released and not prototype:
@@ -136,5 +152,8 @@ if __name__ == "__main__":
     p.add_argument("out", type=Path)
     p.add_argument("--prototype", action="store_true")
     a = p.parse_args()
-    r = export(a.manifest, a.out, a.prototype)
+    try:
+        r = export(a.manifest, a.out, a.prototype)
+    except hallway.ManifestError as e:
+        raise SystemExit(f"invalid evidence manifest {a.manifest}: {e}") from None
     print("\n".join(hallway.summary_lines(r)))

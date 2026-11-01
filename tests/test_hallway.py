@@ -2,8 +2,10 @@
 """Walk-hallway evaluators bound to the locked catalog's verifier scenarios."""
 
 import copy
+import importlib.util
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -299,3 +301,77 @@ def test_failures_are_collected_per_trial_and_run(tmp_path):
         }
     ]
     assert r["trials"][6]["failures"] == r["failures"] and r["trials"][0]["failures"] == []
+
+
+@pytest.mark.parametrize(
+    "drop, field",
+    [
+        (("plan",), "plan"),
+        (("plan", "required_passes"), "plan.required_passes"),
+        (("robot", "id"), "robot.id"),
+        (("world", "id"), "world.id"),
+        (("configuration", "name"), "configuration.name"),
+        (("trials", 0, "sha256"), "trials[0].sha256"),
+    ],
+)
+def test_malformed_manifest_names_the_field(tmp_path, drop, field):
+    path = _manifest(tmp_path)
+    m = json.loads(path.read_text())
+    node = m
+    for key in drop[:-1]:
+        node = node[key]
+    del node[drop[-1]]
+    path.write_text(json.dumps(m))
+    with pytest.raises(hallway.ManifestError, match=rf"'{re.escape(field)}' is missing"):
+        hallway.verify(path)
+
+
+def test_mistyped_manifest_field_is_named(tmp_path):
+    path = _manifest(tmp_path)
+    m = json.loads(path.read_text())
+    m["plan"]["trials"] = "20"
+    path.write_text(json.dumps(m))
+    with pytest.raises(hallway.ManifestError, match="'plan.trials' has the wrong type"):
+        hallway.verify(path)
+
+
+def _tool():
+    spec = importlib.util.spec_from_file_location(
+        "verify_hallway_tool", Path(__file__).parents[1] / "tools" / "verify_hallway.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_export_writes_nothing_when_the_manifest_is_malformed(tmp_path):
+    src = tmp_path / "evidence"
+    src.mkdir()
+    path = _manifest(src)
+    m = json.loads(path.read_text())
+    del m["plan"]
+    path.write_text(json.dumps(m))
+    out = tmp_path / "verified"
+    with pytest.raises(hallway.ManifestError, match="'plan' is missing"):
+        _tool().export(path, out, prototype=True)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["evidence"]  # no out, no staging
+
+
+def test_export_moves_a_complete_bundle_into_place(tmp_path):
+    src = tmp_path / "evidence"
+    src.mkdir()
+    out = tmp_path / "verified"
+    _tool().export(_manifest(src), out, prototype=True)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["evidence", "verified"]
+    bundle = json.loads((out / "bundle" / "manifest.json").read_text())
+    assert len(bundle["results"]) == PLAN["trials"]
+    with pytest.raises(FileExistsError):
+        _tool().export(_manifest(src), out, prototype=True)
+
+
+def test_missing_trials_use_the_planned_n():
+    """Same rule as the capability report: N and Wilson come from the plan."""
+    trials = [{"status": hallway.PASS}] * 18
+    s = hallway.aggregate(trials, PLAN)
+    assert (s["k"], s["n"], s["grade"]) == (18, 20, hallway.INSUFFICIENT)
+    assert s["wilson95"] == hallway.wilson(18, 20) == [0.6990, 0.9721]

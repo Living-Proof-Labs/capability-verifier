@@ -38,6 +38,73 @@ OBSERVATION_FORMAT = "livingproof-hallway-observation/1.0.0"
 MANIFEST_FORMAT = "livingproof-hallway-evidence/1.0.0"
 
 
+class ManifestError(ValueError):
+    """The evidence manifest is malformed; the message names the field."""
+
+
+_NUM = (int, float)
+_INT = int
+# Field path -> accepted types. "{value}" also accepts {"value": <number>} (profile style).
+MANIFEST_FIELDS = (
+    ("format", str),
+    ("plan", dict),
+    ("plan.trials", _INT),
+    ("plan.seeds", list),
+    ("plan.required_passes", _INT),
+    ("plan.command_speed", _NUM),
+    ("robot", dict),
+    ("robot.id", str),
+    ("robot.profile.dimensions.width", "{value}"),
+    ("configuration", dict),
+    ("configuration.name", str),
+    ("configuration.version", str),
+    ("configuration.profile.locomotion.fall_base_height", "{value}"),
+    ("world", dict),
+    ("world.id", str),
+    ("world.version", str),
+    ("world.clear_width", _NUM),
+    ("world.route_length", _NUM),
+    ("trials", list),
+)
+TRIAL_FIELDS = (("seed", _INT), ("path", str), ("sha256", str))
+
+
+def _is(value, kind) -> bool:
+    if kind == "{value}":
+        value = value.get("value") if isinstance(value, dict) else value
+        kind = _NUM
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, kind)
+
+
+def validate_manifest(manifest) -> None:
+    """Raise ManifestError naming the first missing or mistyped field; nothing is assessed."""
+    if not isinstance(manifest, dict):
+        raise ManifestError("manifest: expected a JSON object")
+    for path, kind in MANIFEST_FIELDS:
+        node = manifest
+        for i, key in enumerate(path.split(".")):
+            if not isinstance(node, dict) or key not in node:
+                where = ".".join(path.split(".")[: i + 1])
+                raise ManifestError(f"manifest field '{where}' is missing")
+            node = node[key]
+        if not _is(node, kind):
+            raise ManifestError(f"manifest field '{path}' has the wrong type")
+    if manifest["format"] != MANIFEST_FORMAT:
+        raise ManifestError(f"manifest field 'format' is not {MANIFEST_FORMAT}")
+    if not all(_is(s, _INT) for s in manifest["plan"]["seeds"]):
+        raise ManifestError("manifest field 'plan.seeds' must list integers")
+    for i, t in enumerate(manifest["trials"]):
+        if not isinstance(t, dict):
+            raise ManifestError(f"manifest field 'trials[{i}]' has the wrong type")
+        for key, kind in TRIAL_FIELDS:
+            if key not in t:
+                raise ManifestError(f"manifest field 'trials[{i}].{key}' is missing")
+            if not _is(t[key], kind):
+                raise ManifestError(f"manifest field 'trials[{i}].{key}' has the wrong type")
+
+
 def thresholds(manifest: dict) -> dict:
     """Acceptance from the specification, filled from profiles, world and plan."""
     robot = manifest["robot"]["profile"]
@@ -281,6 +348,8 @@ def wilson(k, n, z=1.959963984540054):
 
 
 def aggregate(trials, plan):
+    """k of the planned N. Wilson uses the planned N; a missing trial counts as not passed
+    and makes the grade INSUFFICIENT_EVIDENCE (same rule as the capability report)."""
     k = sum(t["status"] == PASS for t in trials)
     unsure = sum(t["status"] == INSUFFICIENT for t in trials)
     n, need = plan["trials"], plan["required_passes"]
@@ -309,9 +378,11 @@ def _sha(path: Path) -> str:
 def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
     """Assess every trial named by the evidence manifest; return per-trial and k/N results."""
     manifest_path = Path(manifest_path)
-    manifest = json.loads(manifest_path.read_text())
-    if manifest.get("format") != MANIFEST_FORMAT:
-        raise ValueError("not a hallway evidence manifest")
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError as e:
+        raise ManifestError(f"manifest is not valid JSON: {e}") from None
+    validate_manifest(manifest)
     plan = manifest["plan"]
     if (
         sorted(t["seed"] for t in manifest["trials"]) != sorted(plan["seeds"])
