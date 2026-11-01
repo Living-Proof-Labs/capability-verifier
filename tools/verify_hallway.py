@@ -21,7 +21,7 @@ import subprocess
 import threading
 from pathlib import Path
 
-from capability_verifier import hallway
+from capability_verifier import evaluate, hallway
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -33,6 +33,8 @@ class ProducerError(RuntimeError):
 RELEASE = re.compile(r"\d+\.\d+\.\d+")
 DEV = "dev"
 DEV_VERSION = "0.0.0"  # the bundle schema takes only X.Y.Z; a dev build is labelled, never tagged
+# 1.0.0 is what capability report 1.x validates; 1.1.0 carries the verifier's decisions.
+BUNDLE_VERSIONS = ("1.0.0", "1.1.0")
 
 
 def producer_commit() -> str:
@@ -79,11 +81,15 @@ def producer() -> tuple[str, str, str | None]:
     return version, commit, None
 
 
-def export(manifest_path: Path, out: Path, prototype: bool = False) -> dict:
+def export(
+    manifest_path: Path, out: Path, prototype: bool = False, bundle_version: str = "1.0.0"
+) -> dict:
     """Build into a sibling temporary directory and move it to ``out`` only on success."""
     out = Path(out)
     if out.exists():
         raise FileExistsError(f"{out} already exists")
+    if bundle_version not in BUNDLE_VERSIONS:
+        raise ValueError(f"bundle version {bundle_version!r} is not one of {BUNDLE_VERSIONS}")
     producer_id = producer()  # fail before any work when the label would be dishonest
     out.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{out.name}.", dir=out.parent))
@@ -96,7 +102,7 @@ def export(manifest_path: Path, out: Path, prototype: bool = False) -> dict:
     if in_main:
         signal.signal(signal.SIGTERM, terminated)
     try:
-        result = _export(Path(manifest_path), staging, prototype, producer_id)
+        result = _export(Path(manifest_path), staging, prototype, producer_id, bundle_version)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -108,7 +114,9 @@ def export(manifest_path: Path, out: Path, prototype: bool = False) -> dict:
     return result
 
 
-def _export(manifest_path: Path, out: Path, prototype: bool, producer_id) -> dict:
+def _export(
+    manifest_path: Path, out: Path, prototype: bool, producer_id, bundle_version: str = "1.0.0"
+) -> dict:
     lock = json.loads((ROOT / "hallway-specs.lock.json").read_text())
     released = re.fullmatch(r"v\d+\.\d+\.\d+", lock["tag"]) is not None
     if not released and not prototype:
@@ -195,8 +203,22 @@ def _export(manifest_path: Path, out: Path, prototype: bool, producer_id) -> dic
                 "original_result": {"status": t["status"], "seed": t["seed"]},
             }
         )
+    if bundle_version == "1.1.0":
+        complete = {
+            r["id"]: all(
+                (bundle_dir / e["path"]).is_file()
+                and hallway._sha(bundle_dir / e["path"]) == e["sha256"]
+                for e in r["evidence"]
+            )
+            and bool(r["evidence"])
+            for r in results
+        }
+        assessment = evaluate.assess_bundle(results, complete)
+        for r, d in zip(results, assessment["decisions"]):
+            r["decision"] = {k: v for k, v in d.items() if k != "result_id"}
+            r["decision"]["policy"] = assessment["policy"]
     bundle = {
-        "schema_version": "1.0.0",
+        "schema_version": bundle_version,
         "producer": {
             "id": "capability-verifier",
             "version": version,
@@ -204,6 +226,8 @@ def _export(manifest_path: Path, out: Path, prototype: bool, producer_id) -> dic
         },
         "results": results,
     }
+    if bundle_version == "1.1.0":
+        bundle["assessment"] = assessment
     (bundle_dir / "manifest.json").write_text(json.dumps(bundle, indent=2) + "\n")
     return result
 
@@ -213,9 +237,16 @@ if __name__ == "__main__":
     p.add_argument("manifest", type=Path)
     p.add_argument("out", type=Path)
     p.add_argument("--prototype", action="store_true")
+    p.add_argument(
+        "--bundle-version",
+        choices=BUNDLE_VERSIONS,
+        default="1.0.0",
+        help="1.1.0 adds per-result decisions and per-run assessments; "
+        "capability report 1.x accepts only 1.0.0",
+    )
     a = p.parse_args()
     try:
-        r = export(a.manifest, a.out, a.prototype)
+        r = export(a.manifest, a.out, a.prototype, a.bundle_version)
     except hallway.ManifestError as e:
         raise SystemExit(f"invalid evidence manifest {a.manifest}: {e}") from None
     except ProducerError as e:

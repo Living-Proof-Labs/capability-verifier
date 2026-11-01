@@ -287,7 +287,18 @@ Human and agent conclusions enter through `recorded=` and are judged by the same
 `HALLWAY_SPECS_SOURCE` must name a local checkout that holds the locked commit. A release
 changes only the `"tag"` line (and `"commit"` if the release commit differs).
 
-    PYTHONPATH=src python tools/verify_hallway.py <evidence>/manifest.json <out> [--prototype]
+    PYTHONPATH=src python tools/verify_hallway.py <evidence>/manifest.json <out> [--prototype] [--bundle-version 1.1.0]
+
+`--bundle-version 1.1.0` adds the verifier's own grading to the bundle
+(`capability_verifier.evaluate`): each result carries a `decision` (status, reason,
+structured failures, assessor types, policy) and the bundle carries an `assessment`
+in the `livingproof-run-assessment/0.1` format from robot-capability-specs, with every
+decision and, per run, k of N, the Wilson 95% interval, the grade and its rationale.
+The rules are the ones capability report v1.10.0 applies: INCOMPATIBLE results make the
+run INCOMPATIBLE, and without a usable plan N is the recorded count and the grade is
+INSUFFICIENT_EVIDENCE. The default stays 1.0.0 because capability report 1.x accepts
+only that version. `tools/compare_assessment.py <bundle> <report.json>` checks a 1.1.0
+bundle against a report computed from the same evidence.
 
 ## Reusable walk-hallway workflow (robot repositories)
 
