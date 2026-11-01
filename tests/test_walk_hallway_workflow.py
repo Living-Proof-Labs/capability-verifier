@@ -212,3 +212,48 @@ def test_markdown_html_and_text_still_render_from_report_json(tmp_path):
     assert "validate verified/bundle/manifest.json" in calls
     assert "render reports/report.json --format markdown -o reports/report.md" in calls
     assert "render reports/report.json --format html -o reports/report.html" in calls
+
+
+def test_pre_and_dev_releases_fail_closed_and_never_count_as_the_release(tmp_path):
+    import json
+    import subprocess
+    import sys
+
+    def run(verifier, reporter, runner="1.6.0"):
+        (tmp_path / "uv.lock").write_text(
+            f'[[package]]\nname = "livingproof-sim-mujoco"\nversion = "{runner}"\n\n'
+            '[[package]]\nname = "mcap"\nversion = "1.6.0"\n'
+        )
+        (tmp_path / "verification.lock.json").write_text(
+            json.dumps({"releases": {"reporter": {"tag": reporter}, "verifier": {"tag": verifier}}})
+        )
+        done = subprocess.run(
+            [sys.executable, "-c", _capability_script()],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+        )
+        assert done.returncode == 0, done.stderr  # no crash on any tag
+        return dict(line.split("=", 1) for line in done.stdout.splitlines()), done.stderr
+
+    out, err = run("v1.7.0rc1", "v1.10.0")
+    assert out["bundle-version"] == "1.0.0"  # parses (no crash); never counts as 1.7.0
+    assert "verifier v1.7.0rc1 is a pre-release or dev release" in err
+    out, err = run("v2.0.0.dev1", "v2.0.0")
+    assert out["bundle-version"] == "1.0.0"
+    assert "verifier v2.0.0.dev1 is a pre-release or dev release" in err
+    out, err = run("v1.9.0", "v2.0.0rc1")
+    assert out == {"media-capable": "false", "bundle-version": "1.0.0"}
+    assert "reporter v2.0.0rc1 is a pre-release" in err
+    out, err = run("v1.9.0", "v2.0.0", runner="1.6.0.dev3")
+    assert out == {"media-capable": "false", "bundle-version": "1.1.0"}
+    assert "runner livingproof-sim-mujoco 1.6.0.dev3" in err
+    out, err = run("not-a-version", "v2.0.0")
+    assert out["bundle-version"] == "1.0.0" and "not a PEP 440 version" in err
+    out, err = run("v1.9.0.post1", "v2.0.0")
+    assert out["bundle-version"] == "1.1.0" and err == ""  # a post-release is a release
+
+
+def test_capability_installs_pinned_packaging_before_the_gate():
+    block = WORKFLOW[WORKFLOW.index("id: capability") :]
+    assert block.index("pip install --user packaging==") < block.index("<<'PY'")
