@@ -265,3 +265,23 @@ cases in run summaries; the verification check includes archive tests. Raw repor
 and bundles are retained for 14 days. Failed expectation tests fail CI even when
 the expected capability outcome is FAIL or INSUFFICIENT_EVIDENCE. Output directories
 must be new; move prior artifacts aside before repeating a local export.
+
+## Walk-hallway evaluators
+
+`capability_verifier.hallway` assesses each `livingproof-hallway-observation/1.0.0` trial with
+four deterministic evaluators: `hallway-exit-reached`, `hallway-lateral-limit`,
+`hallway-wall-contact` and `hallway-fall`. It judges each trial with `all-required-v1`, then
+aggregates k of N with a Wilson 95% interval. Each rationale names the check, the time and the
+margin, for example `lateral 0.62 m > 0.49 m at 10.1 s (over by 0.13 m)`.
+
+The trial plan (trials, seeds, command speed, required passes) is read from the evidence
+manifest. The manifest echoes the robot repository's committed `verification.lock.json`, so
+nothing is hard-coded here. Thresholds come from the robot profile, the configuration profile
+and the world. Every assessment records `assessor.type` (`deterministic`, `human` or `agent`).
+Human and agent conclusions enter through `recorded=` and are judged by the same policy.
+
+`hallway-specs.lock.json` pins the catalog. While it says `"tag": "UNRELEASED"`,
+`HALLWAY_SPECS_SOURCE` must name a local checkout that holds the locked commit. A release
+changes only the `"tag"` line (and `"commit"` if the release commit differs).
+
+    python tools/verify_hallway.py <evidence>/manifest.json <out> [--prototype]
