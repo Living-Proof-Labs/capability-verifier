@@ -13,6 +13,7 @@ tasks:
   specs:fetch:
     cmds:
       - python tools/fetch_specs.py
+      - python tools/fetch_hallway_specs.py
   check:
     cmds:
       - uv run --locked --no-sync ruff check .

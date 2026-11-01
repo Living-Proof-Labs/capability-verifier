@@ -3,6 +3,9 @@ version: '3'
 env:
   SOURCE_COMMIT:
     sh: 'if [ -n "$SOURCE_COMMIT" ]; then echo "$SOURCE_COMMIT"; else git rev-parse HEAD; fi'
+  LIVINGPROOF_VERIFIER_VERSION:
+    # X.Y.Z only when HEAD is exactly the release tag vX.Y.Z; any other commit is "dev".
+    sh: 'if [ -n "$LIVINGPROOF_VERIFIER_VERSION" ]; then echo "$LIVINGPROOF_VERIFIER_VERSION"; elif t=$(git describe --tags --exact-match --match "v[0-9]*.[0-9]*.[0-9]*" HEAD 2>/dev/null); then echo "${t#v}"; else echo dev; fi'
 tasks:
   setup:
     cmds:

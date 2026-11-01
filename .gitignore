@@ -5,3 +5,4 @@ __pycache__/
 artifacts/
 .specs/
 .matrix-sources/
+.specs-hallway/

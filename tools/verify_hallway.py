@@ -1,0 +1,223 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Assess hallway evidence and export a reporter bundle (schema 1.0.0).
+
+    python tools/verify_hallway.py <evidence>/manifest.json <out> [--prototype]
+
+Writes ``<out>/verification.json`` (per-trial assessments and the k/N summary) and
+``<out>/bundle/`` (``manifest.json`` plus ``evidence/``) for
+livingproof-capability-report. The bundle schema accepts only released catalog tags;
+with an UNRELEASED hallway lock the export refuses unless ``--prototype`` is given,
+which writes the placeholder tag ``v0.0.0`` and says so in every result's provenance.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import signal
+import tempfile
+import subprocess
+import threading
+from pathlib import Path
+
+from capability_verifier import hallway
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class ProducerError(RuntimeError):
+    """The producer version or commit cannot be stated honestly."""
+
+
+RELEASE = re.compile(r"\d+\.\d+\.\d+")
+DEV = "dev"
+DEV_VERSION = "0.0.0"  # the bundle schema takes only X.Y.Z; a dev build is labelled, never tagged
+
+
+def producer_commit() -> str:
+    commit = os.environ.get("SOURCE_COMMIT", "").strip()
+    if not commit:
+        try:
+            commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
+            ).strip()
+        except (OSError, subprocess.CalledProcessError):
+            raise ProducerError("SOURCE_COMMIT is unset and there is no git checkout") from None
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ProducerError(f"producer commit {commit!r} is not a full 40-hex commit")
+    return commit
+
+
+def producer() -> tuple[str, str, str | None]:
+    """(version, commit, note) for the bundle producer; never derived from git describe.
+
+    LIVINGPROOF_VERIFIER_VERSION is required. Task sets it to X.Y.Z only when HEAD is exactly
+    the release tag vX.Y.Z, and to ``dev`` otherwise. ``dev`` records version 0.0.0 (the bundle
+    schema accepts only X.Y.Z) together with the commit and a DEV note in every result, so an
+    unreleased commit never carries the last release's label. Unset or anything else fails.
+    """
+    raw = os.environ.get("LIVINGPROOF_VERIFIER_VERSION", "").strip()
+    if not raw:
+        raise ProducerError(
+            "LIVINGPROOF_VERIFIER_VERSION is unset; set X.Y.Z for a release build "
+            "(HEAD exactly at vX.Y.Z) or 'dev'"
+        )
+    commit = producer_commit()
+    if raw == DEV:
+        return (
+            DEV_VERSION,
+            commit,
+            (
+                f"DEV: capability-verifier unreleased build at {commit}; "
+                f"producer version {DEV_VERSION} is a placeholder, not a release"
+            ),
+        )
+    version = raw.removeprefix("v")
+    if not RELEASE.fullmatch(version):
+        raise ProducerError(f"LIVINGPROOF_VERIFIER_VERSION {raw!r} is neither X.Y.Z nor 'dev'")
+    return version, commit, None
+
+
+def export(manifest_path: Path, out: Path, prototype: bool = False) -> dict:
+    """Build into a sibling temporary directory and move it to ``out`` only on success."""
+    out = Path(out)
+    if out.exists():
+        raise FileExistsError(f"{out} already exists")
+    producer_id = producer()  # fail before any work when the label would be dishonest
+    out.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{out.name}.", dir=out.parent))
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def terminated(signum, frame):
+        raise SystemExit(128 + signum)  # unwinds through the cleanup below
+
+    in_main = threading.current_thread() is threading.main_thread()
+    if in_main:
+        signal.signal(signal.SIGTERM, terminated)
+    try:
+        result = _export(Path(manifest_path), staging, prototype, producer_id)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    finally:
+        if in_main:
+            signal.signal(signal.SIGTERM, previous)
+    staging.chmod(0o755)  # mkdtemp creates 0700
+    staging.rename(out)
+    return result
+
+
+def _export(manifest_path: Path, out: Path, prototype: bool, producer_id) -> dict:
+    lock = json.loads((ROOT / "hallway-specs.lock.json").read_text())
+    released = re.fullmatch(r"v\d+\.\d+\.\d+", lock["tag"]) is not None
+    if not released and not prototype:
+        raise SystemExit("hallway lock is UNRELEASED; pass --prototype to export a labelled bundle")
+    result = hallway.verify(manifest_path)  # raises ManifestError for JSON, fields, plan, trials
+    evidence = json.loads(manifest_path.read_text())
+    version, commit, dev_note = producer_id
+    (out / "verification.json").write_text(json.dumps(result, indent=2) + "\n")
+    bundle_dir = out / "bundle"
+    (bundle_dir / "evidence").mkdir(parents=True)
+    note = (
+        None
+        if released
+        else (
+            f"PROTOTYPE: catalog unreleased at {lock['commit']}; tag v0.0.0 is a placeholder, not a release"
+        )
+    )
+    spec = {
+        "repository": lock["repository"],
+        "tag": lock["tag"] if released else "v0.0.0",
+        "commit": lock["commit"],
+        "capability": lock["capability"],
+        "revision": lock["revision"],
+    }
+    conf = evidence["configuration"]
+    results = []
+    for t in result["trials"]:
+        name = Path(t["evidence"]["path"]).name
+        shutil.copyfile(
+            manifest_path.parent / t["evidence"]["path"], bundle_dir / "evidence" / name
+        )
+        assessments = []
+        for a in t["assessments"]:
+            kind = hallway.REPORTER_KIND[a["assessor"]["type"]]
+            if kind is None:
+                raise SystemExit("agent assessments have no reporter bundle kind yet")
+            assessments.append(
+                {
+                    "id": a["id"],
+                    "evaluator": a["evaluator"],
+                    "kind": kind,
+                    "version": a["version"],
+                    "status": a["status"],
+                    "rationale": a["rationale"],
+                    "mandatory": a["mandatory"],
+                    "evidence_ids": a["evidence_ids"],
+                    "provenance": {"assessor": a["assessor"], "details": a["details"]},
+                }
+            )
+        provenance = {
+            "run_id": evidence.get("run_id"),
+            "plan": result["plan"],
+            "thresholds": result["thresholds"],
+            "policy": result["policy"],
+            "lock": evidence.get("lock"),
+            "simulator": evidence.get("environment"),
+            "summary": result["summary"],
+        }
+        if note:
+            provenance["prototype"] = note
+        if dev_note:
+            provenance["producer"] = dev_note
+        results.append(
+            {
+                "id": t["id"],
+                "spec": spec,
+                "system": {
+                    "id": f"{evidence['robot']['id']}/{conf['name']}",
+                    "version": conf["version"],
+                },
+                "environment": {
+                    "id": evidence["world"]["id"],
+                    "version": evidence["world"]["version"],
+                },
+                "evidence": [
+                    {
+                        "id": t["evidence"]["id"],
+                        "path": f"evidence/{name}",
+                        "sha256": t["evidence"]["sha256"],
+                    }
+                ],
+                "assessments": assessments,
+                "provenance": provenance,
+                "original_result": {"status": t["status"], "seed": t["seed"]},
+            }
+        )
+    bundle = {
+        "schema_version": "1.0.0",
+        "producer": {
+            "id": "capability-verifier",
+            "version": version,
+            "commit": commit,
+        },
+        "results": results,
+    }
+    (bundle_dir / "manifest.json").write_text(json.dumps(bundle, indent=2) + "\n")
+    return result
+
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("manifest", type=Path)
+    p.add_argument("out", type=Path)
+    p.add_argument("--prototype", action="store_true")
+    a = p.parse_args()
+    try:
+        r = export(a.manifest, a.out, a.prototype)
+    except hallway.ManifestError as e:
+        raise SystemExit(f"invalid evidence manifest {a.manifest}: {e}") from None
+    except ProducerError as e:
+        raise SystemExit(f"cannot label the bundle producer: {e}") from None
+    print("\n".join(hallway.summary_lines(r)))
