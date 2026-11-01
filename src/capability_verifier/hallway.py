@@ -388,7 +388,10 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
         sorted(t["seed"] for t in manifest["trials"]) != sorted(plan["seeds"])
         or len(plan["seeds"]) != plan["trials"]
     ):
-        raise ValueError("evidence trials do not match the locked plan")
+        raise ManifestError(
+            f"trials: seeds {sorted(t['seed'] for t in manifest['trials'])} do not match "
+            f"plan.seeds {sorted(plan['seeds'])} with plan.trials {plan['trials']}"
+        )
     th = thresholds(manifest)
     base = manifest_path.parent
     trials = []
@@ -404,8 +407,14 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
                 ],
             }
         else:
+            try:
+                observation = json.loads(path.read_text())
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                raise ManifestError(
+                    f"trials[seed={t['seed']}]: {t['path']} is not valid JSON: {e}"
+                ) from None
             res = assess_trial(
-                json.loads(path.read_text()),
+                observation,
                 th,
                 eid,
                 (recorded or {}).get(eid, ()),

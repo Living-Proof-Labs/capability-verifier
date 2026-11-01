@@ -8,9 +8,9 @@ import hashlib
 import json
 import re
 import shutil
+import signal
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -270,7 +270,7 @@ def test_plan_mismatch_is_rejected(tmp_path):
     m = json.loads(path.read_text())
     m["plan"] = dict(PLAN, seeds=list(range(2, 22)))
     path.write_text(json.dumps(m))
-    with pytest.raises(ValueError):
+    with pytest.raises(hallway.ManifestError, match="do not match plan.seeds"):
         hallway.verify(path)
 
 
@@ -349,7 +349,9 @@ def _tool():
     return mod
 
 
-def test_export_writes_nothing_when_the_manifest_is_malformed(tmp_path):
+def test_export_writes_nothing_when_the_manifest_is_malformed(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
     src = tmp_path / "evidence"
     src.mkdir()
     path = _manifest(src)
@@ -362,7 +364,9 @@ def test_export_writes_nothing_when_the_manifest_is_malformed(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["evidence"]  # no out, no staging
 
 
-def test_export_moves_a_complete_bundle_into_place(tmp_path):
+def test_export_moves_a_complete_bundle_into_place(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
     src = tmp_path / "evidence"
     src.mkdir()
     out = tmp_path / "verified"
@@ -382,40 +386,155 @@ def test_missing_trials_use_the_planned_n():
     assert s["wilson95"] == hallway.wilson(18, 20) == [0.6990, 0.9721]
 
 
-def test_export_needs_no_git(tmp_path, monkeypatch):
-    """Images exclude .git: the producer version comes from the env or package metadata."""
+def _cli(tmp_path, manifest, out, version, commit="0" * 40):
+    """Run the tool from a copied tree with no .git, as in the image."""
     tree = tmp_path / "tree"
-    shutil.copytree(Path(__file__).parents[1] / "tools", tree / "tools")
-    for name in ("hallway-specs.lock.json", "pyproject.toml"):
-        shutil.copy(Path(__file__).parents[1] / name, tree)
+    if not tree.exists():
+        shutil.copytree(Path(__file__).parents[1] / "tools", tree / "tools")
+        for name in ("hallway-specs.lock.json", "pyproject.toml"):
+            shutil.copy(Path(__file__).parents[1] / name, tree)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("LIVINGPROOF_VERIFIER_VERSION", "SOURCE_COMMIT")
+    }
+    env.update(
+        GIT_CEILING_DIRECTORIES=str(tmp_path), PYTHONPATH=str(Path(__file__).parents[1] / "src")
+    )
+    if version is not None:
+        env["LIVINGPROOF_VERIFIER_VERSION"] = version
+    if commit is not None:
+        env["SOURCE_COMMIT"] = commit
+    assert not (tree / ".git").exists()
+    return subprocess.run(
+        [sys.executable, "tools/verify_hallway.py", str(manifest), str(out), "--prototype"],
+        cwd=tree,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_export_needs_no_git_and_labels_release_and_dev_builds(tmp_path):
     src = tmp_path / "evidence"
     src.mkdir()
     manifest = _manifest(src)
-    env = {
-        **os.environ,
-        "SOURCE_COMMIT": "0" * 40,
-        "GIT_CEILING_DIRECTORIES": str(tmp_path),
-        "PATH": os.environ["PATH"],
-        "PYTHONPATH": str(Path(__file__).parents[1] / "src"),
+    r = _cli(tmp_path, manifest, tmp_path / "release", "v1.4.2")
+    assert r.returncode == 0, r.stderr
+    bundle = json.loads((tmp_path / "release/bundle/manifest.json").read_text())
+    assert bundle["producer"] == {
+        "id": "capability-verifier",
+        "version": "1.4.2",
+        "commit": "0" * 40,
     }
-    assert not (tree / ".git").exists()
-    for version, expected in (("v1.4.2", "1.4.2"), ("", None)):
-        out = tmp_path / f"verified-{expected}"
-        env["LIVINGPROOF_VERIFIER_VERSION"] = version
-        subprocess.run(
-            [sys.executable, "tools/verify_hallway.py", str(manifest), str(out), "--prototype"],
-            cwd=tree,
-            env=env,
-            check=True,
-            capture_output=True,
-        )
-        producer = json.loads((out / "bundle" / "manifest.json").read_text())["producer"]
-        assert producer["commit"] == "0" * 40
-        declared = tomllib.loads((tree / "pyproject.toml").read_text())["project"]["version"]
-        assert producer["version"] == (expected or declared)
+    assert all("producer" not in res["provenance"] for res in bundle["results"])
+
+    r = _cli(tmp_path, manifest, tmp_path / "dev", "dev", "a" * 40)
+    assert r.returncode == 0, r.stderr
+    bundle = json.loads((tmp_path / "dev/bundle/manifest.json").read_text())
+    assert bundle["producer"]["version"] == "0.0.0" and bundle["producer"]["commit"] == "a" * 40
+    notes = {res["provenance"]["producer"] for res in bundle["results"]}
+    assert notes == {
+        f"DEV: capability-verifier unreleased build at {'a' * 40}; "
+        "producer version 0.0.0 is a placeholder, not a release"
+    }
 
 
-def test_producer_version_rejects_a_non_release(monkeypatch):
-    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "main")
-    with pytest.raises(ValueError, match="not X.Y.Z"):
-        _tool().producer_version()
+@pytest.mark.parametrize(
+    "version, commit, message",
+    [
+        (None, "0" * 40, "LIVINGPROOF_VERIFIER_VERSION is unset"),
+        ("", "0" * 40, "LIVINGPROOF_VERIFIER_VERSION is unset"),
+        ("main", "0" * 40, "neither X.Y.Z nor 'dev'"),
+        ("1.4.2-3-gabc", "0" * 40, "neither X.Y.Z nor 'dev'"),
+        ("dev", None, "SOURCE_COMMIT is unset and there is no git checkout"),
+    ],
+)
+def test_export_fails_loudly_without_an_honest_producer_label(tmp_path, version, commit, message):
+    src = tmp_path / "evidence"
+    src.mkdir()
+    out = tmp_path / "out"
+    r = _cli(tmp_path, _manifest(src), out, version, commit)
+    assert r.returncode != 0 and message in r.stderr
+    assert "Traceback" not in r.stderr
+    assert not out.exists() and not list(tmp_path.glob(".out.*"))
+
+
+def _corrupt_json(m):
+    m.write_text("{not json")
+
+
+def _plan_mismatch(m):
+    doc = json.loads(m.read_text())
+    doc["plan"] = dict(doc["plan"], seeds=list(range(2, 22)))
+    m.write_text(json.dumps(doc))
+
+
+def _bad_trial_file(m):
+    doc = json.loads(m.read_text())
+    trial = m.parent / doc["trials"][0]["path"]
+    trial.write_text("{truncated")
+    doc["trials"][0]["sha256"] = hashlib.sha256(trial.read_bytes()).hexdigest()
+    m.write_text(json.dumps(doc))
+
+
+@pytest.mark.parametrize(
+    "break_it, message",
+    [
+        (_corrupt_json, "manifest is not valid JSON"),
+        (_plan_mismatch, "do not match plan.seeds"),
+        (_bad_trial_file, "is not valid JSON"),
+    ],
+)
+def test_bad_evidence_is_a_manifest_error_with_no_traceback(tmp_path, break_it, message):
+    src = tmp_path / "evidence"
+    src.mkdir()
+    manifest = _manifest(src)
+    break_it(manifest)
+    with pytest.raises(hallway.ManifestError, match=message):
+        hallway.verify(manifest)
+    out = tmp_path / "out"
+    r = _cli(tmp_path, manifest, out, "1.4.2")
+    assert r.returncode != 0
+    assert r.stderr.startswith("invalid evidence manifest") and message in r.stderr
+    assert "Traceback" not in r.stderr
+    assert not out.exists() and not list(tmp_path.glob(".out.*"))
+
+
+def test_sigterm_removes_the_staging_folder(tmp_path, monkeypatch):
+    tool = _tool()
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    src = tmp_path / "evidence"
+    src.mkdir()
+    manifest = _manifest(src)
+
+    def killed(*args, **kwargs):
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    monkeypatch.setattr(tool.hallway, "verify", killed)
+    with pytest.raises(SystemExit) as err:
+        tool.export(manifest, tmp_path / "out")
+    assert err.value.code == 128 + signal.SIGTERM
+    assert not (tmp_path / "out").exists() and not list(tmp_path.glob(".out.*"))
+    assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
+
+
+def test_task_labels_only_an_exact_release_tag(tmp_path):
+    """Taskfile: X.Y.Z only at the tagged commit; one commit later it is dev."""
+    text = (Path(__file__).parents[1] / "Taskfile.yml").read_text()
+    cmd = re.search(r"LIVINGPROOF_VERIFIER_VERSION:\n(?:\s*#.*\n)?\s*sh: '(.*)'\n", text).group(1)
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-C", str(tmp_path)]
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "a"], check=True)
+    subprocess.run([*git, "tag", "v1.4.2"], check=True)
+    env = {k: v for k, v in os.environ.items() if k != "LIVINGPROOF_VERIFIER_VERSION"}
+
+    def label():
+        return subprocess.run(
+            ["sh", "-c", cmd], cwd=tmp_path, env=env, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    assert label() == "1.4.2"
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "b"], check=True)
+    assert label() == "dev"

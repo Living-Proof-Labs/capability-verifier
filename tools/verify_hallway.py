@@ -11,14 +11,14 @@ which writes the placeholder tag ``v0.0.0`` and says so in every result's proven
 """
 
 import argparse
-import importlib.metadata
 import json
 import os
 import re
 import shutil
+import signal
 import tempfile
-import tomllib
 import subprocess
+import threading
 from pathlib import Path
 
 from capability_verifier import hallway
@@ -26,24 +26,57 @@ from capability_verifier import hallway
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def producer_version() -> str:
-    """X.Y.Z for the bundle producer, never from git (images have no .git).
+class ProducerError(RuntimeError):
+    """The producer version or commit cannot be stated honestly."""
 
-    LIVINGPROOF_VERIFIER_VERSION (set by Task from the nearest release tag, or by a release
-    build) wins; otherwise the installed package metadata, or pyproject's declared
-    [project].version when the package is not installed.
+
+RELEASE = re.compile(r"\d+\.\d+\.\d+")
+DEV = "dev"
+DEV_VERSION = "0.0.0"  # the bundle schema takes only X.Y.Z; a dev build is labelled, never tagged
+
+
+def producer_commit() -> str:
+    commit = os.environ.get("SOURCE_COMMIT", "").strip()
+    if not commit:
+        try:
+            commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
+            ).strip()
+        except (OSError, subprocess.CalledProcessError):
+            raise ProducerError("SOURCE_COMMIT is unset and there is no git checkout") from None
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ProducerError(f"producer commit {commit!r} is not a full 40-hex commit")
+    return commit
+
+
+def producer() -> tuple[str, str, str | None]:
+    """(version, commit, note) for the bundle producer; never derived from git describe.
+
+    LIVINGPROOF_VERIFIER_VERSION is required. Task sets it to X.Y.Z only when HEAD is exactly
+    the release tag vX.Y.Z, and to ``dev`` otherwise. ``dev`` records version 0.0.0 (the bundle
+    schema accepts only X.Y.Z) together with the commit and a DEV note in every result, so an
+    unreleased commit never carries the last release's label. Unset or anything else fails.
     """
     raw = os.environ.get("LIVINGPROOF_VERIFIER_VERSION", "").strip()
     if not raw:
-        try:
-            raw = importlib.metadata.version("capability-verifier")
-        except importlib.metadata.PackageNotFoundError:
-            # Not installed (the image runs from PYTHONPATH): the declared project version.
-            raw = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+        raise ProducerError(
+            "LIVINGPROOF_VERIFIER_VERSION is unset; set X.Y.Z for a release build "
+            "(HEAD exactly at vX.Y.Z) or 'dev'"
+        )
+    commit = producer_commit()
+    if raw == DEV:
+        return (
+            DEV_VERSION,
+            commit,
+            (
+                f"DEV: capability-verifier unreleased build at {commit}; "
+                f"producer version {DEV_VERSION} is a placeholder, not a release"
+            ),
+        )
     version = raw.removeprefix("v")
-    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
-        raise ValueError(f"verifier version {raw!r} is not X.Y.Z")
-    return version
+    if not RELEASE.fullmatch(version):
+        raise ProducerError(f"LIVINGPROOF_VERIFIER_VERSION {raw!r} is neither X.Y.Z nor 'dev'")
+    return version, commit, None
 
 
 def export(manifest_path: Path, out: Path, prototype: bool = False) -> dict:
@@ -51,25 +84,38 @@ def export(manifest_path: Path, out: Path, prototype: bool = False) -> dict:
     out = Path(out)
     if out.exists():
         raise FileExistsError(f"{out} already exists")
+    producer_id = producer()  # fail before any work when the label would be dishonest
     out.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{out.name}.", dir=out.parent))
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def terminated(signum, frame):
+        raise SystemExit(128 + signum)  # unwinds through the cleanup below
+
+    in_main = threading.current_thread() is threading.main_thread()
+    if in_main:
+        signal.signal(signal.SIGTERM, terminated)
     try:
-        result = _export(Path(manifest_path), staging, prototype)
+        result = _export(Path(manifest_path), staging, prototype, producer_id)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+    finally:
+        if in_main:
+            signal.signal(signal.SIGTERM, previous)
     staging.chmod(0o755)  # mkdtemp creates 0700
     staging.rename(out)
     return result
 
 
-def _export(manifest_path: Path, out: Path, prototype: bool) -> dict:
+def _export(manifest_path: Path, out: Path, prototype: bool, producer_id) -> dict:
     lock = json.loads((ROOT / "hallway-specs.lock.json").read_text())
     released = re.fullmatch(r"v\d+\.\d+\.\d+", lock["tag"]) is not None
     if not released and not prototype:
         raise SystemExit("hallway lock is UNRELEASED; pass --prototype to export a labelled bundle")
+    result = hallway.verify(manifest_path)  # raises ManifestError for JSON, fields, plan, trials
     evidence = json.loads(manifest_path.read_text())
-    result = hallway.verify(manifest_path)
+    version, commit, dev_note = producer_id
     (out / "verification.json").write_text(json.dumps(result, indent=2) + "\n")
     bundle_dir = out / "bundle"
     (bundle_dir / "evidence").mkdir(parents=True)
@@ -123,6 +169,8 @@ def _export(manifest_path: Path, out: Path, prototype: bool) -> dict:
         }
         if note:
             provenance["prototype"] = note
+        if dev_note:
+            provenance["producer"] = dev_note
         results.append(
             {
                 "id": t["id"],
@@ -147,15 +195,11 @@ def _export(manifest_path: Path, out: Path, prototype: bool) -> dict:
                 "original_result": {"status": t["status"], "seed": t["seed"]},
             }
         )
-    commit = (
-        os.environ.get("SOURCE_COMMIT")
-        or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    )
     bundle = {
         "schema_version": "1.0.0",
         "producer": {
             "id": "capability-verifier",
-            "version": producer_version(),
+            "version": version,
             "commit": commit,
         },
         "results": results,
@@ -174,4 +218,6 @@ if __name__ == "__main__":
         r = export(a.manifest, a.out, a.prototype)
     except hallway.ManifestError as e:
         raise SystemExit(f"invalid evidence manifest {a.manifest}: {e}") from None
+    except ProducerError as e:
+        raise SystemExit(f"cannot label the bundle producer: {e}") from None
     print("\n".join(hallway.summary_lines(r)))
