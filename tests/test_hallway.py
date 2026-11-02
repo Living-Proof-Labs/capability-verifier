@@ -249,6 +249,9 @@ def _manifest(tmp_path, plan=PLAN, failing_seed=None):
             "clear_width": 1.4,
             "route_length": 5.5,
         },
+        "preconditions": [
+            {"name": "fits_width", "met": True, "detail": "0.42 + 2 x 0.05 = 0.52 m vs 1.4 m"}
+        ],
         "trials": trials,
     }
     path = tmp_path / "manifest.json"
@@ -544,6 +547,93 @@ def test_task_labels_only_an_exact_release_tag(tmp_path):
     assert label() == "1.4.2"
     subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "b"], check=True)
     assert label() == "dev"
+
+
+def _hallway_manifest(tmp_path, width, met, detail):
+    """Keel's #31 counterexample: 20 hash-valid passing trials, hallway 1.5 m, 0.05 m margin."""
+    path = _manifest(tmp_path)
+    m = json.loads(path.read_text())
+    m["robot"]["profile"]["dimensions"]["width"] = width
+    m["world"]["clear_width"] = 1.5
+    m["preconditions"] = [{"name": "fits_width", "met": met, "detail": detail}]
+    for t in m["trials"]:  # Keel's observations: 0.01 m lateral, inside even a 0.05 m limit.
+        trial = tmp_path / t["path"]
+        trial.write_text(json.dumps(observation(max_abs_lateral={"value": 0.01, "time": 7.3})))
+        t["sha256"] = hashlib.sha256(trial.read_bytes()).hexdigest()
+    path.write_text(json.dumps(m))
+    return path
+
+
+def test_an_unmet_precondition_is_unsupported_not_pass(tmp_path):
+    path = _hallway_manifest(tmp_path, 1.41, False, "1.41 + 2 x 0.05 > 1.5")
+    r = hallway.verify(path)
+    s = r["summary"]
+    assert s["grade"] == hallway.UNSUPPORTED
+    assert s["reason"] == "precondition fits_width unmet: 1.41 + 2 x 0.05 > 1.5"
+    assert r["trials"] == [] and s["k"] == 0
+    assert hallway.summary_lines(r) == [
+        "UNSUPPORTED: precondition fits_width unmet: 1.41 + 2 x 0.05 > 1.5 (no trials assessed)"
+    ]
+
+
+def test_an_unmet_precondition_is_unsupported_with_zero_trials(tmp_path):
+    path = _hallway_manifest(tmp_path, 1.41, False, "1.41 + 2 x 0.05 > 1.5")
+    m = json.loads(path.read_text())
+    m["trials"] = []
+    path.write_text(json.dumps(m))
+    assert hallway.verify(path)["summary"]["grade"] == hallway.UNSUPPORTED
+
+
+def test_an_optional_unmet_precondition_keeps_the_grade(tmp_path):
+    path = _hallway_manifest(tmp_path, 1.40, True, "1.40 + 2 x 0.05 = 1.5")
+    m = json.loads(path.read_text())
+    m["preconditions"].append({"name": "nice_to_have", "met": False, "required": False})
+    path.write_text(json.dumps(m))
+    assert hallway.verify(path)["summary"]["grade"] == hallway.PASS
+
+
+def test_the_exact_fit_boundary_keeps_its_normal_assessment(tmp_path):
+    path = _hallway_manifest(tmp_path, 1.40, True, "1.40 + 2 x 0.05 = 1.5")
+    s = hallway.verify(path)["summary"]
+    assert (s["grade"], s["k"], s["n"]) == (hallway.PASS, 20, 20)
+
+
+@pytest.mark.parametrize(
+    ("preconditions", "message"),
+    [
+        (None, "'preconditions' is missing"),
+        ([], "non-empty list"),
+        ({"fits_width": False}, "non-empty list"),
+        (["fits_width"], r"preconditions\[0\]' has the wrong type"),
+        ([{"met": True}], r"preconditions\[0\].name"),
+        ([{"name": "fits_width"}], r"preconditions\[0\].met"),
+        ([{"name": "fits_width", "met": "false"}], r"preconditions\[0\].met"),
+        ([{"name": "fits_width", "met": 0}], r"preconditions\[0\].met"),
+        ([{"name": "fits_width", "met": True, "detail": 3}], r"detail"),
+        ([{"name": "fits_width", "met": True, "required": "yes"}], r"required"),
+    ],
+)
+def test_missing_or_malformed_preconditions_are_an_error(tmp_path, preconditions, message):
+    path = _manifest(tmp_path)
+    m = json.loads(path.read_text())
+    if preconditions is None:
+        del m["preconditions"]
+    else:
+        m["preconditions"] = preconditions
+    path.write_text(json.dumps(m))
+    with pytest.raises(hallway.ManifestError, match=message):
+        hallway.verify(path)
+
+
+def test_export_writes_no_bundle_for_an_unsupported_run(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    src = tmp_path / "evidence"
+    src.mkdir()
+    path = _hallway_manifest(src, 1.41, False, "1.41 + 2 x 0.05 > 1.5")
+    with pytest.raises(SystemExit, match="UNSUPPORTED: precondition fits_width unmet"):
+        _tool().export(path, tmp_path / "verified", prototype=True)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["evidence"]
 
 
 def _drop(src, seeds):
