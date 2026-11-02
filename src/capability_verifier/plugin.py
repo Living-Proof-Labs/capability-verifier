@@ -16,4 +16,6 @@ from capability_verifier import definition
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def verify(args):
     """Lock or run a declarative verification (capability_verifier.definition)."""
-    raise SystemExit(definition.main(list(args) or ["--help"]))
+    raise SystemExit(
+        definition.main(list(args) or ["--help"], prog="livingproof capability verify")
+    )

@@ -4,7 +4,7 @@ version = "0.0.0"
 description = "Fixture reference verifier; not robot safety certification"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
-dependencies = []
+dependencies = ["pyyaml>=6.0"]
 
 [project.entry-points."livingproof.capability.commands"]
 verify = "capability_verifier.plugin:verify"

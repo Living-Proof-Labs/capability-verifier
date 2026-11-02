@@ -18,11 +18,13 @@ verifier commit with the locked robot repository and commit.
 
 ``run`` checks the lock, checks out the robot at the locked commit and the verifier at the
 commit the robot lock names, then executes the named ``run:`` scripts of that verifier
-commit's ``walk-hallway.yml`` (plan gate, setup, evidence, catalog, assessment, render) in
-the same directories CI uses. No step logic is copied here, so local and CI runs share one
+commit's ``walk-hallway.yml`` in the same directories CI uses: the plan job's checks (refs
+from the robot lock, every ref a released tag, media and bundle capability), setup, robot
+adapter, profiles valid, catalog, evidence, assessment and render. The robot's own test suite
+(``uv run pytest tests``) is CI-only. No step logic is copied here, so local and CI runs share one
 definition of each step. Rendering uses the locked reporter image by digest (``docker``),
 or the reporter source at the locked commit (``--reporter source``).
-Stdlib only.
+The workflow call is checked by parsing its YAML (PyYAML), never by matching text.
 """
 
 from __future__ import annotations
@@ -38,6 +40,8 @@ import shutil
 import subprocess
 import sys
 import tomllib
+
+import yaml
 
 FORMAT = "livingproof-verification-lock/0.1.0"
 DEFINITION_FORMAT = "livingproof-verification-definition/0.1.0"
@@ -56,7 +60,12 @@ def sha256(data: bytes) -> str:
 
 
 def load_definition(path: Path) -> dict:
-    d = tomllib.loads(path.read_text())
+    if not path.is_file():
+        raise DefinitionError(f"{path}: no such definition")
+    try:
+        d = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as e:
+        raise DefinitionError(f"{path}: not valid TOML ({e})") from None
     problems = []
     if d.get("format") != DEFINITION_FORMAT:
         problems.append(f"format must be {DEFINITION_FORMAT!r}")
@@ -130,29 +139,101 @@ def resolve(definition: Path, work: Path) -> dict:
 
 
 def workflow_problems(lock: dict, workflow: Path) -> list[str]:
-    text = workflow.read_text()
+    """Compare the parsed ``uses:`` and ``with:`` of every job calling the procedure.
+
+    Comments, other keys and other jobs never satisfy the check: at least one job must call the
+    procedure workflow, and every job that does must call it exactly as locked.
+    """
     v = lock["releases"]["verifier"]
-    uses = f"uses: {v['repository']}/{PROCEDURES[lock['procedure']]}@{v['commit']}"
-    want = {
-        uses: f"call {uses.split(': ', 1)[1]}",
-        f"repository: {lock['robot']['repository']}": "pass the locked robot repository",
-        f"ref: {lock['robot']['commit']}": "pass the locked robot commit",
-        f"configurations: '{json.dumps(lock['robot']['configurations'])}'": (
-            "pass the locked configurations"
-        ),
+    target = f"{v['repository']}/{PROCEDURES[lock['procedure']]}"
+    pinned = f"{target}@{v['commit']}"
+    try:
+        doc = yaml.safe_load(workflow.read_text())
+    except (OSError, yaml.YAMLError) as e:
+        return [f"{workflow}: cannot be read as YAML ({e})"]
+    jobs = doc.get("jobs") if isinstance(doc, dict) else None
+    if not isinstance(jobs, dict):
+        return [f"{workflow}: has no jobs"]
+    calls = {
+        name: job
+        for name, job in jobs.items()
+        if isinstance(job, dict) and str(job.get("uses", "")).split("@")[0] == target
     }
-    return [f"{workflow}: must {why} ({line})" for line, why in want.items() if line not in text]
+    if not calls:
+        return [f"{workflow}: no job calls {target}; must call {pinned}"]
+    want_confs = lock["robot"]["configurations"]
+    problems = []
+    for name, job in calls.items():
+        where = f"{workflow}: job {name}"
+        if job["uses"] != pinned:
+            problems.append(f"{where}: must call {pinned} (calls {job['uses']})")
+        w = job.get("with") if isinstance(job.get("with"), dict) else {}
+        if w.get("repository") != lock["robot"]["repository"]:
+            problems.append(
+                f"{where}: must pass the locked robot repository {lock['robot']['repository']}"
+            )
+        if w.get("ref") != lock["robot"]["commit"]:
+            problems.append(f"{where}: must pass the locked robot commit {lock['robot']['commit']}")
+        try:
+            confs = (
+                json.loads(w["configurations"])
+                if isinstance(w.get("configurations"), str)
+                else None
+            )
+        except json.JSONDecodeError:
+            confs = None
+        if confs != want_confs:
+            problems.append(
+                f"{where}: must pass the locked configurations '{json.dumps(want_confs)}'"
+            )
+    return problems
+
+
+def read_lock(path: Path) -> dict:
+    """The lock at ``path``, with a message (not a traceback) when it is malformed."""
+    try:
+        lock = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        raise DefinitionError(f"{path}: not valid JSON ({e}); re-run lock and review") from None
+    problems = []
+    if not isinstance(lock, dict):
+        raise DefinitionError(f"{path}: must be a JSON object; re-run lock and review")
+    if lock.get("format") != FORMAT:
+        problems.append(f"format is not {FORMAT}")
+    shape = {
+        "definition": ("sha256",),
+        "procedure": (),
+        "robot": ("repository", "commit", "configurations", "lock"),
+        "releases": ("verifier",),
+    }
+    for key, inner in shape.items():
+        if key not in lock:
+            problems.append(f"missing {key}")
+        elif inner and not (isinstance(lock[key], dict) and all(k in lock[key] for k in inner)):
+            problems.append(f"{key} must have {', '.join(inner)}")
+    if not problems:
+        if lock["procedure"] not in PROCEDURES:
+            problems.append(f"procedure must be one of {sorted(PROCEDURES)}")
+        if not (
+            isinstance(lock["robot"]["lock"], dict)
+            and {"path", "sha256"} <= set(lock["robot"]["lock"])
+        ):
+            problems.append("robot.lock must have path, sha256")
+        v = lock["releases"]["verifier"]
+        if not (isinstance(v, dict) and {"repository", "tag", "commit"} <= set(v)):
+            problems.append("releases.verifier must have repository, tag, commit")
+    if problems:
+        raise DefinitionError(f"{path}: " + "; ".join(problems) + "; re-run lock and review")
+    return lock
 
 
 def check(definition: Path, work: Path, workflow: Path | None = None) -> dict:
+    load_definition(definition)
     path = lock_path(definition)
     if not path.exists():
         raise DefinitionError(f"{path} is missing; run `lock {definition}` and review it")
-    lock = json.loads(path.read_text())
-    load_definition(definition)
+    lock = read_lock(path)
     problems = []
-    if lock.get("format") != FORMAT:
-        problems.append(f"{path.name}: format is not {FORMAT}")
     if lock["definition"]["sha256"] != sha256(definition.read_bytes()):
         problems.append(f"{definition.name} changed since it was locked; re-run lock and review")
     r = lock["robot"]
@@ -162,7 +243,7 @@ def check(definition: Path, work: Path, workflow: Path | None = None) -> dict:
         raw = show(r["repository"], r["commit"], r["lock"]["path"], work / "robot")
         if sha256(raw) != r["lock"]["sha256"]:
             problems.append(f"{r['repository']}@{r['commit'][:12]} lock differs from {path.name}")
-        elif json.loads(raw)["releases"] != lock["releases"]:
+        elif json.loads(raw).get("releases") != lock["releases"]:
             problems.append(f"releases in {path.name} differ from the robot lock")
     if workflow is not None:
         problems += workflow_problems(lock, workflow)
@@ -212,7 +293,10 @@ def sh(script: str, cwd: Path, env: dict, outputs: Path | None = None) -> dict:
 
 
 def reporter_shim(lock: dict, mode: str, work: Path) -> Path:
-    rep = lock["releases"]["reporter"]
+    rep = lock["releases"].get("reporter")
+    keys = {"repository", "commit", "image", "tag", "digest"}
+    if not (isinstance(rep, dict) and keys <= set(rep)):
+        raise DefinitionError(f"releases.reporter must have {', '.join(sorted(keys))}")
     bindir = work / "bin"
     bindir.mkdir(parents=True, exist_ok=True)
     shim = bindir / "livingproof-capability-report"
@@ -246,6 +330,10 @@ def run(definition: Path, out: Path, *, reporter: str = "docker") -> dict:
     checkout(v["repository"], v["commit"], verifier)
     wf = (verifier / PROCEDURES[lock["procedure"]]).read_text()
     gh = {"MUJOCO_GL": "osmesa", "PYOPENGL_PLATFORM": "osmesa"}
+    # plan job: the configurations must be in the robot lock, every ref a released tag.
+    only = json.dumps(lock["robot"]["configurations"])
+    sh(step(wf, "Refs from verification.lock.json"), robot, {**gh, "ONLY": only}, work / "r.out")
+    sh(step(wf, "Every ref is a released tag"), work, gh)
     plan = sh(
         f"uv run --no-project --with packaging==26.3 -- bash -e <<'LP'\n"
         f"{step(wf, 'Media and bundle capability')}LP\n",
@@ -256,6 +344,7 @@ def run(definition: Path, out: Path, *, reporter: str = "docker") -> dict:
     bundle = plan["bundle-version"]
     sh(step(wf, "Setup (locked environment"), robot, gh)
     adapter = sh(step(wf, "Robot adapter from pyproject.toml"), robot, gh, work / "a.out")["ref"]
+    sh(step(wf, "Robot and configuration profiles valid"), robot, {**gh, "ADAPTER": adapter})
     subprocess.run(["uv", "sync", "--locked", "-q"], cwd=verifier, check=True)
     sh(step(wf, "Walk-hallway catalog"), verifier, gh)
     bindir = reporter_shim(lock, reporter, work)
@@ -287,10 +376,8 @@ def run(definition: Path, out: Path, *, reporter: str = "docker") -> dict:
     return summary
 
 
-def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(
-        prog="capability_verifier.definition", description=__doc__.split("\n\n")[0]
-    )
+def main(argv=None, prog: str = "python3 -m capability_verifier.definition") -> int:
+    ap = argparse.ArgumentParser(prog=prog, description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="command", required=True)
     lk = sub.add_parser("lock", help="resolve the definition into its reviewed lock, or --check it")
     lk.add_argument("definition", type=Path)

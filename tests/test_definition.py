@@ -129,8 +129,122 @@ def test_a_tampered_lock_is_refused(tmp_path, robot):
 def test_a_workflow_call_that_drifts_from_the_lock_is_refused(tmp_path, robot, change):
     path = _definition(tmp_path)
     lock = _lock(tmp_path, path)
-    with pytest.raises(SystemExit, match="verify.yml: must"):
+    with pytest.raises(SystemExit, match="verify.yml: job g1: must"):
         d.check(path, tmp_path / "w2", _workflow(tmp_path, lock, **change))
+
+
+def _pin(lock):
+    v = lock["releases"]["verifier"]
+    return f"{v['repository']}/.github/workflows/walk-hallway.yml@{v['commit']}"
+
+
+def test_a_commented_out_pin_is_refused(tmp_path, robot):
+    # Regression: the pinned line as a comment next to a floating ref used to pass.
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    floating = _pin(lock).split("@")[0] + "@main"
+    wf = _workflow(tmp_path, lock, uses=f"{floating}\n    # uses: {_pin(lock)}")
+    assert f"# uses: {_pin(lock)}" in wf.read_text()
+    with pytest.raises(SystemExit, match="must call .*@f{40} \\(calls .*@main\\)"):
+        d.check(path, tmp_path / "w2", wf)
+
+
+def test_commented_out_ref_and_configurations_are_refused(tmp_path, robot):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    wf = _workflow(
+        tmp_path,
+        lock,
+        ref=f"main\n      # ref: {lock['robot']['commit']}",
+        configurations="'[\"playground\"]'\n      # configurations: '[\"stock\"]'",
+    )
+    with pytest.raises(SystemExit) as e:
+        d.check(path, tmp_path / "w2", wf)
+    assert "locked robot commit" in str(e.value) and "locked configurations" in str(e.value)
+
+
+def test_the_pin_in_another_job_or_key_does_not_count(tmp_path, robot):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    wf = tmp_path / "verify.yml"
+    wf.write_text(
+        "env:\n"
+        f"  PIN: 'uses: {_pin(lock)}'\n"
+        "jobs:\n"
+        "  g1:\n"
+        f"    uses: {_pin(lock).split('@')[0]}@main\n"
+        "    with:\n"
+        f"      repository: {lock['robot']['repository']}\n"
+        f"      ref: {lock['robot']['commit']}\n"
+        "      configurations: '[\"stock\"]'\n"
+        "  other:\n"
+        "    runs-on: ubuntu-24.04\n"
+        "    steps:\n"
+        f"      - uses: {_pin(lock)}\n"
+    )
+    with pytest.raises(SystemExit, match="job g1: must call"):
+        d.check(path, tmp_path / "w2", wf)
+
+
+def test_a_workflow_without_the_call_is_refused(tmp_path, robot):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    wf = tmp_path / "verify.yml"
+    wf.write_text(f"# uses: {_pin(lock)}\njobs:\n  t:\n    runs-on: ubuntu-24.04\n")
+    with pytest.raises(SystemExit, match="no job calls"):
+        d.check(path, tmp_path / "w2", wf)
+
+
+def test_configurations_compare_as_json_not_text(tmp_path, robot):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    wf = _workflow(tmp_path, lock, configurations="'[ \"stock\" ]'")
+    assert d.check(path, tmp_path / "w2", wf) == lock
+
+
+@pytest.mark.parametrize(
+    "text, message",
+    [
+        ("{not json", "not valid JSON"),
+        ("[]", "must be a JSON object"),
+        ('{"format": "livingproof-verification-lock/0.1.0"}', "missing definition"),
+    ],
+)
+def test_a_malformed_lock_is_refused_with_a_message(tmp_path, robot, text, message):
+    path = _definition(tmp_path)
+    _lock(tmp_path, path)
+    d.lock_path(path).write_text(text)
+    with pytest.raises(d.DefinitionError, match=message):
+        d.check(path, tmp_path / "w2")
+
+
+def test_a_lock_missing_a_key_is_refused_with_a_message(tmp_path, robot):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    del lock["robot"]["lock"]
+    d.lock_path(path).write_text(json.dumps(lock))
+    with pytest.raises(d.DefinitionError, match="robot must have"):
+        d.check(path, tmp_path / "w2")
+
+
+@pytest.mark.parametrize("command", [["lock", "--check"], ["lock"], ["run"]])
+def test_a_missing_definition_is_named(tmp_path, command):
+    missing = tmp_path / "nope.toml"
+    with pytest.raises(d.DefinitionError, match="nope.toml: no such definition"):
+        d.main([*command, str(missing), *(["--out", str(tmp_path)] if command == ["run"] else [])])
+
+
+def test_help_names_the_livingproof_command(capsys):
+    pytest.importorskip("click")
+    from click.testing import CliRunner
+
+    from capability_verifier.plugin import verify
+
+    out = CliRunner().invoke(verify, ["--help"]).output
+    assert out.startswith("usage: livingproof capability verify")
+    with pytest.raises(SystemExit):
+        d.main(["--help"])
+    assert "usage: python3 -m capability_verifier.definition" in capsys.readouterr().out
 
 
 def test_unknown_configuration_is_refused_when_locking(tmp_path, robot):
@@ -166,7 +280,10 @@ def test_definition_is_validated(tmp_path, text, message):
 @pytest.mark.parametrize(
     "name, needle",
     [
+        ("Refs from verification.lock.json", "not in the lock"),
+        ("Every ref is a released tag", "repin.py --root robot --check"),
         ("Media and bundle capability", "bundle-version="),
+        ("Robot and configuration profiles valid", "robot.configuration(n)"),
         ("Setup (locked environment", "uv sync --locked"),
         ("Robot adapter from pyproject.toml", '["tool"]["livingproof"]["adapter"]'),
         ("Evidence (observations only", "livingproof_sim_mujoco.evidence"),
