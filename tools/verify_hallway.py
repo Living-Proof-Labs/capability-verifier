@@ -114,6 +114,22 @@ def export(
     return result
 
 
+def absent_evidence(manifest_path: Path, result: dict) -> list[str]:
+    """Evidence ids whose observation file is absent.
+
+    An absent observation stays in the bundle: its result keeps the manifest's recorded path
+    and digest (nothing is invented or substituted) and no file is copied, so the report reads
+    it as missing and the run stays INSUFFICIENT_EVIDENCE over the planned N. A file that is
+    present with another digest is not listed here: it is copied as before, and its digest
+    mismatch is what the report sees.
+    """
+    return [
+        t["evidence"]["id"]
+        for t in result["trials"]
+        if not (Path(manifest_path).parent / t["evidence"]["path"]).exists()
+    ]
+
+
 def _export(
     manifest_path: Path, out: Path, prototype: bool, producer_id, bundle_version: str = "1.0.0"
 ) -> dict:
@@ -125,6 +141,9 @@ def _export(
     if result["summary"]["grade"] == hallway.UNSUPPORTED:
         # The reporter bundle has no unsupported result yet (verifier #20); export nothing.
         raise SystemExit(f"{hallway.UNSUPPORTED}: {result['summary']['reason']}; no bundle written")
+    missing = absent_evidence(manifest_path, result)
+    if missing:
+        result["missing_evidence"] = missing
     evidence = json.loads(manifest_path.read_text())
     version, commit, dev_note = producer_id
     (out / "verification.json").write_text(json.dumps(result, indent=2) + "\n")
@@ -148,9 +167,10 @@ def _export(
     results = []
     for t in result["trials"]:
         name = Path(t["evidence"]["path"]).name
-        shutil.copyfile(
-            manifest_path.parent / t["evidence"]["path"], bundle_dir / "evidence" / name
-        )
+        if t["evidence"]["id"] not in missing:
+            shutil.copyfile(
+                manifest_path.parent / t["evidence"]["path"], bundle_dir / "evidence" / name
+            )
         assessments = []
         for a in t["assessments"]:
             kind = hallway.REPORTER_KIND[a["assessor"]["type"]]
@@ -178,6 +198,8 @@ def _export(
             "simulator": evidence.get("environment"),
             "summary": result["summary"],
         }
+        if missing:
+            provenance["missing_evidence"] = missing
         if note:
             provenance["prototype"] = note
         if dev_note:
