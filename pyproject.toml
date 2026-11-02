@@ -6,6 +6,9 @@ requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
 dependencies = []
 
+[project.entry-points."livingproof.capability.commands"]
+verify = "capability_verifier.plugin:verify"
+
 [dependency-groups]
 dev = [
     "playwright==1.64.1",
