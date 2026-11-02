@@ -105,7 +105,47 @@ def test_repin_writes_the_lock_in_its_committed_layout():
     assert repin.dump(json.loads(text)) == text
 
 
-def test_cli_checks_the_robot_repository_named_by_root(tmp_path, capsys):
+def locked_commits(repository, tag):
+    return next(
+        r["commit"]
+        for r in LOCK["releases"].values()
+        if r["repository"] == repository and r["tag"] == tag
+    )
+
+
+def test_check_confirms_each_tag_resolves_to_its_locked_commit():
+    assert repin.check(LOCK, PYPROJECT, locked_commits) == []
+    moved = json.loads(json.dumps(LOCK))
+    moved["releases"]["verifier"]["commit"] = "e" * 40
+    problems = repin.check(moved, PYPROJECT, locked_commits)
+    assert problems == [
+        f"releases.verifier: {LOCK['releases']['verifier']['repository']} tag "
+        f"{LOCK['releases']['verifier']['tag']} is {LOCK['releases']['verifier']['commit']}, "
+        f"not the locked {'e' * 40}"
+    ]
+    assert repin.check(moved, PYPROJECT) == []  # offline: format only, as before
+
+
+def test_check_reports_a_tag_that_no_longer_resolves():
+    def gone(repository, tag):
+        raise SystemExit(f"{repository} has no tag {tag}; release it first")
+
+    problems = repin.check(LOCK, PYPROJECT, gone)
+    assert len(problems) == len(LOCK["releases"])
+    assert all("cannot resolve" in p and "has no tag" in p for p in problems)
+
+
+def test_cli_check_resolves_tags_unless_offline(tmp_path, capsys, monkeypatch):
+    shutil.copy(FIXTURE / "verification.lock.json", tmp_path)
+    shutil.copy(FIXTURE / "pyproject.toml", tmp_path)
+    monkeypatch.setattr(repin, "resolve", lambda repository, tag: "0" * 40)
+    assert repin.main(["--root", str(tmp_path), "--check"]) == 1
+    assert "not the locked" in capsys.readouterr().out
+    assert repin.main(["--root", str(tmp_path), "--check", "--offline"]) == 0
+
+
+def test_cli_checks_the_robot_repository_named_by_root(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(repin, "resolve", locked_commits)
     shutil.copy(FIXTURE / "verification.lock.json", tmp_path)
     shutil.copy(FIXTURE / "pyproject.toml", tmp_path)
     assert repin.main(["--root", str(tmp_path), "--check"]) == 0
