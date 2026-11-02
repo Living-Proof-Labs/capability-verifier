@@ -122,6 +122,9 @@ def _export(
     if not released and not prototype:
         raise SystemExit("hallway lock is UNRELEASED; pass --prototype to export a labelled bundle")
     result = hallway.verify(manifest_path)  # raises ManifestError for JSON, fields, plan, trials
+    if result["summary"]["grade"] == hallway.UNSUPPORTED:
+        # The reporter bundle has no unsupported result yet (verifier #20); export nothing.
+        raise SystemExit(f"{hallway.UNSUPPORTED}: {result['summary']['reason']}; no bundle written")
     evidence = json.loads(manifest_path.read_text())
     version, commit, dev_note = producer_id
     (out / "verification.json").write_text(json.dumps(result, indent=2) + "\n")
