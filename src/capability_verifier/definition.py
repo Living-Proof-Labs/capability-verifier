@@ -14,7 +14,9 @@ of the robot's ``verification.lock.json`` and the releases it names (runner, ver
 reporter image digest, specs) for review. ``--check`` re-resolves nothing: it fails when the
 definition changed since locking, when the robot lock at the locked commit no longer has the
 recorded sha256, or when ``--workflow`` does not call ``walk-hallway.yml`` at the locked
-verifier commit with the locked robot repository and commit.
+verifier commit with the locked robot repository and commit. Only the calls for this
+definition are checked (job id equal to the definition id, or ``with.repository`` equal to the
+locked robot repository), so one workflow can hold several robots.
 
 ``run`` checks the lock, checks out the robot at the locked commit and the verifier at the
 commit the robot lock names, then executes the named ``run:`` scripts of that verifier
@@ -203,13 +205,26 @@ def runs_procedure(job, procedure: str, root: Path | None = None) -> bool:
     return False
 
 
-def workflow_problems(lock: dict, workflow: Path) -> list[str]:
-    """Compare the parsed ``uses:`` and ``with:`` of every job that runs the procedure, in
-    ``workflow`` and in every other workflow file beside it.
+def _for_definition(name: str, job: dict, lock: dict, definition_id: str | None) -> bool:
+    """Whether a job that runs the procedure is this definition's call: its job id is the
+    definition id, or it passes the locked robot repository. One workflow can then hold several
+    robots' calls, each checked against its own lock."""
+    if definition_id is not None and name == definition_id:
+        return True
+    w = job.get("with") if isinstance(job.get("with"), dict) else {}
+    # A call that names no robot repository cannot be another robot's, so it is checked too.
+    return w.get("repository") in (None, lock["robot"]["repository"])
 
-    Comments, other keys and other jobs never satisfy the check: at least one job in
-    ``workflow`` must call the procedure, and every job in any workflow file that runs it, under
-    any file name, owner, path or ref, must call it exactly as locked.
+
+def workflow_problems(lock: dict, workflow: Path, definition_id: str | None = None) -> list[str]:
+    """Compare the parsed ``uses:`` and ``with:`` of every job that runs the procedure for this
+    definition, in ``workflow`` and in every other workflow file beside it.
+
+    A job is this definition's call when its job id is ``definition_id`` or it passes the
+    locked robot repository; calls for other robots are left to their own locks. Comments,
+    other keys and other jobs never satisfy the check: at least one job in ``workflow`` must be
+    this definition's call, and every such job in any workflow file, under any file name,
+    owner, path or ref, must call the procedure exactly as locked.
     """
     v = lock["releases"]["verifier"]
     target = f"{v['repository']}/{PROCEDURES[lock['procedure']]}"
@@ -226,10 +241,17 @@ def workflow_problems(lock: dict, workflow: Path) -> list[str]:
             problems.append(error)
             continue
         calls = {
-            name: job for name, job in jobs.items() if runs_procedure(job, lock["procedure"], root)
+            name: job
+            for name, job in jobs.items()
+            if runs_procedure(job, lock["procedure"], root)
+            and _for_definition(name, job, lock, definition_id)
         }
         if index == 0 and not calls:
-            problems.append(f"{workflow}: no job calls {target}; must call {pinned}")
+            problems.append(
+                f"{workflow}: no job calls {target} for {lock['robot']['repository']}"
+                + (f" (job {definition_id})" if definition_id else "")
+                + f"; must call {pinned}"
+            )
         for name, job in calls.items():
             where = f"{path}: job {name}"
             if not same_call(job["uses"], pinned):
@@ -347,7 +369,7 @@ def check(definition: Path, work: Path, workflow: Path | None = None) -> dict:
         elif json.loads(raw).get("releases") != lock["releases"]:
             problems.append(f"releases in {path.name} differ from the robot lock")
     if workflow is not None:
-        problems += workflow_problems(lock, workflow)
+        problems += workflow_problems(lock, workflow, load_definition(definition)["id"])
     if problems:
         raise DefinitionError("\n".join(problems))
     return lock

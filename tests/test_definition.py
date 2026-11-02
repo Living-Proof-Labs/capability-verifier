@@ -122,7 +122,6 @@ def test_a_tampered_lock_is_refused(tmp_path, robot):
     [
         {"uses": "Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@main"},
         {"ref": "main"},
-        {"repository": "Org/other"},
         {"configurations": "'[\"playground\"]'"},
     ],
 )
@@ -467,3 +466,68 @@ def test_an_edited_robot_repository_is_refused_before_any_fetch(
     monkeypatch.setattr(d, "show", no_fetch)
     with pytest.raises(SystemExit, match=message):
         d.check(path, tmp_path / "w2")
+
+
+def test_a_call_for_another_repository_is_not_this_definitions_call(tmp_path, robot):
+    # Job g1 is not named g1-stock, so a different repository makes it another robot's call.
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    with pytest.raises(SystemExit, match="no job calls .* for Org/robot"):
+        d.check(path, tmp_path / "w2", _workflow(tmp_path, lock, repository="Org/other"))
+
+
+def _multi(tmp_path, lock, **mine):
+    """verify.yml with another robot's call (other pins) and this definition's job g1-stock."""
+    v = lock["releases"]["verifier"]
+    call = f"{v['repository']}/.github/workflows/walk-hallway.yml"
+    w = {
+        "uses": f"{call}@{v['commit']}",
+        "repository": lock["robot"]["repository"],
+        "ref": lock["robot"]["commit"],
+        "configurations": "'[\"stock\"]'",
+        **mine,
+    }
+    path = tmp_path / "verify.yml"
+    path.write_text(
+        "jobs:\n"
+        f"  booster-t1-stock:\n    uses: {call}@{'e' * 40}\n    with:\n"
+        f"      repository: Org/t1\n      ref: {'1' * 40}\n"
+        "      configurations: '[\"playground\"]'\n"
+        f"  g1-stock:\n    uses: {w['uses']}\n    with:\n"
+        f"      repository: {w['repository']}\n      ref: {w['ref']}\n"
+        f"      configurations: {w['configurations']}\n"
+    )
+    return path
+
+
+def test_one_workflow_holds_several_robots(tmp_path, robot):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    assert d.check(path, tmp_path / "w2", _multi(tmp_path, lock)) == lock
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"uses": "Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@main"},
+        {"ref": "2" * 40},
+        {"configurations": "'[\"playground\"]'"},
+        # Matched by job id: a wrong repository is refused, not ignored.
+        {"repository": "Org/t1"},
+    ],
+)
+def test_a_mismatched_pin_for_the_matched_robot_fails_beside_other_robots(tmp_path, robot, change):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    with pytest.raises(SystemExit, match="verify.yml: job g1-stock: must") as e:
+        d.check(path, tmp_path / "w2", _multi(tmp_path, lock, **change))
+    assert "booster-t1-stock" not in str(e.value)
+
+
+def test_a_definition_without_its_call_fails_beside_other_robots(tmp_path, robot):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    wf = _multi(tmp_path, lock)
+    wf.write_text(wf.read_text().split("  g1-stock:")[0])
+    with pytest.raises(SystemExit, match="no job calls"):
+        d.check(path, tmp_path / "w2", wf)
