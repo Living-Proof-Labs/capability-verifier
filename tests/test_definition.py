@@ -371,3 +371,99 @@ def test_livingproof_plugin_entry_point():
     from capability_verifier.plugin import verify
 
     assert isinstance(verify, click.Command)
+
+
+def _workflows_dir(tmp_path, lock):
+    """A repository layout: .github/workflows/verify.yml holding the locked call."""
+    wf_dir = tmp_path / "repo" / ".github" / "workflows"
+    wf_dir.mkdir(parents=True)
+    wf = wf_dir / "verify.yml"
+    wf.write_text(_workflow(tmp_path, lock).read_text())
+    return wf_dir, wf
+
+
+def _call(uses, lock, ref="main"):
+    return (
+        f"jobs:\n  sneaky:\n    uses: {uses}\n    with:\n"
+        f"      repository: {lock['robot']['repository']}\n      ref: {ref}\n"
+        "      configurations: '[\"stock\"]'\n"
+    )
+
+
+def test_the_signature_matches_the_procedure_workflow():
+    import yaml
+
+    call = yaml.safe_load(WORKFLOW)[True]["workflow_call"]
+    sig = d.SIGNATURES["walk-hallway"]
+    assert sig["inputs"] <= set(call["inputs"])
+    assert sig["outputs"] == set(call["outputs"])
+
+
+@pytest.mark.parametrize(
+    "uses",
+    [
+        "./.github/workflows/hallway-copy.yml",
+        "someone-else/fork/.github/workflows/hallway.yml@main",
+        "Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@main",
+    ],
+    ids=["renamed-local", "renamed-fork", "other-ref"],
+)
+def test_calls_in_every_workflow_file_are_checked(tmp_path, robot, uses):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    wf_dir, wf = _workflows_dir(tmp_path, lock)
+    assert d.check(path, tmp_path / "w2", wf)
+    (wf_dir / "nightly.yaml").write_text(_call(uses, lock))
+    with pytest.raises(SystemExit, match=r"nightly.yaml: job sneaky: must call"):
+        d.check(path, tmp_path / "w2", wf)
+
+
+def test_a_renamed_local_copy_is_found_by_its_interface(tmp_path, robot):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    wf_dir, wf = _workflows_dir(tmp_path, lock)
+    (wf_dir / "hallway-copy.yml").write_text(WORKFLOW)
+    # Called without the procedure's inputs, so only the copy's interface identifies it.
+    (wf_dir / "other.yml").write_text(
+        "jobs:\n  copy:\n    uses: ./.github/workflows/hallway-copy.yml\n"
+    )
+    with pytest.raises(SystemExit, match=r"other.yml: job copy: must call"):
+        d.check(path, tmp_path / "w2", wf)
+
+
+def test_unrelated_reusable_workflows_and_steps_are_ignored(tmp_path, robot):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    wf_dir, wf = _workflows_dir(tmp_path, lock)
+    (wf_dir / "lint.yml").write_text(
+        "on:\n  workflow_call:\n    inputs:\n      path: {type: string}\n"
+        "jobs:\n  lint:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: true\n"
+    )
+    (wf_dir / "ci.yml").write_text(
+        "jobs:\n  lint:\n    uses: ./.github/workflows/lint.yml\n    with:\n      path: .\n"
+        "  docs:\n    uses: Org/docs/.github/workflows/build.yml@main\n"
+    )
+    assert d.check(path, tmp_path / "w2", wf) == lock
+
+
+@pytest.mark.parametrize(
+    ("repository", "message"),
+    [
+        ("Org/other-robot", "robot.repository 'Org/other-robot' differs from g1.toml"),
+        ("not a repo", "is not OWNER/REPO"),
+    ],
+)
+def test_an_edited_robot_repository_is_refused_before_any_fetch(
+    tmp_path, robot, monkeypatch, repository, message
+):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    lock["robot"]["repository"] = repository
+    d.lock_path(path).write_text(json.dumps(lock))
+
+    def no_fetch(*args, **kwargs):
+        raise AssertionError("fetched a repository the definition does not name")
+
+    monkeypatch.setattr(d, "show", no_fetch)
+    with pytest.raises(SystemExit, match=message):
+        d.check(path, tmp_path / "w2")
