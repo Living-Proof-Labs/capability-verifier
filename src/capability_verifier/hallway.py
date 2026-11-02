@@ -22,6 +22,8 @@ import math
 from pathlib import Path
 
 PASS, FAIL, INSUFFICIENT = "PASS", "FAIL", "INSUFFICIENT_EVIDENCE"
+# A run whose manifest declares an unmet required precondition: never graded PASS/FAIL.
+UNSUPPORTED = "UNSUPPORTED"
 ASSESSOR_TYPES = {"deterministic", "human", "agent"}
 # Reporter bundle 1.0.0 'kind' for each assessor type; agents have no reporter kind yet.
 REPORTER_KIND = {"deterministic": "deterministic", "human": "human", "agent": None}
@@ -103,6 +105,36 @@ def validate_manifest(manifest) -> None:
                 raise ManifestError(f"manifest field 'trials[{i}].{key}' is missing")
             if not _is(t[key], kind):
                 raise ManifestError(f"manifest field 'trials[{i}].{key}' has the wrong type")
+
+
+def unmet_precondition(manifest: dict) -> dict | None:
+    """The first required precondition the manifest declares unmet, or None if all are met.
+
+    ``preconditions`` must be a non-empty list of objects with a string ``name``, a boolean
+    ``met`` and an optional string ``detail``; ``required`` is optional and boolean (default
+    true). Anything else is a ManifestError: invalid data is never read as supported.
+    """
+    pre = manifest.get("preconditions")
+    if pre is None:
+        raise ManifestError("manifest field 'preconditions' is missing")
+    if not isinstance(pre, list) or not pre:
+        raise ManifestError("manifest field 'preconditions' must be a non-empty list")
+    unmet = None
+    for i, p in enumerate(pre):
+        where = f"manifest field 'preconditions[{i}]"
+        if not isinstance(p, dict):
+            raise ManifestError(f"{where}' has the wrong type")
+        if not isinstance(p.get("name"), str) or not p["name"]:
+            raise ManifestError(f"{where}.name' is missing or not a string")
+        if not isinstance(p.get("met"), bool):
+            raise ManifestError(f"{where}.met' is missing or not true/false")
+        if "detail" in p and not isinstance(p["detail"], str):
+            raise ManifestError(f"{where}.detail' has the wrong type")
+        if not isinstance(p.get("required", True), bool):
+            raise ManifestError(f"{where}.required' has the wrong type")
+        if unmet is None and p.get("required", True) and not p["met"]:
+            unmet = {"name": p["name"], "detail": p.get("detail", "")}
+    return unmet
 
 
 def thresholds(manifest: dict) -> dict:
@@ -384,6 +416,27 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
         raise ManifestError(f"manifest is not valid JSON: {e}") from None
     validate_manifest(manifest)
     plan = manifest["plan"]
+    unmet = unmet_precondition(manifest)
+    if unmet is not None:
+        # Declared unsupported: no trial is read or graded, whatever the manifest lists.
+        reason = f"precondition {unmet['name']} unmet" + (
+            f": {unmet['detail']}" if unmet["detail"] else ""
+        )
+        return {
+            "plan": plan,
+            "policy": POLICY,
+            "trials": [],
+            "unsupported": unmet,
+            "summary": {
+                "k": 0,
+                "n": plan["trials"],
+                "required_passes": plan["required_passes"],
+                "grade": UNSUPPORTED,
+                "reason": reason,
+                "aggregation": AGGREGATION,
+            },
+            "failures": [],
+        }
     if (
         sorted(t["seed"] for t in manifest["trials"]) != sorted(plan["seeds"])
         or len(plan["seeds"]) != plan["trials"]
@@ -442,6 +495,8 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
 
 def summary_lines(result: dict) -> list[str]:
     s = result["summary"]
+    if s["grade"] == UNSUPPORTED:
+        return [f"{UNSUPPORTED}: {s['reason']} (no trials assessed)"]
     lines = [
         f"{s['k']}/{s['n']} trials PASS (needs {s['required_passes']}), "
         f"Wilson 95% [{s['wilson95'][0]:.4f}, {s['wilson95'][1]:.4f}]: {s['grade']}"
