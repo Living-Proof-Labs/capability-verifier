@@ -14,7 +14,11 @@ of the robot's ``verification.lock.json`` and the releases it names (runner, ver
 reporter image digest, specs) for review. ``--check`` re-resolves nothing: it fails when the
 definition changed since locking, when the robot lock at the locked commit no longer has the
 recorded sha256, or when ``--workflow`` does not call ``walk-hallway.yml`` at the locked
-verifier commit with the locked robot repository and commit.
+verifier commit with the locked robot repository and commit. Only the calls for this
+definition are checked (job id equal to the definition id, or ``with.repository`` equal to the
+locked robot repository, compared case-insensitively without ``.git``), so one workflow can
+hold several robots. A call that belongs to no definition beside this one (an unknown
+repository or an expression) is refused.
 
 ``run`` checks the lock, checks out the robot at the locked commit and the verifier at the
 commit the robot lock names, then executes the named ``run:`` scripts of that verifier
@@ -46,6 +50,16 @@ import yaml
 FORMAT = "livingproof-verification-lock/0.1.0"
 DEFINITION_FORMAT = "livingproof-verification-definition/0.1.0"
 PROCEDURES = {"walk-hallway": ".github/workflows/walk-hallway.yml"}
+# A procedure is recognised by its interface, not its file name: a reusable-workflow call that
+# passes these inputs, or a local workflow that declares these workflow_call inputs and outputs,
+# runs the procedure under whatever name it has. tests/test_definition.py keeps these equal to
+# walk-hallway.yml's own workflow_call interface.
+SIGNATURES = {
+    "walk-hallway": {
+        "inputs": frozenset({"repository", "ref", "configurations"}),
+        "outputs": frozenset({"configurations", "report-artifacts"}),
+    }
+}
 SHA = re.compile(r"[0-9a-f]{40}")
 REPO = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 GITHUB = os.environ.get("LIVINGPROOF_GIT_BASE", "https://github.com")
@@ -138,54 +152,187 @@ def resolve(definition: Path, work: Path) -> dict:
     }
 
 
-def workflow_problems(lock: dict, workflow: Path) -> list[str]:
-    """Compare the parsed ``uses:`` and ``with:`` of every job calling the procedure.
+def _load_jobs(workflow: Path) -> tuple[dict | None, str | None]:
+    try:
+        doc = yaml.safe_load(workflow.read_text())
+    except (OSError, yaml.YAMLError) as e:
+        return None, f"{workflow}: cannot be read as YAML ({e})"
+    jobs = doc.get("jobs") if isinstance(doc, dict) else None
+    if not isinstance(jobs, dict):
+        return None, f"{workflow}: has no jobs"
+    return jobs, None
 
-    Comments, other keys and other jobs never satisfy the check: at least one job must call the
-    procedure workflow, and every job that does must call it exactly as locked.
+
+def _workflow_files(workflow: Path) -> list[Path]:
+    """The given workflow and every other workflow beside it (``.github/workflows``)."""
+    others = sorted(
+        p for p in workflow.parent.iterdir() if p.suffix in (".yml", ".yaml") and p.is_file()
+    )
+    return [workflow, *(p for p in others if p.resolve() != workflow.resolve())]
+
+
+def _declares_procedure(path: Path, procedure: str) -> bool:
+    """Whether the local workflow at ``path`` has the procedure's workflow_call interface."""
+    try:
+        doc = yaml.safe_load(path.read_text())
+    except (OSError, yaml.YAMLError):
+        return False
+    on = doc.get("on", doc.get(True)) if isinstance(doc, dict) else None
+    call = on.get("workflow_call") if isinstance(on, dict) else None
+    if not isinstance(call, dict):
+        return False
+    sig = SIGNATURES[procedure]
+    return sig["inputs"] <= set(call.get("inputs") or {}) and sig["outputs"] <= set(
+        call.get("outputs") or {}
+    )
+
+
+def runs_procedure(job, procedure: str, root: Path | None = None) -> bool:
+    """Whether a job runs the procedure: it calls the procedure's file from anywhere, calls a
+    reusable workflow with the procedure's inputs (a renamed copy, another owner, path or ref),
+    or calls a local workflow under ``root`` that declares the procedure's interface."""
+    if not isinstance(job, dict):
+        return False
+    uses = job.get("uses")
+    if calls_procedure(uses, procedure):
+        return True
+    if not isinstance(uses, str) or not uses.split("@", 1)[0].strip().endswith((".yml", ".yaml")):
+        return False
+    with_ = job.get("with") if isinstance(job.get("with"), dict) else {}
+    if SIGNATURES[procedure]["inputs"] <= set(with_):
+        return True
+    local = uses.strip()
+    if root is not None and local.startswith("./"):
+        return _declares_procedure(root / local[2:], procedure)
+    return False
+
+
+def normal_repository(value) -> str | None:
+    """How GitHub resolves ``OWNER/REPO``: case-insensitive, with an optional ``.git``."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip().lower()
+    return value[:-4] if value.endswith(".git") else value
+
+
+def _for_definition(name: str, job: dict, lock: dict, definition_id: str | None) -> bool:
+    """Whether a job that runs the procedure is this definition's call: its job id is the
+    definition id, or it passes the locked robot repository however it is spelled (case,
+    ``.git``). A call that names no repository cannot be another robot's, so it is checked."""
+    if definition_id is not None and name == definition_id:
+        return True
+    w = job.get("with") if isinstance(job.get("with"), dict) else {}
+    if "repository" not in w:
+        return True
+    return normal_repository(w["repository"]) == normal_repository(lock["robot"]["repository"])
+
+
+def _for_other(name: str, job: dict, others: dict[str, str]) -> bool:
+    """Whether the call belongs to another known definition (by its job id or its literal
+    ``OWNER/REPO``); that definition's own check covers it."""
+    if name in others:
+        return True
+    w = job.get("with") if isinstance(job.get("with"), dict) else {}
+    repository = w.get("repository")
+    return (
+        isinstance(repository, str)
+        and bool(REPO.fullmatch(repository.strip().removesuffix(".git")))
+        and normal_repository(repository) in {normal_repository(r) for r in others.values()}
+    )
+
+
+def other_definitions(definition: Path) -> dict[str, str]:
+    """The other definitions beside ``definition``: id to robot repository. A file that is
+    not a valid definition is left out, so a call for it is refused rather than trusted."""
+    found = {}
+    for path in sorted(definition.parent.glob("*.toml")):
+        if path.resolve() == definition.resolve():
+            continue
+        try:
+            d = load_definition(path)
+        except DefinitionError:
+            continue
+        found[d["id"]] = d["robot"]["repository"]
+    return found
+
+
+def workflow_problems(
+    lock: dict,
+    workflow: Path,
+    definition_id: str | None = None,
+    others: dict[str, str] | None = None,
+) -> list[str]:
+    """Compare the parsed ``uses:`` and ``with:`` of every job that runs the procedure for this
+    definition, in ``workflow`` and in every other workflow file beside it.
+
+    A job is this definition's call when its job id is ``definition_id`` or it passes the
+    locked robot repository; calls for other robots are left to their own locks. Comments,
+    other keys and other jobs never satisfy the check: at least one job in ``workflow`` must be
+    this definition's call, and every such job in any workflow file, under any file name,
+    owner, path or ref, must call the procedure exactly as locked.
     """
     v = lock["releases"]["verifier"]
     target = f"{v['repository']}/{PROCEDURES[lock['procedure']]}"
     pinned = f"{target}@{v['commit']}"
-    try:
-        doc = yaml.safe_load(workflow.read_text())
-    except (OSError, yaml.YAMLError) as e:
-        return [f"{workflow}: cannot be read as YAML ({e})"]
-    jobs = doc.get("jobs") if isinstance(doc, dict) else None
-    if not isinstance(jobs, dict):
-        return [f"{workflow}: has no jobs"]
-    calls = {
-        name: job
-        for name, job in jobs.items()
-        if isinstance(job, dict) and calls_procedure(job.get("uses"), lock["procedure"])
-    }
-    if not calls:
-        return [f"{workflow}: no job calls {target}; must call {pinned}"]
+    # .github/workflows/<file>: local ./ calls resolve against the repository root.
+    root = workflow.parent.parent.parent if workflow.parent.name == "workflows" else None
     want_confs = lock["robot"]["configurations"]
     problems = []
-    for name, job in calls.items():
-        where = f"{workflow}: job {name}"
-        if not same_call(job["uses"], pinned):
-            problems.append(f"{where}: must call {pinned} (calls {job['uses']})")
-        w = job.get("with") if isinstance(job.get("with"), dict) else {}
-        if w.get("repository") != lock["robot"]["repository"]:
+    for index, path in enumerate(_workflow_files(workflow)):
+        jobs, error = _load_jobs(path)
+        if error:
+            if index == 0:
+                return [error]
+            problems.append(error)
+            continue
+        calls = {
+            name: job
+            for name, job in jobs.items()
+            if runs_procedure(job, lock["procedure"], root)
+            and _for_definition(name, job, lock, definition_id)
+        }
+        for name, job in jobs.items():
+            if (
+                name not in calls
+                and runs_procedure(job, lock["procedure"], root)
+                and not _for_other(name, job, others or {})
+            ):
+                w = job.get("with") if isinstance(job.get("with"), dict) else {}
+                problems.append(
+                    f"{path}: job {name}: calls {target} for {w.get('repository')!r}, which is "
+                    "no known definition's OWNER/REPO; every call must belong to a definition"
+                )
+        if index == 0 and not calls:
             problems.append(
-                f"{where}: must pass the locked robot repository {lock['robot']['repository']}"
+                f"{workflow}: no job calls {target} for {lock['robot']['repository']}"
+                + (f" (job {definition_id})" if definition_id else "")
+                + f"; must call {pinned}"
             )
-        if w.get("ref") != lock["robot"]["commit"]:
-            problems.append(f"{where}: must pass the locked robot commit {lock['robot']['commit']}")
-        try:
-            confs = (
-                json.loads(w["configurations"])
-                if isinstance(w.get("configurations"), str)
-                else None
-            )
-        except json.JSONDecodeError:
-            confs = None
-        if confs != want_confs:
-            problems.append(
-                f"{where}: must pass the locked configurations '{json.dumps(want_confs)}'"
-            )
+        for name, job in calls.items():
+            where = f"{path}: job {name}"
+            if not same_call(job["uses"], pinned):
+                problems.append(f"{where}: must call {pinned} (calls {job['uses']})")
+            w = job.get("with") if isinstance(job.get("with"), dict) else {}
+            if w.get("repository") != lock["robot"]["repository"]:
+                problems.append(
+                    f"{where}: must pass the locked robot repository {lock['robot']['repository']}"
+                )
+            if w.get("ref") != lock["robot"]["commit"]:
+                problems.append(
+                    f"{where}: must pass the locked robot commit {lock['robot']['commit']}"
+                )
+            try:
+                confs = (
+                    json.loads(w["configurations"])
+                    if isinstance(w.get("configurations"), str)
+                    else None
+                )
+            except json.JSONDecodeError:
+                confs = None
+            if confs != want_confs:
+                problems.append(
+                    f"{where}: must pass the locked configurations '{json.dumps(want_confs)}'"
+                )
     return problems
 
 
@@ -261,16 +408,26 @@ def check(definition: Path, work: Path, workflow: Path | None = None) -> dict:
                 f"{path.name}: robot.{key} {r[key]!r} differs from {definition.name} "
                 f"({want[key]!r}); re-run lock and review"
             )
-    if not SHA.fullmatch(r["commit"]):
+    repository_ok = (
+        isinstance(r["repository"], str)
+        and REPO.fullmatch(r["repository"])
+        and r["repository"] == want["repository"]
+    )
+    if isinstance(r["repository"], str) and not REPO.fullmatch(r["repository"]):
+        problems.append(f"{path.name}: robot.repository {r['repository']!r} is not OWNER/REPO")
+    # Never fetch a repository the definition does not name: report the edit instead.
+    if repository_ok and not SHA.fullmatch(r["commit"]):
         problems.append("robot.commit is not a full commit sha")
-    else:
+    elif repository_ok:
         raw = show(r["repository"], r["commit"], r["lock"]["path"], work / "robot")
         if sha256(raw) != r["lock"]["sha256"]:
             problems.append(f"{r['repository']}@{r['commit'][:12]} lock differs from {path.name}")
         elif json.loads(raw).get("releases") != lock["releases"]:
             problems.append(f"releases in {path.name} differ from the robot lock")
     if workflow is not None:
-        problems += workflow_problems(lock, workflow)
+        problems += workflow_problems(
+            lock, workflow, load_definition(definition)["id"], other_definitions(definition)
+        )
     if problems:
         raise DefinitionError("\n".join(problems))
     return lock

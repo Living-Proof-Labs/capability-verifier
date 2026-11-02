@@ -16,7 +16,8 @@ reruns ``uv lock``. The workflow reads every other ref straight from the lock.
 
 ``--check`` fails while any ref is PENDING_RELEASE, while an image entry has no sha256 digest,
 while the runner source in
-pyproject.toml is not the locked tag, and if any dependency is path-pinned.
+pyproject.toml is not the locked tag, if any dependency is path-pinned, and when a locked tag
+does not resolve (``git ls-remote``) to its locked commit. ``--offline`` skips that last check.
 Stdlib only, so CI can run it before installing anything.
 """
 
@@ -96,7 +97,9 @@ def runner_source(text: str) -> str | None:
     return m.group("body").strip() if m else None
 
 
-def check(lock: dict, pyproject: str) -> list[str]:
+def check(lock: dict, pyproject: str, resolver=None) -> list[str]:
+    """Problems with the lock; with ``resolver`` also every tag that does not resolve to its
+    locked commit (a moved or deleted tag, or a hand-edited commit)."""
     problems = [
         f"releases.{name} is {PENDING} (expected {ref.get('expected', 'a release tag')})"
         for name, ref in lock["releases"].items()
@@ -119,6 +122,20 @@ def check(lock: dict, pyproject: str) -> list[str]:
     body = runner_source(pyproject) or ""
     if runner["tag"] != PENDING and f'tag = "{runner["tag"]}"' not in body:
         problems.append(f"pyproject.toml {RUNNER_DIST} source is not tag {runner['tag']}: {body}")
+    if resolver is not None:
+        for name, ref in lock["releases"].items():
+            if not (TAG.fullmatch(ref.get("tag", "")) and SHA.fullmatch(ref.get("commit", ""))):
+                continue
+            try:
+                commit = resolver(ref["repository"], ref["tag"])
+            except (SystemExit, subprocess.SubprocessError) as e:
+                problems.append(f"releases.{name}: cannot resolve {ref['tag']}: {e}")
+                continue
+            if commit != ref["commit"]:
+                problems.append(
+                    f"releases.{name}: {ref['repository']} tag {ref['tag']} is {commit}, "
+                    f"not the locked {ref['commit']}"
+                )
     return problems
 
 
@@ -174,13 +191,16 @@ def main(argv=None) -> int:
     ap.add_argument("pins", nargs="*", metavar="entry=vX.Y.Z")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument(
+        "--offline", action="store_true", help="--check without resolving tags to commits"
+    )
     ap.add_argument("--root", type=Path, default=Path("."), help="robot repository (default .)")
     ap.add_argument("--lock", default=LOCK, help=f"lock path under --root (default {LOCK})")
     a = ap.parse_args(argv)
     lock_path, pyproject_path = a.root / a.lock, a.root / PYPROJECT
     lock, pyproject = json.loads(lock_path.read_text()), pyproject_path.read_text()
     if a.check:
-        problems = check(lock, pyproject)
+        problems = check(lock, pyproject, None if a.offline else resolve)
         for p in problems:
             print(f"NOT RELEASED: {p}")
         if not problems:
