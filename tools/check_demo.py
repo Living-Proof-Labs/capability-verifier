@@ -11,7 +11,14 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-from run_archives import build, extract, release, reporter, require_reporter
+from run_archives import (
+    ReporterUnavailable,
+    build,
+    extract,
+    release,
+    reporter,
+    require_reporter,
+)
 
 EXPECTED = {
     "compatibility-matrix": ["PASS", "PASS", "INCOMPATIBLE", "FAIL"],
@@ -178,4 +185,8 @@ if __name__ == "__main__":
     parser.add_argument("--architecture", default="amd64")
     parser.add_argument("--junit", type=Path, required=True)
     args = parser.parse_args()
+    try:
+        require_reporter()  # fail once, clearly, before any case runs
+    except ReporterUnavailable as error:
+        raise SystemExit(f"check_demo: {error}") from None
     check(args.inputs, args.destination, args.version, args.architecture, args.junit)
