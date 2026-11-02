@@ -157,7 +157,7 @@ def workflow_problems(lock: dict, workflow: Path) -> list[str]:
     calls = {
         name: job
         for name, job in jobs.items()
-        if isinstance(job, dict) and str(job.get("uses", "")).split("@")[0] == target
+        if isinstance(job, dict) and calls_procedure(job.get("uses"), lock["procedure"])
     }
     if not calls:
         return [f"{workflow}: no job calls {target}; must call {pinned}"]
@@ -165,7 +165,7 @@ def workflow_problems(lock: dict, workflow: Path) -> list[str]:
     problems = []
     for name, job in calls.items():
         where = f"{workflow}: job {name}"
-        if job["uses"] != pinned:
+        if not same_call(job["uses"], pinned):
             problems.append(f"{where}: must call {pinned} (calls {job['uses']})")
         w = job.get("with") if isinstance(job.get("with"), dict) else {}
         if w.get("repository") != lock["robot"]["repository"]:
@@ -187,6 +187,23 @@ def workflow_problems(lock: dict, workflow: Path) -> list[str]:
                 f"{where}: must pass the locked configurations '{json.dumps(want_confs)}'"
             )
     return problems
+
+
+def calls_procedure(uses, procedure: str) -> bool:
+    """Whether ``uses`` calls the procedure workflow from anywhere: any owner (GitHub owners are
+    case-insensitive), a fork, or a local ``./.github/workflows`` copy."""
+    if not isinstance(uses, str):
+        return False
+    path = uses.split("@", 1)[0].strip().lower()
+    return path.endswith("/" + PROCEDURES[procedure].lower())
+
+
+def same_call(uses: str, pinned: str) -> bool:
+    """``OWNER/REPO/path@commit`` equal to the pin: owner and repo case-insensitively, the
+    commit exactly."""
+    target, _, ref = uses.partition("@")
+    want, _, commit = pinned.partition("@")
+    return target.lower() == want.lower() and ref == commit
 
 
 def read_lock(path: Path) -> dict:
@@ -237,6 +254,13 @@ def check(definition: Path, work: Path, workflow: Path | None = None) -> dict:
     if lock["definition"]["sha256"] != sha256(definition.read_bytes()):
         problems.append(f"{definition.name} changed since it was locked; re-run lock and review")
     r = lock["robot"]
+    want = load_definition(definition)["robot"]
+    for key in ("repository", "configurations"):
+        if r[key] != want[key]:
+            problems.append(
+                f"{path.name}: robot.{key} {r[key]!r} differs from {definition.name} "
+                f"({want[key]!r}); re-run lock and review"
+            )
     if not SHA.fullmatch(r["commit"]):
         problems.append("robot.commit is not a full commit sha")
     else:
@@ -286,7 +310,11 @@ def sh(script: str, cwd: Path, env: dict, outputs: Path | None = None) -> dict:
         line for line in script.splitlines() if not line.startswith("python3 -m pip install")
     )
     print(f"$ ({cwd.name}) " + script.splitlines()[0], file=sys.stderr, flush=True)
-    subprocess.run(["bash", "-e", "-c", script], cwd=cwd, env=env, check=True)
+    done = subprocess.run(["bash", "-e", "-c", script], cwd=cwd, env=env)
+    if done.returncode:
+        raise DefinitionError(
+            f"step failed (exit {done.returncode}) in {cwd.name}: {script.splitlines()[0]}"
+        )
     if outputs is None:
         return {}
     return dict(line.split("=", 1) for line in outputs.read_text().splitlines() if "=" in line)
@@ -389,6 +417,17 @@ def main(argv=None, prog: str = "python3 -m capability_verifier.definition") -> 
     rn.add_argument("--out", type=Path, default=Path("artifacts/runs"))
     rn.add_argument("--reporter", choices=("docker", "source"), default="docker")
     a = ap.parse_args(argv)
+    try:
+        return _main(a)
+    except subprocess.CalledProcessError as e:
+        cmd = " ".join(map(str, e.cmd)) if isinstance(e.cmd, list) else str(e.cmd)
+        detail = (e.stderr or "").strip().splitlines()[-1:] if isinstance(e.stderr, str) else []
+        raise DefinitionError(
+            f"command failed (exit {e.returncode}): {cmd}" + (f": {detail[0]}" if detail else "")
+        ) from None
+
+
+def _main(a) -> int:
     if a.command == "lock" and a.check:
         lock = check(a.definition, a.work, a.workflow)
         print(

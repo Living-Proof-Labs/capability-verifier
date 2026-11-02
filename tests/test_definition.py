@@ -186,6 +186,65 @@ def test_the_pin_in_another_job_or_key_does_not_count(tmp_path, robot):
         d.check(path, tmp_path / "w2", wf)
 
 
+@pytest.mark.parametrize(
+    "uses",
+    [
+        "living-proof-labs/capability-verifier/.github/workflows/walk-hallway.yml@main",
+        "someone-else/capability-verifier/.github/workflows/walk-hallway.yml@main",
+        "./.github/workflows/walk-hallway.yml",
+        "./.github/workflows/Walk-Hallway.yml",
+    ],
+    ids=["lowercase-owner", "fork", "local", "local-case"],
+)
+def test_a_second_call_to_any_walk_hallway_is_refused(tmp_path, robot, uses):
+    # Regression (b19): only the exact owner/repo was treated as a verifier call.
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    wf = _workflow(tmp_path, lock)
+    wf.write_text(
+        wf.read_text() + f"  extra:\n    uses: {uses}\n    with:\n"
+        f"      repository: {lock['robot']['repository']}\n      ref: main\n"
+        "      configurations: '[\"stock\"]'\n"
+    )
+    with pytest.raises(SystemExit, match="job extra: must call"):
+        d.check(path, tmp_path / "w2", wf)
+
+
+def test_the_pin_matches_owner_and_repo_case_insensitively(tmp_path, robot):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    owner, rest = _pin(lock).split("/", 1)
+    assert d.check(path, tmp_path / "w2", _workflow(tmp_path, lock, uses=f"{owner.lower()}/{rest}"))
+    upper = _pin(lock).replace("f" * 40, "F" * 40)
+    with pytest.raises(SystemExit, match="must call"):
+        d.check(path, tmp_path / "w2", _workflow(tmp_path, lock, uses=upper))
+
+
+def test_edited_lock_configurations_are_refused(tmp_path, robot):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    lock["robot"]["configurations"] = ["stock", "playground"]
+    d.lock_path(path).write_text(json.dumps(lock))
+    with pytest.raises(SystemExit, match="robot.configurations .* differs from g1.toml"):
+        d.check(path, tmp_path / "w2")
+
+
+def test_a_failing_step_is_a_message_not_a_traceback(tmp_path):
+    with pytest.raises(d.DefinitionError, match=r"step failed \(exit 3\) in .*: echo refused"):
+        d.sh("echo refused\nexit 3\n", tmp_path, {})
+
+
+def test_a_failing_command_is_a_message_not_a_traceback(monkeypatch, tmp_path):
+    import subprocess as sp
+
+    def boom(*a, **k):
+        raise sp.CalledProcessError(128, ["git", "fetch"], stderr="fatal: no such ref\n")
+
+    monkeypatch.setattr(d, "_main", boom)
+    with pytest.raises(d.DefinitionError, match="command failed \\(exit 128\\): git fetch: fatal"):
+        d.main(["lock", str(tmp_path / "x.toml")])
+
+
 def test_a_workflow_without_the_call_is_refused(tmp_path, robot):
     path = _definition(tmp_path)
     lock = _lock(tmp_path, path)
