@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
+# Pinned below reporter 3.0.0: the checks use grade and its policies (see the guard below).
 REPORTER_IMAGE=${REPORTER_IMAGE:-ghcr.io/living-proof-labs/livingproof-capability-report:1.6.0}
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 test -s "$root/artifacts/matrix/manifest.json"
@@ -9,6 +10,12 @@ docker run --rm --entrypoint sh \
   --mount "type=bind,src=$root/artifacts/matrix,dst=/input,readonly" \
   --mount "type=bind,src=$root/artifacts/matrix-report,dst=/output" \
   "$REPORTER_IMAGE" -ec '
+    # Bundles here are 1.0.0 (pause): only grade, removed in reporter 3.0.0, assesses them.
+    major=$(livingproof-capability-report --version | sed -n "s/^Package: \([0-9]*\)\..*/\1/p")
+    if [ -z "$major" ] || [ "$major" -ge 3 ]; then
+      echo "matrix_report.sh needs reporter <3 (grade); got: $(livingproof-capability-report --version)" >&2
+      exit 1
+    fi
     livingproof-capability-report --version
     livingproof-capability-report validate /input/manifest.json
     livingproof-capability-report grade /input/manifest.json -o /output/report.json
