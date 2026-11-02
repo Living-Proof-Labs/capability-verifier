@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 PASS, FAIL, INSUFFICIENT = "PASS", "FAIL", "INSUFFICIENT_EVIDENCE"
@@ -36,6 +37,14 @@ EVALUATORS = (
     "hallway-wall-contact",
     "hallway-fall",
 )
+# walk-hallway README: preconditions the specification requires, and wall clearance per class.
+SPEC_PRECONDITIONS = (
+    "fits_width",
+    "configuration_offered",
+    "velocity_interface",
+    "simulator_declared",
+)
+WALL_CLEARANCE = {"humanoid": 0.05, "quadruped": 0.10}
 OBSERVATION_FORMAT = "livingproof-hallway-observation/1.0.0"
 MANIFEST_FORMAT = "livingproof-hallway-evidence/1.0.0"
 
@@ -107,12 +116,47 @@ def validate_manifest(manifest) -> None:
                 raise ManifestError(f"manifest field 'trials[{i}].{key}' has the wrong type")
 
 
+def millimetres(metres: float) -> int:
+    """Metres to integer millimetres, rounding half up from the decimal text of the value."""
+    return int((Decimal(str(metres)) * 1000).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def fits_width(manifest: dict) -> dict:
+    """fits_width recomputed from the manifest's robot and world, never taken from its ``met``.
+
+    Rule (walk-hallway README): robot width + 2 x wall clearance <= clear width, with each
+    quantity converted to whole millimetres (round half up) before comparing.
+    """
+    profile = manifest["robot"]["profile"]
+    cls = profile.get("class")
+    if cls not in WALL_CLEARANCE:
+        raise ManifestError(
+            f"manifest field 'robot.profile.class' must be one of {sorted(WALL_CLEARANCE)} "
+            "to check fits_width"
+        )
+    width = profile["dimensions"]["width"]
+    width = width["value"] if isinstance(width, dict) else width
+    if not _num(width):
+        raise ManifestError("manifest field 'robot.profile.dimensions.width' is not a number")
+    clear, clearance = manifest["world"]["clear_width"], WALL_CLEARANCE[cls]
+    need = millimetres(width) + 2 * millimetres(clearance)
+    met = need <= millimetres(clear)
+    return {
+        "name": "fits_width",
+        "met": met,
+        "detail": f"{width} + 2 x {clearance} = {need / 1000:.3f} m "
+        f"{'<=' if met else '>'} {clear} m (recomputed by the verifier)",
+    }
+
+
 def unmet_precondition(manifest: dict) -> dict | None:
-    """The first required precondition the manifest declares unmet, or None if all are met.
+    """The first required precondition that is unmet, or None if all are met.
 
     ``preconditions`` must be a non-empty list of objects with a string ``name``, a boolean
     ``met`` and an optional string ``detail``; ``required`` is optional and boolean (default
-    true). Anything else is a ManifestError: invalid data is never read as supported.
+    true), and may not be false for a precondition the specification requires. Anything
+    else is a ManifestError: invalid data is never read as supported. ``fits_width`` is
+    recomputed from the robot and world, whatever the manifest declares.
     """
     pre = manifest.get("preconditions")
     if pre is None:
@@ -132,8 +176,17 @@ def unmet_precondition(manifest: dict) -> dict | None:
             raise ManifestError(f"{where}.detail' has the wrong type")
         if not isinstance(p.get("required", True), bool):
             raise ManifestError(f"{where}.required' has the wrong type")
+        if p["name"] in SPEC_PRECONDITIONS and p.get("required", True) is False:
+            raise ManifestError(
+                f"{where}.required' is false, but the specification requires {p['name']}"
+            )
+        if p["name"] == "fits_width":
+            continue  # recomputed below
         if unmet is None and p.get("required", True) and not p["met"]:
             unmet = {"name": p["name"], "detail": p.get("detail", "")}
+    fit = fits_width(manifest)
+    if not fit["met"]:
+        return {"name": fit["name"], "detail": fit["detail"]}
     return unmet
 
 
