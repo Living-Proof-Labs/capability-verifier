@@ -118,17 +118,32 @@ def catalog(destination):
     checksums(destination)
 
 
+class ReporterUnavailable(ValueError):
+    """The released reporter 1.6.0 that grades bundle 1.0.0 is missing or the wrong one."""
+
+
+INSTALL_HINT = (
+    f"install reporter 1.6.0 (grade was removed in 3.0.0): run inside {IMAGE}, "
+    f"or put its {REPORTER} on PATH"
+)
+
+
 def require_reporter():
     """The pause demos are bundle 1.0.0, which only the reporter's ``grade`` can grade.
 
     ``grade`` was removed in reporter 3.0.0 and ``render`` refuses bundle 1.0.0, so this
     stays pinned to the released reporter 1.6.0 (IMAGE) rather than moving to ``render``.
     """
-    installed = reporter("--version")
+    if shutil.which(REPORTER) is None:
+        raise ReporterUnavailable(f"{REPORTER} is not on PATH; {INSTALL_HINT}")
+    try:
+        installed = reporter("--version")
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ReporterUnavailable(
+            f"{REPORTER} --version failed ({error}); {INSTALL_HINT}"
+        ) from error
     if "version 1.6.0\n" not in installed or "Package: 1.6.0;" not in installed:
-        raise ValueError(
-            f"Expected installed released reporter 1.6.0 (grade is gone from 3.0.0): {installed}"
-        )
+        raise ReporterUnavailable(f"Found a different reporter; {INSTALL_HINT}. Got: {installed}")
     return installed
 
 
