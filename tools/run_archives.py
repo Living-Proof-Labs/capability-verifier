@@ -118,11 +118,23 @@ def catalog(destination):
     checksums(destination)
 
 
-def build(inputs, destination, version, architecture):
-    token(version)
+def require_reporter():
+    """The pause demos are bundle 1.0.0, which only the reporter's ``grade`` can grade.
+
+    ``grade`` was removed in reporter 3.0.0 and ``render`` refuses bundle 1.0.0, so this
+    stays pinned to the released reporter 1.6.0 (IMAGE) rather than moving to ``render``.
+    """
     installed = reporter("--version")
     if "version 1.6.0\n" not in installed or "Package: 1.6.0;" not in installed:
-        raise ValueError(f"Expected installed released reporter 1.6.0: {installed}")
+        raise ValueError(
+            f"Expected installed released reporter 1.6.0 (grade is gone from 3.0.0): {installed}"
+        )
+    return installed
+
+
+def build(inputs, destination, version, architecture):
+    token(version)
+    installed = require_reporter()
     destination.mkdir(parents=True, exist_ok=False)
     for manifest in sorted(inputs.glob("*/manifest.json")):
         bundle = json.loads(manifest.read_text())
@@ -152,7 +164,8 @@ def build(inputs, destination, version, architecture):
                 f"# {provenance['demo']}\n\n{provenance['description']}\n\n"
                 "Recorded fixture data, not robot safety certification. Spec, executor and fixture "
                 "versions stay in manifest.json; provenance.json identifies packaging and CI.\n\n"
-                "With installed livingproof-capability-report 1.6.0, from this directory:\n\n"
+                "With installed livingproof-capability-report 1.6.0 (`grade` was removed in 3.0.0; "
+                "these bundles 1.0.0 need a reporter below 3), from this directory:\n\n"
                 "```sh\nsha256sum -c SHA256SUMS\n"
                 "livingproof-capability-report validate manifest.json\n"
                 "livingproof-capability-report grade manifest.json -o regenerated.json\n"

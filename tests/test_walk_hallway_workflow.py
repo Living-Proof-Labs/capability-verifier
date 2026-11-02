@@ -74,7 +74,7 @@ def _capability_script():
     return "\n".join(line[10:] for line in block.splitlines())
 
 
-def _outputs(tmp_path, runner, reporter, mcap=True, verifier="v1.7.0"):
+def _plan(tmp_path, runner, reporter, mcap=True, verifier="v1.9.0"):
     import json
     import subprocess
     import sys
@@ -86,14 +86,18 @@ def _outputs(tmp_path, runner, reporter, mcap=True, verifier="v1.7.0"):
     (tmp_path / "verification.lock.json").write_text(
         json.dumps({"releases": {"reporter": {"tag": reporter}, "verifier": {"tag": verifier}}})
     )
-    out = subprocess.run(
+    return subprocess.run(
         [sys.executable, "-c", _capability_script()],
         cwd=tmp_path,
         capture_output=True,
         text=True,
-        check=True,
-    ).stdout
-    return dict(line.split("=", 1) for line in out.splitlines())
+    )
+
+
+def _outputs(tmp_path, runner, reporter, mcap=True, verifier="v1.9.0"):
+    done = _plan(tmp_path, runner, reporter, mcap, verifier)
+    assert done.returncode == 0, done.stderr
+    return dict(line.split("=", 1) for line in done.stdout.splitlines())
 
 
 def _capable(tmp_path, runner, reporter, mcap=True):
@@ -102,11 +106,10 @@ def _capable(tmp_path, runner, reporter, mcap=True):
 
 def test_media_is_skipped_not_failed_for_robots_before_the_repin(tmp_path):
     assert "if: inputs.media && needs.plan.outputs.media-capable == 'true'" in STEPS
-    assert _capable(tmp_path, "1.5.0", "v1.10.0") == "media-capable=false"
-    assert _capable(tmp_path, "1.6.0", "v1.10.0") == "media-capable=false"
-    assert _capable(tmp_path, "1.6.0", "v1.11.0", mcap=False) == "media-capable=false"
-    assert _capable(tmp_path, "1.6.0", "v1.11.0") == "media-capable=true"
-    assert _capable(tmp_path, "1.10.2", "v2.0.0") == "media-capable=true"
+    assert _capable(tmp_path, "1.5.0", "v2.0.0") == "media-capable=false"
+    assert _capable(tmp_path, "1.6.0", "v2.0.0", mcap=False) == "media-capable=false"
+    assert _capable(tmp_path, "1.6.0", "v2.0.0") == "media-capable=true"
+    assert _capable(tmp_path, "1.10.2", "v3.0.0") == "media-capable=true"
 
 
 def test_release_uploads_replace_assets_so_a_rerun_still_publishes():
@@ -147,26 +150,28 @@ def _run(tmp_path, script, tool, bundle_version):
     return calls.read_text().splitlines()
 
 
-def test_bundle_version_follows_verifier_and_reporter_releases(tmp_path):
+def test_bundle_1_1_0_only_and_older_locks_fail_with_the_way_out(tmp_path):
+    """Bundle 1.0.0 needed the reporter's grade, which reporter 3.0.0 removed."""
+
     def bundle(verifier, reporter):
         return _outputs(tmp_path, "1.6.0", reporter, verifier=verifier)["bundle-version"]
 
-    assert bundle("v1.7.0", "v1.10.0") == "1.0.0"
-    assert bundle("v1.9.0", "v1.11.0") == "1.0.0"  # reporter 1.x validates 1.0.0 only
-    assert bundle("v1.8.0", "v2.0.0") == "1.0.0"  # verifier cannot write 1.1.0 yet
     assert bundle("v1.9.0", "v2.0.0") == "1.1.0"
     assert bundle("v1.10.0", "v2.1.0") == "1.1.0"
+    assert bundle("v1.10.0", "v3.0.0") == "1.1.0"
+    for verifier, reporter in (("v1.7.0", "v1.10.0"), ("v1.9.0", "v1.11.0"), ("v1.8.0", "v2.0.0")):
+        done = _plan(tmp_path, "1.6.0", reporter, verifier=verifier)
+        assert done.returncode != 0 and "bundle-version" not in done.stdout
+        assert "needs verifier >= 1.9.0 and reporter >= 2.0.0" in done.stderr
+        assert "walk-hallway.yml at v1.10.0 or earlier" in done.stderr
     assert "bundle-version: ${{ steps.capability.outputs.bundle-version }}" in STEPS
-    assert STEPS.count("BUNDLE_VERSION: ${{ needs.plan.outputs.bundle-version }}") == 2
+    assert STEPS.count("BUNDLE_VERSION: ${{ needs.plan.outputs.bundle-version }}") == 1
 
 
 def test_verify_writes_the_bundle_version_from_the_plan(tmp_path):
     script = _step("Assess every trial")
-    (tmp_path / "a").mkdir()
     (tmp_path / "b").mkdir()
-    old = _run(tmp_path / "a", script, "uv", "1.0.0")
     new = _run(tmp_path / "b", script, "uv", "1.1.0")
-    assert old == ["run --no-sync python tools/verify_hallway.py evidence/manifest.json verified"]
     assert new == [
         "run --no-sync python tools/verify_hallway.py --bundle-version 1.1.0 "
         "evidence/manifest.json verified"
@@ -184,14 +189,9 @@ def _report_calls(tmp_path, bundle_version, links):
     return [c for c in calls if not c.startswith(("--version", "validate", "render reports/"))]
 
 
-def test_reporter_below_2_grades_bundle_1_0_0_with_links(tmp_path):
-    report = "verified/bundle/manifest.json"
-    assert _report_calls(tmp_path / "links", "1.0.0", True) == [
-        f"grade {report} --evidence-links links/evidence-links.json -o reports/report.json"
-    ]
-    assert _report_calls(tmp_path / "bare", "1.0.0", False) == [
-        f"grade {report} -o reports/report.json"
-    ]
+def test_the_report_job_never_calls_grade():
+    report = STEPS[STEPS.index("\n  report:") : STEPS.index("\n  comment:")]
+    assert "capability-report grade" not in report and "BUNDLE_VERSION" not in report
 
 
 def test_reporter_2_renders_bundle_1_1_0_and_never_grades(tmp_path):
@@ -233,23 +233,24 @@ def test_pre_and_dev_releases_fail_closed_and_never_count_as_the_release(tmp_pat
             capture_output=True,
             text=True,
         )
-        assert done.returncode == 0, done.stderr  # no crash on any tag
+        assert "Traceback" not in done.stderr  # no crash on any tag
+        if done.returncode:
+            assert "needs verifier >= 1.9.0 and reporter >= 2.0.0" in done.stderr
+            return None, done.stderr
         return dict(line.split("=", 1) for line in done.stdout.splitlines()), done.stderr
 
-    out, err = run("v1.7.0rc1", "v1.10.0")
-    assert out["bundle-version"] == "1.0.0"  # parses (no crash); never counts as 1.7.0
-    assert "verifier v1.7.0rc1 is a pre-release or dev release" in err
+    out, err = run("v1.9.0rc1", "v2.0.0")
+    assert out is None  # parses (no crash) and never counts as 1.9.0: refused
+    assert "verifier v1.9.0rc1 is a pre-release or dev release" in err
     out, err = run("v2.0.0.dev1", "v2.0.0")
-    assert out["bundle-version"] == "1.0.0"
-    assert "verifier v2.0.0.dev1 is a pre-release or dev release" in err
+    assert out is None and "verifier v2.0.0.dev1 is a pre-release or dev release" in err
     out, err = run("v1.9.0", "v2.0.0rc1")
-    assert out == {"media-capable": "false", "bundle-version": "1.0.0"}
-    assert "reporter v2.0.0rc1 is a pre-release" in err
+    assert out is None and "reporter v2.0.0rc1 is a pre-release" in err
     out, err = run("v1.9.0", "v2.0.0", runner="1.6.0.dev3")
     assert out == {"media-capable": "false", "bundle-version": "1.1.0"}
     assert "runner livingproof-sim-mujoco 1.6.0.dev3" in err
     out, err = run("not-a-version", "v2.0.0")
-    assert out["bundle-version"] == "1.0.0" and "not a PEP 440 version" in err
+    assert out is None and "not a PEP 440 version" in err
     out, err = run("v1.9.0.post1", "v2.0.0")
     assert out["bundle-version"] == "1.1.0" and err == ""  # a post-release is a release
 

@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-from run_archives import build, extract, release, reporter
+from run_archives import build, extract, release, reporter, require_reporter
 
 EXPECTED = {
     "compatibility-matrix": ["PASS", "PASS", "INCOMPATIBLE", "FAIL"],
@@ -23,6 +23,7 @@ EXPECTED = {
 
 
 def verify_archive(source):
+    require_reporter()  # regrades bundle 1.0.0 with grade: reporter 1.6.0, never 3.x
     with tempfile.TemporaryDirectory(prefix="extracted demo ") as temporary:
         root = Path(temporary) / "unrelated-location"
         extract(source, root)
