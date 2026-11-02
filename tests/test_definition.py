@@ -487,6 +487,11 @@ def _multi(tmp_path, lock, **mine):
         "configurations": "'[\"stock\"]'",
         **mine,
     }
+    # The other robot is a known definition beside g1.toml.
+    (tmp_path / "proj" / "t1.toml").write_text(
+        f'format = "{d.DEFINITION_FORMAT}"\nid = "booster-t1-stock"\nprocedure = "walk-hallway"\n'
+        '[robot]\nrepository = "Org/t1"\nref = "main"\nconfigurations = ["playground"]\n'
+    )
     path = tmp_path / "verify.yml"
     path.write_text(
         "jobs:\n"
@@ -530,4 +535,33 @@ def test_a_definition_without_its_call_fails_beside_other_robots(tmp_path, robot
     wf = _multi(tmp_path, lock)
     wf.write_text(wf.read_text().split("  g1-stock:")[0])
     with pytest.raises(SystemExit, match="no job calls"):
+        d.check(path, tmp_path / "w2", wf)
+
+
+@pytest.mark.parametrize(
+    "repository",
+    ["org/ROBOT", "Org/robot.git", "${{ matrix.robot }}", "Org/unknown"],
+    ids=["case", "dot-git", "expression", "unknown"],
+)
+def test_a_differently_spelled_or_unknown_robot_call_is_refused(tmp_path, robot, repository):
+    """Vera on #30: such a call used to match no definition and slip through."""
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    wf = _multi(tmp_path, lock)
+    assert d.check(path, tmp_path / "w2", wf) == lock
+    wf.write_text(
+        wf.read_text() + f"  extra:\n    uses: {lock['releases']['verifier']['repository']}"
+        f"/.github/workflows/walk-hallway.yml@main\n    with:\n"
+        f"      repository: {repository}\n      ref: main\n"
+    )
+    with pytest.raises(SystemExit, match="job extra: (must|calls)"):
+        d.check(path, tmp_path / "w2", wf)
+
+
+def test_another_known_robots_call_still_passes(tmp_path, robot):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    wf = _multi(tmp_path, lock)
+    (tmp_path / "proj" / "t1.toml").unlink()
+    with pytest.raises(SystemExit, match="booster-t1-stock: calls .*no known definition"):
         d.check(path, tmp_path / "w2", wf)
