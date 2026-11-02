@@ -237,7 +237,10 @@ def _manifest(tmp_path, plan=PLAN, failing_seed=None):
     m = {
         "format": hallway.MANIFEST_FORMAT,
         "plan": plan,
-        "robot": {"id": "unitree-g1", "profile": {"class": "humanoid", "dimensions": {"width": 0.42}}},
+        "robot": {
+            "id": "unitree-g1",
+            "profile": {"class": "humanoid", "dimensions": {"width": 0.42}},
+        },
         "configuration": {
             "name": "stock",
             "version": "1.1.0",
