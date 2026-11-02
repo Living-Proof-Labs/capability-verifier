@@ -634,3 +634,98 @@ def test_export_writes_no_bundle_for_an_unsupported_run(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="UNSUPPORTED: precondition fits_width unmet"):
         _tool().export(path, tmp_path / "verified", prototype=True)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["evidence"]
+
+
+def _drop(src, seeds):
+    path = _manifest(src)
+    for seed in seeds:
+        (src / f"trial-{seed:02d}.json").unlink()
+    return path
+
+
+@pytest.mark.parametrize("bundle_version", ["1.0.0", "1.1.0"])
+def test_export_keeps_missing_observations_as_insufficient_evidence(
+    tmp_path, monkeypatch, bundle_version
+):
+    """#32: seeds 18-20 absent; the bundle keeps all 20 results, the recorded digests and N."""
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    src = tmp_path / "evidence"
+    src.mkdir()
+    path = _drop(src, (18, 19, 20))
+    recorded = {t["seed"]: t["sha256"] for t in json.loads(path.read_text())["trials"]}
+    out = tmp_path / "verified"
+    result = _tool().export(path, out, prototype=True, bundle_version=bundle_version)
+    s = result["summary"]
+    assert (s["k"], s["n"], s["grade"]) == (17, 20, hallway.INSUFFICIENT)
+    gone = [f"stock-seed-{n}" for n in (18, 19, 20)]
+    assert result["missing_evidence"] == gone
+    bundle = json.loads((out / "bundle" / "manifest.json").read_text())
+    assert bundle["schema_version"] == bundle_version
+    assert len(bundle["results"]) == 20
+    for r in bundle["results"]:
+        seed = r["original_result"]["seed"]
+        assert r["evidence"][0]["sha256"] == recorded[seed]  # never substituted
+        assert r["provenance"]["missing_evidence"] == gone
+        assert r["provenance"]["summary"]["n"] == 20
+        on_disk = (out / "bundle" / r["evidence"][0]["path"]).is_file()
+        assert on_disk == (seed < 18)
+        if seed >= 18:
+            assert r["original_result"]["status"] == hallway.INSUFFICIENT
+    if bundle_version == "1.1.0":
+        decided = {r["original_result"]["seed"]: r["decision"]["status"] for r in bundle["results"]}
+        assert {decided[n] for n in (18, 19, 20)} == {hallway.INSUFFICIENT}
+        assert [run["n"] for run in bundle["assessment"]["runs"]] == [20]
+
+
+@pytest.mark.parametrize("bundle_version", ["1.0.0", "1.1.0"])
+def test_export_tells_a_changed_observation_from_a_missing_one(
+    tmp_path, monkeypatch, bundle_version
+):
+    """A present file with another digest is copied and kept apart from missing evidence."""
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    src = tmp_path / "evidence"
+    src.mkdir()
+    path = _drop(src, (20,))
+    recorded = json.loads(path.read_text())["trials"][4]["sha256"]
+    (src / "trial-05.json").write_text("{}")
+    out = tmp_path / "verified"
+    result = _tool().export(path, out, prototype=True, bundle_version=bundle_version)
+    assert result["missing_evidence"] == ["stock-seed-20"]
+    bundle = json.loads((out / "bundle" / "manifest.json").read_text())
+    five = next(r for r in bundle["results"] if r["original_result"]["seed"] == 5)
+    assert five["evidence"][0]["sha256"] == recorded
+    assert (out / "bundle" / five["evidence"][0]["path"]).read_text() == "{}"
+    assert five["original_result"]["status"] == hallway.INSUFFICIENT
+
+
+@pytest.mark.parametrize("bundle_version", ["1.0.0", "1.1.0"])
+def test_export_with_missing_observations_still_refuses_a_malformed_manifest(
+    tmp_path, monkeypatch, bundle_version
+):
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    src = tmp_path / "evidence"
+    src.mkdir()
+    path = _drop(src, (19, 20))
+    m = json.loads(path.read_text())
+    m["trials"] = m["trials"][:-1]  # a dropped trial is not a missing observation
+    path.write_text(json.dumps(m))
+    with pytest.raises(hallway.ManifestError, match="do not match plan.seeds"):
+        _tool().export(path, tmp_path / "verified", prototype=True, bundle_version=bundle_version)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["evidence"]
+
+
+@pytest.mark.parametrize("bundle_version", ["1.0.0", "1.1.0"])
+def test_complete_export_carries_no_missing_evidence(tmp_path, monkeypatch, bundle_version):
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    src = tmp_path / "evidence"
+    src.mkdir()
+    out = tmp_path / "verified"
+    result = _tool().export(_manifest(src), out, prototype=True, bundle_version=bundle_version)
+    assert "missing_evidence" not in result
+    text = (out / "bundle" / "manifest.json").read_text()
+    assert "missing_evidence" not in text
+    assert len(list((out / "bundle" / "evidence").iterdir())) == 20
