@@ -237,7 +237,7 @@ def _manifest(tmp_path, plan=PLAN, failing_seed=None):
     m = {
         "format": hallway.MANIFEST_FORMAT,
         "plan": plan,
-        "robot": {"id": "unitree-g1", "profile": {"dimensions": {"width": 0.42}}},
+        "robot": {"id": "unitree-g1", "profile": {"class": "humanoid", "dimensions": {"width": 0.42}}},
         "configuration": {
             "name": "stock",
             "version": "1.1.0",
@@ -569,11 +569,13 @@ def test_an_unmet_precondition_is_unsupported_not_pass(tmp_path):
     r = hallway.verify(path)
     s = r["summary"]
     assert s["grade"] == hallway.UNSUPPORTED
-    assert s["reason"] == "precondition fits_width unmet: 1.41 + 2 x 0.05 > 1.5"
+    reason = (
+        "precondition fits_width unmet: "
+        "1.41 + 2 x 0.05 = 1.510 m > 1.5 m (recomputed by the verifier)"
+    )
+    assert s["reason"] == reason
     assert r["trials"] == [] and s["k"] == 0
-    assert hallway.summary_lines(r) == [
-        "UNSUPPORTED: precondition fits_width unmet: 1.41 + 2 x 0.05 > 1.5 (no trials assessed)"
-    ]
+    assert hallway.summary_lines(r) == [f"UNSUPPORTED: {reason} (no trials assessed)"]
 
 
 def test_an_unmet_precondition_is_unsupported_with_zero_trials(tmp_path):
@@ -634,3 +636,68 @@ def test_export_writes_no_bundle_for_an_unsupported_run(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="UNSUPPORTED: precondition fits_width unmet"):
         _tool().export(path, tmp_path / "verified", prototype=True)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["evidence"]
+
+
+def test_fits_width_is_recomputed_not_trusted(tmp_path):
+    """Width 1.41 in a 1.5 m hall needs 1.51 m: UNSUPPORTED even when the manifest says met."""
+    path = _hallway_manifest(tmp_path, 1.41, True, "claims to fit")
+    s = hallway.verify(path)["summary"]
+    assert s["grade"] == hallway.UNSUPPORTED
+    assert s["reason"].startswith("precondition fits_width unmet: 1.41 + 2 x 0.05 = 1.510 m")
+
+
+def test_fits_width_recomputed_when_absent_or_declared_unmet(tmp_path):
+    path = _hallway_manifest(tmp_path, 1.40, False, "says it does not fit")
+    assert hallway.verify(path)["summary"]["grade"] == hallway.PASS  # exact fit: 1.50 <= 1.5
+    m = json.loads(path.read_text())
+    m["robot"]["profile"]["dimensions"]["width"] = 1.41
+    m["preconditions"] = [{"name": "configuration_offered", "met": True}]
+    path.write_text(json.dumps(m))
+    assert hallway.verify(path)["summary"]["grade"] == hallway.UNSUPPORTED
+
+
+@pytest.mark.parametrize(
+    ("width", "cls", "clear", "met"),
+    [
+        (1.30, "humanoid", 1.40, True),  # 1.30 + 0.10 is 1.4000000000000001 in floats
+        (1.31, "humanoid", 1.40, False),
+        (1.20, "quadruped", 1.40, True),
+        (1.21, "quadruped", 1.40, False),
+        ({"value": 0.52, "unit": "m"}, "humanoid", 1.5, True),
+    ],
+)
+def test_fits_width_compares_whole_millimetres(width, cls, clear, met):
+    m = {"robot": {"profile": {"class": cls, "dimensions": {"width": width}}}}
+    m["world"] = {"clear_width": clear}
+    assert hallway.fits_width(m)["met"] is met
+
+
+def test_fits_width_one_centimetre_grid_matches_integer_rule():
+    from decimal import Decimal
+
+    for cls, clearance in hallway.WALL_CLEARANCE.items():
+        for w in range(30, 150):
+            for c in range(w - 5, w + 30):
+                m = {"robot": {"profile": {"class": cls, "dimensions": {"width": w / 100}}}}
+                m["world"] = {"clear_width": c / 100}
+                exact = Decimal(w) / 100 + 2 * Decimal(str(clearance)) <= Decimal(c) / 100
+                assert hallway.fits_width(m)["met"] is exact, (w, cls, c)
+
+
+def test_fits_width_needs_a_known_robot_class(tmp_path):
+    path = _hallway_manifest(tmp_path, 0.5, True, "")
+    m = json.loads(path.read_text())
+    del m["robot"]["profile"]["class"]
+    path.write_text(json.dumps(m))
+    with pytest.raises(hallway.ManifestError, match="robot.profile.class"):
+        hallway.verify(path)
+
+
+@pytest.mark.parametrize("name", hallway.SPEC_PRECONDITIONS)
+def test_a_spec_precondition_cannot_be_made_optional(tmp_path, name):
+    path = _hallway_manifest(tmp_path, 0.5, True, "")
+    m = json.loads(path.read_text())
+    m["preconditions"].append({"name": name, "met": False, "required": False})
+    path.write_text(json.dumps(m))
+    with pytest.raises(hallway.ManifestError, match=f"specification requires {name}"):
+        hallway.verify(path)
