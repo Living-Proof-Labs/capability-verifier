@@ -48,6 +48,40 @@ FAILURE_KEYS = {"check", "observed", "limit", "unit", "t", "seed"}
 # Optional keys: ``wall`` names a contacted wall; ``via`` names how a trial left the hallway
 # (a wall, or ``exit-outside-segment``).
 FAILURE_OPTIONAL_KEYS = {"wall", "via"}
+# cv #36: each failed trial names one primary failure by a fixed category precedence, and
+# keeps every other failure as secondary. This is a deterministic label, not a root-cause
+# claim: per-check maxima cannot establish cause, and an earlier time is chronology only.
+# A fall comes first because the later checks then describe a robot that is down; lateral
+# drift precedes wall contact (the issue's own "drift -> wall contact" example: a contact
+# implies the lateral clearance was already exceeded); not reaching the exit comes last,
+# as the trial-level outcome that the other failures already explain. Within a category,
+# and for any check not listed (recorded human or agent checks, after the listed ones, by
+# name), the earliest time comes first, then the order the failures were recorded in.
+FAILURE_PRECEDENCE = (
+    "hallway-fall",
+    "hallway-lateral-limit",
+    "hallway-wall-contact",
+    "hallway-exit-reached",
+)
+
+
+def ranked_failures(failures: list) -> list:
+    """``failures`` in primary-first order (see ``FAILURE_PRECEDENCE``); a stable sort."""
+
+    def key(item):
+        index, f = item
+        check = f.get("check")
+        rank = FAILURE_PRECEDENCE.index(check) if check in FAILURE_PRECEDENCE else None
+        t = f.get("t")
+        return (
+            len(FAILURE_PRECEDENCE) if rank is None else rank,
+            "" if rank is not None else str(check),
+            t is None,
+            0 if t is None else t,
+            index,
+        )
+
+    return [dict(f) for _, f in sorted(enumerate(failures), key=key)]
 
 
 @dataclass(frozen=True)
@@ -65,7 +99,14 @@ class Decision:
             "reason": self.reason,
             "failures": [dict(f) for f in self.failures],
             "assessor_types": list(self.assessor_types),
+            # Additive (cv #36); ``failures`` keeps its recorded order for older readers.
+            **dict(zip(("primary_failure", "secondary_failures"), _primary(self.failures))),
         }
+
+
+def _primary(failures: list) -> tuple:
+    ranked = ranked_failures(failures)
+    return (ranked[0] if ranked else None), ranked[1:]
 
 
 class TrialEvaluator(Protocol):

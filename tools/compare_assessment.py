@@ -12,19 +12,24 @@ from pathlib import Path
 from capability_verifier import evaluate
 
 
+DERIVED = ("primary_failure", "secondary_failures")
+
+
 def differences(bundle: dict, report: dict) -> list[str]:
     a = bundle["assessment"]
     out = []
     mine = a["decisions"]
+    # The report has no primary/secondary split (cv #36); it is derived from ``failures``.
+    keys = [k for k in (mine[0] if mine else {}) if k not in DERIVED]
     theirs = (
         [
-            {k: d.get(k, [] if k in ("failures", "assessor_types") else None) for k in mine[0]}
+            {k: d.get(k, [] if k in ("failures", "assessor_types") else None) for k in keys}
             for d in report["decisions"]
         ]
         if mine
         else []
     )
-    if mine != theirs:
+    if [{k: d[k] for k in keys} for d in mine] != theirs:
         out.append("decisions differ")
     runs = [evaluate.as_reporter_summary(r) for r in a["runs"]]
     if runs != report.get("summaries", []):

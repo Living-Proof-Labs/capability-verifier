@@ -307,6 +307,20 @@ INSUFFICIENT_EVIDENCE. The default stays 1.0.0 because capability report 1.x acc
 only that version. `tools/compare_assessment.py <bundle> <report.json>` checks a 1.1.0
 bundle against a report computed from the same evidence.
 
+Each 1.1.0 `decision` also names one `primary_failure` (a copy of one entry of `failures`, or
+`null` when nothing failed) and keeps every other failure in `secondary_failures`, so a reader
+renders one main reason per trial without ranking anything itself (cv #36). These keys are
+additive: `failures` keeps its recorded order and the bundle stays 1.1.0, and status, reason
+and grade do not depend on them. The primary is chosen by a fixed category precedence,
+`hallway-fall`, `hallway-lateral-limit`, `hallway-wall-contact`, `hallway-exit-reached`
+(`evaluate.FAILURE_PRECEDENCE`); within a category the earliest `t` comes first (untimed
+last), then recorded order; checks not listed (recorded reviews) follow, by name. It is a
+label, not a root cause: `t` for a lateral failure is the time of the maximum, so a contact
+can carry an earlier time than the drift that led to it, and maxima alone cannot establish
+cause. A fall ranks first because later checks then describe a robot that is down; drift
+ranks before contact, since a contact means the lateral clearance was already exceeded;
+not reaching the exit ranks last, as the outcome the other failures explain.
+
 ## Reusable walk-hallway workflow (robot repositories)
 
 A robot repository's whole CI chain is one call; every ref comes from its

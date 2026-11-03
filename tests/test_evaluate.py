@@ -87,6 +87,54 @@ def test_policy_pass_fail_and_incomplete_evidence():
     assert policy.decide(result(obs=FAILING["max_abs_lateral"]), False).status == F
 
 
+def _f(check, t, **extra):
+    return hallway.failure(check, 1.0, 0.5, "m", t, 4, **extra)
+
+
+def test_primary_failure_follows_the_category_precedence_not_the_clock():
+    """cv #36: deterministic primary category; every other failure kept as secondary."""
+    lat, wall = _f("hallway-lateral-limit", 10.6), _f("hallway-wall-contact", 10.3, wall="w")
+    exit_, fall = _f("hallway-exit-reached", 9.0, via="wall-left"), _f("hallway-fall", 11.0)
+    # A contact timed before the lateral maximum still ranks after it (chronology only).
+    assert evaluate.ranked_failures([exit_, wall, lat]) == [lat, wall, exit_]
+    assert evaluate.ranked_failures([lat, fall]) == [fall, lat]
+    # Within a category the earliest time first, then recorded order; untimed last.
+    w1, w2, w0 = (
+        _f("hallway-wall-contact", t, wall=w) for t, w in ((11.1, "a"), (10.6, "b"), (None, "c"))
+    )
+    assert evaluate.ranked_failures([w0, w1, w2]) == [w2, w1, w0]
+    # Checks outside the precedence (recorded reviews) follow, by name.
+    human = {**_f("z-review", 1.0), "check": "z-review"}
+    assert evaluate.ranked_failures([human, wall]) == [wall, human]
+    assert evaluate.ranked_failures([]) == []
+
+
+def test_decision_names_one_primary_failure_and_keeps_the_rest():
+    policy = evaluate.AllRequiredV1()
+    obs = observation(
+        max_abs_lateral={"value": 0.62, "time": 10.1},
+        wall_contacts=[{"wall": "wall-left", "start": 9.5, "end": 10.7, "depth": 0.032}],
+    )
+    failed = policy.decide(result(obs=obs), True).to_json()
+    assert failed["status"] == F
+    assert failed["primary_failure"]["check"] == "hallway-lateral-limit"
+    assert [f["check"] for f in failed["secondary_failures"]] == ["hallway-wall-contact"]
+    # Additive: ``failures`` is unchanged and still holds every failure, in recorded order.
+    assert [f["check"] for f in failed["failures"]] == [
+        "hallway-lateral-limit",
+        "hallway-wall-contact",
+    ]
+    assert sorted([failed["primary_failure"], *failed["secondary_failures"]], key=str) == sorted(
+        failed["failures"], key=str
+    )
+    passed = policy.decide(result(), True).to_json()
+    assert passed["primary_failure"] is None and passed["secondary_failures"] == []
+    # Grades are unchanged: status and reason do not depend on the ranking.
+    for o in FAILING.values():
+        d = policy.decide(result(obs=o), True)
+        assert d.status == F and d.to_json()["primary_failure"] == d.failures[0]
+
+
 def test_policy_incompatible_cases():
     policy = evaluate.AllRequiredV1()
     declared = result(compatibility={"status": X, "scope": "execution", "reason": "no camera"})
@@ -251,3 +299,21 @@ def test_assessment_matches_golden_reporter(config, tmp_path, monkeypatch):
     compare = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(compare)
     assert compare.differences(bundle, report) == []
+
+
+def test_compare_assessment_ignores_the_derived_primary_split():
+    """A report.json (no primary/secondary keys) still matches the 1.1.0 assessment."""
+    spec = importlib.util.spec_from_file_location("compare", ROOT / "tools/compare_assessment.py")
+    compare = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(compare)
+    results = [result("r1", obs=FAILING["max_abs_lateral"]), result("r2")]
+    a = evaluate.assess_bundle(results, {"r1": True, "r2": True})
+    report = {
+        "decisions": [
+            {k: v for k, v in d.items() if k not in compare.DERIVED} for d in a["decisions"]
+        ],
+        "summaries": [evaluate.as_reporter_summary(r) for r in a["runs"]],
+    }
+    assert compare.differences({"assessment": a}, report) == []
+    report["decisions"][0]["status"] = P
+    assert compare.differences({"assessment": a}, report) == ["decisions differ"]
