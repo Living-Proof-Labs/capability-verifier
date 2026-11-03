@@ -45,6 +45,9 @@ CONTRACTS = {
 }
 EVALUATOR_VERSIONS = {name: hallway.VERSION for name in hallway.EVALUATORS}
 FAILURE_KEYS = {"check", "observed", "limit", "unit", "t", "seed"}
+# Optional keys: ``wall`` names a contacted wall; ``via`` names how a trial left the hallway
+# (a wall, or ``exit-outside-segment``).
+FAILURE_OPTIONAL_KEYS = {"wall", "via"}
 
 
 @dataclass(frozen=True)
@@ -81,7 +84,7 @@ class HallwayEvaluator:
     version = hallway.VERSION
 
     def assess(self, observation, thresholds, evidence_id, seed=None):
-        if observation.get("format") != hallway.OBSERVATION_FORMAT:
+        if observation.get("format") not in hallway.OBSERVATION_FORMATS:
             return [
                 hallway.assessment(
                     n, INSUFFICIENT, f"unknown observation format{hallway._seed(seed)}", evidence_id
@@ -107,7 +110,7 @@ def structured_failures(assessment: dict) -> list:
     for f in items:
         ok = (
             isinstance(f, dict)
-            and FAILURE_KEYS <= set(f) <= FAILURE_KEYS | {"wall"}
+            and FAILURE_KEYS <= set(f) <= FAILURE_KEYS | FAILURE_OPTIONAL_KEYS
             and f["check"] == assessment["evaluator"]
             and (f["observed"] is None or _number(f["observed"]))
             and _number(f["limit"])
@@ -115,7 +118,7 @@ def structured_failures(assessment: dict) -> list:
             and f["unit"]
             and (f["t"] is None or _number(f["t"]))
             and (f["seed"] is None or type(f["seed"]) is int)
-            and ("wall" not in f or isinstance(f["wall"], str))
+            and all(isinstance(f[k], str) and f[k] for k in FAILURE_OPTIONAL_KEYS & set(f))
         )
         if not ok:
             raise ValueError(f"Invalid structured failure in {assessment['id']}")

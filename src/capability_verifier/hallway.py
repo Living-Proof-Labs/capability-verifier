@@ -45,7 +45,17 @@ SPEC_PRECONDITIONS = (
     "simulator_declared",
 )
 WALL_CLEARANCE = {"humanoid": 0.05, "quadruped": 0.10}
-OBSERVATION_FORMAT = "livingproof-hallway-observation/1.0.0"
+# The newest runner observation format, and every format the evaluators read. 2.0.0
+# (livingproof-sim-mujoco, capability-verifier#37) adds the left_hallway end, measures a
+# contact's depth as intrusion past the wall's inner face and ends crossed_exit only within
+# the exit segment. Any other format is refused: every evaluator reports INSUFFICIENT.
+OBSERVATION_FORMAT = "livingproof-hallway-observation/2.0.0"
+OBSERVATION_FORMATS = frozenset({"livingproof-hallway-observation/1.0.0", OBSERVATION_FORMAT})
+# Trial ends each format may report; anything else is malformed evidence.
+OBSERVATION_ENDS = {
+    "livingproof-hallway-observation/1.0.0": {"crossed_exit", "time_limit", "non_finite_state"},
+    OBSERVATION_FORMAT: {"crossed_exit", "time_limit", "non_finite_state", "left_hallway"},
+}
 MANIFEST_FORMAT = "livingproof-hallway-evidence/1.0.0"
 
 
@@ -202,6 +212,7 @@ def thresholds(manifest: dict) -> dict:
     return {
         "time_limit": round(2 * world["route_length"] / plan["command_speed"] + 5, 4),
         "lateral_limit": round(world["clear_width"] / 2 - width / 2, 4),
+        "half_width": round(world["clear_width"] / 2, 4),  # the exit segment is |y| <= this
         "fall_height": fall["value"] if isinstance(fall, dict) else fall,
     }
 
@@ -262,11 +273,55 @@ def _insufficient(name, what, eid, seed):
     )
 
 
+def _exit_y(o, t):
+    """The base's y in the trace sample at time ``t`` (the exit crossing), or None."""
+    samples = (o.get("trace") or {}).get("samples")
+    if not isinstance(samples, list):
+        return None
+    at = [s for s in samples if isinstance(s, list) and len(s) > 2 and s[0] == t and _num(s[2])]
+    return at[-1][2] if at else None
+
+
 def exit_reached(o, th, eid, seed=None):
+    """PASS only for a crossed_exit through the exit segment (|y| <= half-width) in time.
+    A left_hallway end (through a wall, or the exit line outside the segment) is a FAIL;
+    an exit whose crossing point cannot be read is INSUFFICIENT, never a PASS."""
     name = "hallway-exit-reached"
     if "exit_time" not in o or not (o["exit_time"] is None or _num(o["exit_time"])):
         return _insufficient(name, "exit_time", eid, seed)
-    t, limit = o["exit_time"], th["time_limit"]
+    end = o.get("end")
+    if end not in OBSERVATION_ENDS.get(o.get("format"), ()):
+        return _insufficient(name, "end", eid, seed)
+    t, limit, half = o["exit_time"], th["time_limit"], th["half_width"]
+    if end == "left_hallway":
+        left = o.get("left_hallway")
+        if t is not None or not (isinstance(left, dict) and _num(left.get("time"))):
+            return _insufficient(name, "left_hallway", eid, seed)
+        via = left.get("via")
+        if not (isinstance(via, str) and via.strip()):
+            # Where it left is part of the evidence: without it the FAIL cannot be exported.
+            return _insufficient(name, "left_hallway.via", eid, seed)
+        f = failure(name, None, limit, "s", left["time"], seed, via=via)
+        text = f"left the hallway via {via} at {left['time']:.2f} s{_seed(seed)}"
+        return assessment(
+            name,
+            FAIL,
+            text,
+            eid,
+            {"observed": None, "threshold": limit, "time": left["time"], "failures": [f]},
+        )
+    if (t is None) != (end != "crossed_exit"):
+        return _insufficient(name, "exit_time", eid, seed)
+    if t is not None:
+        y = _exit_y(o, t)
+        if y is None:
+            return _insufficient(name, "exit crossing point", eid, seed)
+        if abs(y) > half:
+            a, b = _length(abs(y), half)
+            f = failure(name, abs(y), half, "m", t, seed, via="exit-outside-segment")
+            text = f"exit line crossed at |y| {a} m > {b} m, outside the exit{_seed(seed)}"
+            details = {"observed": abs(y), "threshold": half, "time": t, "failures": [f]}
+            return assessment(name, FAIL, text, eid, details)
     if t is None:
         end = o.get("duration_s") if _num(o.get("duration_s")) else limit
         f = failure(name, None, limit, "s", end, seed)
@@ -405,7 +460,7 @@ def policy(assessments, required):
 
 
 def assess_trial(observation, th, eid, recorded=(), required_assessors=(), seed=None):
-    if observation.get("format") != OBSERVATION_FORMAT:
+    if observation.get("format") not in OBSERVATION_FORMATS:
         assessments = [
             assessment(n, INSUFFICIENT, f"unknown observation format{_seed(seed)}", eid)
             for n in EVALUATORS
