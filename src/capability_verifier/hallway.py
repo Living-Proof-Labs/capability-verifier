@@ -297,7 +297,10 @@ def exit_reached(o, th, eid, seed=None):
         left = o.get("left_hallway")
         if t is not None or not (isinstance(left, dict) and _num(left.get("time"))):
             return _insufficient(name, "left_hallway", eid, seed)
-        via = left.get("via") if isinstance(left.get("via"), str) else "unknown"
+        via = left.get("via")
+        if not (isinstance(via, str) and via.strip()):
+            # Where it left is part of the evidence: without it the FAIL cannot be exported.
+            return _insufficient(name, "left_hallway.via", eid, seed)
         f = failure(name, None, limit, "s", left["time"], seed, via=via)
         text = f"left the hallway via {via} at {left['time']:.2f} s{_seed(seed)}"
         return assessment(

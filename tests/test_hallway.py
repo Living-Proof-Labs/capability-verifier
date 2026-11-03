@@ -403,7 +403,7 @@ def test_missing_trials_use_the_planned_n():
     assert s["wilson95"] == hallway.wilson(18, 20) == [0.6990, 0.9721]
 
 
-def _cli(tmp_path, manifest, out, version, commit="0" * 40):
+def _cli(tmp_path, manifest, out, version, commit="0" * 40, *args):
     """Run the tool from a copied tree with no .git, as in the image."""
     tree = tmp_path / "tree"
     if not tree.exists():
@@ -424,7 +424,7 @@ def _cli(tmp_path, manifest, out, version, commit="0" * 40):
         env["SOURCE_COMMIT"] = commit
     assert not (tree / ".git").exists()
     return subprocess.run(
-        [sys.executable, "tools/verify_hallway.py", str(manifest), str(out), "--prototype"],
+        [sys.executable, "tools/verify_hallway.py", str(manifest), str(out), "--prototype", *args],
         cwd=tree,
         env=env,
         capture_output=True,
@@ -978,11 +978,13 @@ def test_export_writes_exit_outside_segment_and_left_hallway_failures(
     assert _exit_failures(out) == {3: "exit-outside-segment", 7: "wall-left"}
 
 
-def test_cli_writes_a_bundle_for_exit_outside_segment_and_left_hallway(tmp_path):
+@pytest.mark.parametrize("bundle_version", ["1.0.0", "1.1.0"])
+def test_cli_writes_a_bundle_for_exit_outside_segment_and_left_hallway(tmp_path, bundle_version):
     src = tmp_path / "evidence"
     src.mkdir()
     out = tmp_path / "verified"
-    run = _cli(tmp_path, _exit_failure_manifest(src), out, "1.4.2")
+    manifest = _exit_failure_manifest(src)
+    run = _cli(tmp_path, manifest, out, "1.4.2", "0" * 40, "--bundle-version", bundle_version)
     assert run.returncode == 0, run.stderr
     assert _exit_failures(out) == {3: "exit-outside-segment", 7: "wall-left"}
 
@@ -997,3 +999,33 @@ def test_structured_failures_still_reject_malformed_optional_keys(bad):
     a["provenance"] = {"details": {"failures": [f]}}
     with pytest.raises(ValueError):
         structured_failures(a)
+
+
+@pytest.mark.parametrize("via", ["", "   ", None, 3])
+def test_a_left_hallway_without_a_usable_via_is_insufficient(via):
+    """#38 review: an empty or missing via grades INSUFFICIENT, not an unexportable FAIL."""
+    o = _left()
+    o["left_hallway"]["via"] = via
+    assert hallway.exit_reached(o, TH, "t")["status"] == hallway.INSUFFICIENT
+    del o["left_hallway"]["via"]
+    assert hallway.exit_reached(o, TH, "t")["status"] == hallway.INSUFFICIENT
+
+
+def test_an_empty_via_exports_as_insufficient_through_the_cli(tmp_path):
+    src = tmp_path / "evidence"
+    src.mkdir()
+    out = tmp_path / "verified"
+    manifest = _exit_failure_manifest(src)
+    m = json.loads(manifest.read_text())
+    t = next(t for t in m["trials"] if t["seed"] == 7)
+    o = json.loads((src / t["path"]).read_text())
+    o["left_hallway"]["via"] = ""
+    (src / t["path"]).write_text(json.dumps(o))
+    t["sha256"] = hashlib.sha256((src / t["path"]).read_bytes()).hexdigest()
+    manifest.write_text(json.dumps(m))
+    run = _cli(tmp_path, manifest, out, "1.4.2", "0" * 40, "--bundle-version", "1.1.0")
+    assert run.returncode == 0, run.stderr
+    report = json.loads((out / "verification.json").read_text())
+    seven = next(r for r in report["trials"] if r.get("seed") == 7)
+    assert seven["status"] == hallway.INSUFFICIENT
+    assert _exit_failures(out) == {3: "exit-outside-segment"}
