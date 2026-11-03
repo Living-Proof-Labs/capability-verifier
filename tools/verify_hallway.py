@@ -24,6 +24,10 @@ from pathlib import Path
 from capability_verifier import evaluate, hallway
 
 ROOT = Path(__file__).resolve().parents[1]
+# specs #30: human-readable mission and world text, passed through as-is into the bundle's
+# top-level ``description`` when the locked catalog carries it (absent before the release
+# that adds it; then nothing is written). Resolved limits go in each result's provenance.
+DESCRIPTION = ROOT / ".specs-hallway/specs/scenarios/walk-hallway/description.json"
 
 
 class ProducerError(RuntimeError):
@@ -82,7 +86,11 @@ def producer() -> tuple[str, str, str | None]:
 
 
 def export(
-    manifest_path: Path, out: Path, prototype: bool = False, bundle_version: str = "1.0.0"
+    manifest_path: Path,
+    out: Path,
+    prototype: bool = False,
+    bundle_version: str = "1.0.0",
+    description_path: Path = DESCRIPTION,
 ) -> dict:
     """Build into a sibling temporary directory and move it to ``out`` only on success."""
     out = Path(out)
@@ -102,7 +110,9 @@ def export(
     if in_main:
         signal.signal(signal.SIGTERM, terminated)
     try:
-        result = _export(Path(manifest_path), staging, prototype, producer_id, bundle_version)
+        result = _export(
+            Path(manifest_path), staging, prototype, producer_id, bundle_version, description_path
+        )
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -130,8 +140,27 @@ def absent_evidence(manifest_path: Path, result: dict) -> list[str]:
     ]
 
 
+def description(path: Path = DESCRIPTION, commit: str | None = None) -> dict | None:
+    """The catalog's scenario description with its path, sha256 and catalog commit."""
+    if not path.is_file():
+        return None
+    raw = path.read_bytes()
+    text = json.loads(raw)
+    if text.get("format") != "livingproof-scenario-description/0.1":
+        raise SystemExit(f"{path}: unknown scenario description format {text.get('format')!r}")
+    source = {"path": "specs/scenarios/walk-hallway/description.json", "sha256": hallway._sha(path)}
+    if commit:
+        source["commit"] = commit
+    return {"source": source, **text}
+
+
 def _export(
-    manifest_path: Path, out: Path, prototype: bool, producer_id, bundle_version: str = "1.0.0"
+    manifest_path: Path,
+    out: Path,
+    prototype: bool,
+    producer_id,
+    bundle_version: str = "1.0.0",
+    description_path: Path = DESCRIPTION,
 ) -> dict:
     lock = json.loads((ROOT / "hallway-specs.lock.json").read_text())
     released = re.fullmatch(r"v\d+\.\d+\.\d+", lock["tag"]) is not None
@@ -164,6 +193,20 @@ def _export(
         "revision": lock["revision"],
     }
     conf = evidence["configuration"]
+    # The catalog commit is stated only for the locked catalog's own file.
+    catalog = Path(description_path) == DESCRIPTION
+    text = description(description_path, lock["commit"] if catalog else None)
+    if text is not None and (
+        (text["scenario"]["id"], text["scenario"]["revision"])
+        != (lock["capability"], lock["revision"])
+        or (text["world"]["id"], text["world"]["content_version"])
+        != (evidence["world"]["id"], evidence["world"]["version"])
+    ):
+        raise SystemExit(
+            "scenario description names "
+            f"{text['scenario']['id']}@{text['scenario']['revision']} on "
+            f"{text['world']['id']} {text['world']['content_version']}, not this bundle's"
+        )
     results = []
     for t in result["trials"]:
         name = Path(t["evidence"]["path"]).name
@@ -193,6 +236,7 @@ def _export(
             "run_id": evidence.get("run_id"),
             "plan": result["plan"],
             "thresholds": result["thresholds"],
+            "limits": result["limits"],
             "policy": result["policy"],
             "lock": evidence.get("lock"),
             "simulator": evidence.get("environment"),
@@ -253,6 +297,9 @@ def _export(
     }
     if bundle_version == "1.1.0":
         bundle["assessment"] = assessment
+    if text is not None:
+        # Once per bundle, not per result: one scenario revision on one world (checked above).
+        bundle["description"] = text
     (bundle_dir / "manifest.json").write_text(json.dumps(bundle, indent=2) + "\n")
     return result
 

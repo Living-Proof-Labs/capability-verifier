@@ -333,6 +333,22 @@ reporter v3.0.3's exact `1.1.0` check is unaffected and the bundle is not bumped
   trial touched a wall), the lowest base height, and the latest exit time with `missing`, the
   trials that have none. Ties keep the earlier result; INSUFFICIENT assessments are skipped.
 
+Mission, world and resolved limits (robot-capability-specs #30), also additive with no
+bundle bump; no grading decision reads them:
+
+- Each result's `provenance.limits` names every limit with the inputs it was resolved from,
+  its formula and the value graded against, unrounded beyond the grading value:
+  `lateral_limit` (`clear_width / 2 - robot_width / 2`, with the robot profile's
+  `dimensions.width`), `exit_segment` (`|y| <= clear_width / 2`), `time_limit`,
+  `fall_height` and `fits_width` (robot class and its wall clearance, 0.05 m humanoid,
+  0.10 m quadruped). For example G1 0.52 m gives 0.49 m, Go1 0.282 m gives 0.609 m and
+  T1 0.541 m gives 0.4795 m.
+- The bundle's top-level `description` is the locked catalog's
+  `specs/scenarios/walk-hallway/description.json` (`livingproof-scenario-description/0.1`),
+  copied unchanged with its `source` path, sha256 and catalog commit, once per bundle. It
+  is written only when the catalog has the file, and refused if it names another scenario
+  revision or world; catalogs up to v1.8.0 have none, so today's bundles carry only limits.
+
 ## Reusable walk-hallway workflow (robot repositories)
 
 A robot repository's whole CI chain is one call; every ref comes from its
