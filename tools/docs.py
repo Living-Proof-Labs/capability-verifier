@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tomllib
+import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -31,6 +32,25 @@ def source_identity():
     return {
         str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths)
     }
+
+
+def brand_css():
+    """Return the pinned docs brand after checking its sha256 (see docs-brand.lock.json)."""
+    pin = json.loads((ROOT / "docs-brand.lock.json").read_text())
+    local = os.environ.get("DOCS_BRAND_SOURCE")
+    if local:
+        # Preview an unreleased brand from a local checkout; the digest is still enforced.
+        data = subprocess.check_output(
+            ["git", "-C", local, "show", f"{pin['commit']}:{pin['path']}"]
+        )
+    else:
+        url = f"https://raw.githubusercontent.com/{pin['repository']}/{pin['commit']}/{pin['path']}"
+        with urllib.request.urlopen(url, timeout=30) as response:
+            data = response.read()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != pin["sha256"]:
+        raise ValueError(f"Docs brand {pin['version']} sha256 is {digest}, pinned {pin['sha256']}")
+    return data
 
 
 def command(*args):
@@ -178,6 +198,8 @@ def build():
             f"[License]({relative('docs/license.md')})\n"
         )
         page.write_text(page.read_text() + footer)
+    (stage / "assets").mkdir(exist_ok=True)
+    (stage / "assets/brand.css").write_bytes(brand_css())
     subprocess.run(["zensical", "build", "--clean"], cwd=ROOT, check=True)
 
 
