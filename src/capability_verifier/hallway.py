@@ -217,6 +217,73 @@ def thresholds(manifest: dict) -> dict:
     }
 
 
+LATERAL_FORMULA = "clear_width / 2 - robot_width / 2"
+EXIT_SEGMENT_FORMULA = "|y| <= clear_width / 2"
+TIME_LIMIT_FORMULA = "2 * route_length / command_speed + 5 s"
+FITS_WIDTH_FORMULA = "robot_width + 2 * wall_clearance <= clear_width"
+
+
+def limits(manifest: dict) -> dict:
+    """Each limit with the inputs it was resolved from and its formula (specs #30).
+
+    The values are exactly the ones ``thresholds`` grades against (never re-rounded for
+    display), so a report can render the width used, the formula and the limit without
+    computing anything. Additive: no grading decision reads this.
+    """
+    th = thresholds(manifest)
+    robot = manifest["robot"]["profile"]
+    world, plan = manifest["world"], manifest["plan"]
+    width = robot["dimensions"]["width"]
+    width = width["value"] if isinstance(width, dict) else width
+    cls = robot.get("class")
+    fit = fits_width(manifest)
+    return {
+        "lateral_limit": {
+            "value": th["lateral_limit"],
+            "unit": "m",
+            "formula": LATERAL_FORMULA,
+            "inputs": {
+                "clear_width": world["clear_width"],
+                "robot_width": width,
+                "robot_width_source": "robot.profile.dimensions.width",
+            },
+        },
+        "exit_segment": {
+            "value": th["half_width"],
+            "unit": "m",
+            "formula": EXIT_SEGMENT_FORMULA,
+            "inputs": {"clear_width": world["clear_width"]},
+        },
+        "time_limit": {
+            "value": th["time_limit"],
+            "unit": "s",
+            "formula": TIME_LIMIT_FORMULA,
+            "inputs": {
+                "route_length": world["route_length"],
+                "command_speed": plan["command_speed"],
+            },
+        },
+        "fall_height": {
+            "value": th["fall_height"],
+            "unit": "m",
+            "formula": "configuration.profile.locomotion.fall_base_height",
+            "inputs": {},
+        },
+        "fits_width": {
+            "met": fit["met"],
+            "unit": "m",
+            "formula": FITS_WIDTH_FORMULA,
+            "inputs": {
+                "robot_width": width,
+                "robot_class": cls,
+                "wall_clearance": WALL_CLEARANCE[cls],
+                "clear_width": world["clear_width"],
+            },
+            "detail": fit["detail"],
+        },
+    }
+
+
 def assessment(evaluator, status, rationale, evidence_id, details=None, assessor="deterministic"):
     return {
         "id": f"{evidence_id}/{evaluator}",
@@ -607,6 +674,7 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
     return {
         "plan": plan,
         "thresholds": th,
+        "limits": limits(manifest),
         "policy": POLICY,
         "trials": trials,
         "summary": aggregate(trials, plan),
