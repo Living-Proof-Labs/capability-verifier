@@ -26,13 +26,22 @@ theme:
   font: false
   palette:
     - media: '(prefers-color-scheme)'
+      primary: custom
+      accent: custom
       toggle: {icon: lucide/sun-moon, name: Switch to light mode}
     - media: '(prefers-color-scheme: light)'
       scheme: default
+      primary: custom
+      accent: custom
       toggle: {icon: lucide/sun, name: Switch to dark mode}
     - media: '(prefers-color-scheme: dark)'
       scheme: slate
+      primary: custom
+      accent: custom
       toggle: {icon: lucide/moon, name: Switch to system preference}
+# Colours and fonts come only from the pinned brand (docs-brand.lock.json), staged by tools/docs.py.
+extra_css:
+  - assets/brand.css
 markdown_extensions:
   - tables
   - toc: {permalink: true}
