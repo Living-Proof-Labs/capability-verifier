@@ -307,6 +307,32 @@ INSUFFICIENT_EVIDENCE. The default stays 1.0.0 because capability report 1.x acc
 only that version. `tools/compare_assessment.py <bundle> <report.json>` checks a 1.1.0
 bundle against a report computed from the same evidence.
 
+Each 1.1.0 `decision` also names one `primary_failure` (a copy of one entry of `failures`, or
+`null` when nothing failed) and keeps every other failure in `secondary_failures`, so a reader
+renders one main reason per trial without ranking anything itself (cv #36). These keys are
+additive: `failures` keeps its recorded order and the bundle stays 1.1.0, and status, reason
+and grade do not depend on them. The primary is chosen by a fixed category precedence,
+`hallway-fall`, `hallway-lateral-limit`, `hallway-wall-contact`, `hallway-exit-reached`
+(`evaluate.FAILURE_PRECEDENCE`); within a category the earliest `t` comes first (untimed
+last), then recorded order; checks not listed (recorded reviews) follow, by name. It is a
+label, not a root cause: the lateral `t` is when the base first passed the limit, while a
+contact can come earlier from a shoulder or foot (Go1 seed 1: contact 10.30 s, lateral
+10.60 s), and maxima alone cannot establish cause. A fall ranks first because later checks then describe a robot that is down; drift
+ranks before contact, since a contact means the lateral clearance was already exceeded;
+not reaching the exit ranks last, as the outcome the other failures explain.
+
+Each 1.1.0 assessment `run` also carries, additively (not in the reporter's summary shape, so
+reporter v3.0.3's exact `1.1.0` check is unaffected and the bundle is not bumped):
+
+- `failure_summary`: `failed_trials` (each FAIL result counted once) and `by_primary`, one
+  entry per primary check in precedence order with `count`, `seeds` and `result_ids`. A FAIL
+  with no structured failure counts under `check: null`.
+- `worst`: one entry per deterministic check, copied from the stored assessments with its
+  `seed`, `t` and `result_id`: the largest lateral (`t` is the peak, from the new
+  `details.peak_time`), the deepest wall contact (and its `wall`; `observed` null when no
+  trial touched a wall), the lowest base height, and the latest exit time with `missing`, the
+  trials that have none. Ties keep the earlier result; INSUFFICIENT assessments are skipped.
+
 ## Reusable walk-hallway workflow (robot repositories)
 
 A robot repository's whole CI chain is one call; every ref comes from its
