@@ -274,7 +274,7 @@ four deterministic evaluators: `hallway-exit-reached`, `hallway-lateral-limit`,
 aggregates k of N with a Wilson 95% interval. Each rationale names the check, the time and the
 limit, the time (2 decimals) and the seed, for example `lateral 0.62 m > 0.49 m at 10.26 s (seed 7)` or
 `wall contact depth 0.03 m at 4.50 s (seed 2)`. Lengths gain decimals until observed and limit differ. Each
-failed check is also structured as `{check, observed, limit, unit, t, seed}` (plus `wall` for contacts),
+failed check is also structured as `{check, observed, limit, unit, t, seed}` (plus `wall` for contacts and `via` for exits outside the segment or a `left_hallway` end),
 listed per assessment (`details.failures`), per trial and for the whole run (`failures`).
 
 The trial plan (trials, seeds, command speed, required passes) is read from the evidence

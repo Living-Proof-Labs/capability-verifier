@@ -920,3 +920,80 @@ def test_t1_still_fails_under_both_formats():
         for name in ("hallway-exit-reached", "hallway-lateral-limit", "hallway-wall-contact"):
             assert trial[name]["status"] == hallway.FAIL, name
     assert hallway.assess_trial(before, TH, "t")["status"] == hallway.FAIL
+
+
+def _exit_failure_manifest(tmp_path):
+    """A 20-seed run where seed 3 crosses the exit line outside the segment (1.0.0) and
+    seed 7 leaves the hallway through wall-left (2.0.0)."""
+    m = json.loads(_manifest(tmp_path).read_text())
+    cols = ["t", "x", "y", "z", "wall_distance"]
+    outside = observation(
+        format=V1,
+        trace={
+            "columns": cols,
+            "samples": [[0.0, -2.5, 0.0, 0.75, 0.3], [12.0, 3.0, 0.9, 0.74, -0.1]],
+        },
+    )
+    left = _left(via="wall-left", y=0.72)
+    for t in m["trials"]:
+        o = {3: outside, 7: left}.get(t["seed"])
+        if o is not None:
+            p = tmp_path / t["path"]
+            p.write_text(json.dumps(o))
+            t["sha256"] = hashlib.sha256(p.read_bytes()).hexdigest()
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(m))
+    return path
+
+
+def _exit_failures(out):
+    """``via`` of every exit failure, from the bundle's assessments and from the report."""
+    bundle = json.loads((out / "bundle" / "manifest.json").read_text())
+    in_bundle = {
+        f["seed"]: f["via"]
+        for r in bundle["results"]
+        for a in r["assessments"]
+        for f in a["provenance"].get("details", {}).get("failures", [])
+        if f["check"] == "hallway-exit-reached"
+    }
+    report = json.loads((out / "verification.json").read_text())
+    in_report = {
+        f["seed"]: f["via"] for f in report["failures"] if f["check"] == "hallway-exit-reached"
+    }
+    assert in_bundle == in_report
+    return in_bundle
+
+
+@pytest.mark.parametrize("bundle_version", ["1.0.0", "1.1.0"])
+def test_export_writes_exit_outside_segment_and_left_hallway_failures(
+    tmp_path, monkeypatch, bundle_version
+):
+    """capability-verifier#38 review: these failures carry ``via`` and must export."""
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    src = tmp_path / "evidence"
+    src.mkdir()
+    out = tmp_path / "verified"
+    _tool().export(_exit_failure_manifest(src), out, prototype=True, bundle_version=bundle_version)
+    assert _exit_failures(out) == {3: "exit-outside-segment", 7: "wall-left"}
+
+
+def test_cli_writes_a_bundle_for_exit_outside_segment_and_left_hallway(tmp_path):
+    src = tmp_path / "evidence"
+    src.mkdir()
+    out = tmp_path / "verified"
+    run = _cli(tmp_path, _exit_failure_manifest(src), out, "1.4.2")
+    assert run.returncode == 0, run.stderr
+    assert _exit_failures(out) == {3: "exit-outside-segment", 7: "wall-left"}
+
+
+@pytest.mark.parametrize("bad", [{"via": ""}, {"via": 3}, {"wall": None}, {"extra": "x"}])
+def test_structured_failures_still_reject_malformed_optional_keys(bad):
+    from capability_verifier.evaluate import structured_failures
+
+    f = {"check": "hallway-exit-reached", "observed": None, "limit": 27.0, "unit": "s"}
+    f.update(t=1.0, seed=1, **bad)
+    a = {"id": "x", "evaluator": f["check"], "status": hallway.FAIL}
+    a["provenance"] = {"details": {"failures": [f]}}
+    with pytest.raises(ValueError):
+        structured_failures(a)
