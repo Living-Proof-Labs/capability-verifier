@@ -22,7 +22,7 @@ FEATURE = (
     Path(__file__).resolve().parents[1]
     / ".specs-hallway/specs/scenarios/walk-hallway/walk-hallway.feature"
 )
-TH = {"time_limit": 27.0, "lateral_limit": 0.49, "fall_height": 0.5}
+TH = {"time_limit": 27.0, "lateral_limit": 0.49, "fall_height": 0.5, "half_width": 0.7}
 # The test's own plan; the verifier reads the plan from evidence, never from code.
 PLAN = {
     "scenario": "walk-hallway@0.1.0",
@@ -36,7 +36,7 @@ PLAN = {
 def observation(**changes):
     o = {
         "format": hallway.OBSERVATION_FORMAT,
-        "end": "exit",
+        "end": "crossed_exit",
         "duration_s": 12.0,
         "exit_time": 12.0,
         "max_abs_lateral": {"value": 0.21, "time": 7.3},
@@ -100,7 +100,12 @@ def resolved(ctx):
         "plan": PLAN,
     }
     ctx["th"] = hallway.thresholds(manifest)
-    assert ctx["th"] == {"time_limit": 49.0, "lateral_limit": 0.49, "fall_height": 0.5}
+    assert ctx["th"] == {
+        "time_limit": 49.0,
+        "lateral_limit": 0.49,
+        "fall_height": 0.5,
+        "half_width": 0.7,
+    }
     ctx["th"] = dict(ctx["th"], time_limit=27.0)
 
 
@@ -799,3 +804,119 @@ def test_complete_export_carries_no_missing_evidence(tmp_path, monkeypatch, bund
     text = (out / "bundle" / "manifest.json").read_text()
     assert "missing_evidence" not in text
     assert len(list((out / "bundle" / "evidence").iterdir())) == 20
+
+
+# capability-verifier#37: an exit counts only through the exit segment, a left_hallway end
+# fails, unknown observation formats are refused, and no grade softens.
+V1 = "livingproof-hallway-observation/1.0.0"
+
+
+def _by_evaluator(trial):
+    return {a["evaluator"]: a for a in trial["assessments"]}
+
+
+def _left(via="wall-right", time=7.34, y=-0.6146):
+    return observation(
+        end="left_hallway",
+        exit_time=None,
+        duration_s=time,
+        left_hallway={"time": time, "via": via, "x": 0.4, "y": y},
+    )
+
+
+def test_a_left_hallway_end_fails_the_exit_and_the_trial():
+    trial = hallway.assess_trial(_left(), TH, "t")
+    exit_ = _by_evaluator(trial)["hallway-exit-reached"]
+    assert exit_["status"] == hallway.FAIL
+    assert "wall-right" in exit_["rationale"]
+    assert trial["status"] == hallway.FAIL
+
+
+def test_a_left_hallway_end_with_an_exit_time_is_insufficient_not_a_pass():
+    o = _left()
+    o["exit_time"] = 7.34
+    assert hallway.exit_reached(o, TH, "t")["status"] == hallway.INSUFFICIENT
+    o = _left()
+    del o["left_hallway"]
+    assert hallway.exit_reached(o, TH, "t")["status"] == hallway.INSUFFICIENT
+
+
+@pytest.mark.parametrize("fmt", [V1, hallway.OBSERVATION_FORMAT])
+def test_an_exit_outside_the_segment_fails(fmt):
+    samples = [[0.0, -2.5, 0.0, 0.75, 0.3], [12.0, 3.0, -1.78, 0.74, -0.2]]
+    o = observation(
+        format=fmt, trace={"columns": ["t", "x", "y", "z", "wall_distance"], "samples": samples}
+    )
+    a = hallway.exit_reached(o, TH, "t")
+    assert a["status"] == hallway.FAIL
+    assert a["details"]["failures"][0]["via"] == "exit-outside-segment"
+
+
+def test_an_exit_whose_crossing_point_is_unreadable_is_insufficient():
+    o = observation(trace=None)
+    assert hallway.exit_reached(o, TH, "t")["status"] == hallway.INSUFFICIENT
+    o = observation(end="time_limit")  # exit_time set but the trial did not cross the exit
+    assert hallway.exit_reached(o, TH, "t")["status"] == hallway.INSUFFICIENT
+    o = observation(end="exit")  # not an end either format reports
+    assert hallway.exit_reached(o, TH, "t")["status"] == hallway.INSUFFICIENT
+    o = _left()
+    o["format"] = V1  # 1.0.0 never ends left_hallway
+    assert hallway.exit_reached(o, TH, "t")["status"] == hallway.INSUFFICIENT
+
+
+@pytest.mark.parametrize("fmt", [V1, hallway.OBSERVATION_FORMAT])
+def test_both_formats_are_read_and_an_inside_exit_still_passes(fmt):
+    trial = hallway.assess_trial(observation(format=fmt), TH, "t")
+    assert trial["status"] == hallway.PASS
+
+
+@pytest.mark.parametrize(
+    "fmt", ["livingproof-hallway-observation/3.0.0", "livingproof-hallway-observation/2.0", None]
+)
+def test_unknown_observation_formats_are_refused(fmt):
+    from capability_verifier.evaluate import HallwayEvaluator
+
+    o = observation(format=fmt)
+    trial = hallway.assess_trial(o, TH, "t")
+    assert trial["status"] == hallway.INSUFFICIENT
+    assert {a["status"] for a in trial["assessments"]} == {hallway.INSUFFICIENT}
+    assert {a["status"] for a in HallwayEvaluator().assess(o, TH, "t")} == {hallway.INSUFFICIENT}
+
+
+@pytest.mark.parametrize("fmt", [V1, hallway.OBSERVATION_FORMAT])
+def test_touching_a_wall_still_fails(fmt):
+    touch = [{"wall": "wall-left", "start": 10.5, "end": 10.7, "depth": 0.001}]
+    trial = hallway.assess_trial(observation(format=fmt, wall_contacts=touch), TH, "t")
+    assert _by_evaluator(trial)["hallway-wall-contact"]["status"] == hallway.FAIL
+    assert trial["status"] == hallway.FAIL
+
+
+def test_t1_still_fails_under_both_formats():
+    """T1 seed 1: 1.0.0 crossed the exit line at y -1.78 through the wall; 2.0.0 ends it at
+    the wall. Every evaluator that failed before still fails, and the exit now fails too."""
+    cols = ["t", "x", "y", "z", "wall_distance"]
+    before = observation(
+        format=V1,
+        exit_time=13.76,
+        duration_s=13.76,
+        max_abs_lateral={"value": 1.7814, "time": 13.76},
+        wall_contacts=[{"wall": "wall-right", "start": 6.44, "end": 13.76, "depth": 0.2014}],
+        trace={
+            "columns": cols,
+            "samples": [[0.0, -2.5, 0.0, 0.6, 0.27], [13.76, 3.0, -1.7814, 0.6, -0.17]],
+        },
+    )
+    after = _left()
+    after.update(
+        max_abs_lateral={"value": 0.6146, "time": 7.34},
+        wall_contacts=[{"wall": "wall-right", "start": 6.44, "end": 7.34, "depth": 0.1502}],
+        trace={
+            "columns": cols + ["wall_intrusion"],
+            "samples": [[0.0, -2.5, 0.0, 0.6, 0.27, -0.27]],
+        },
+    )
+    for o in (before, after):
+        trial = _by_evaluator(hallway.assess_trial(o, TH, "t"))
+        for name in ("hallway-exit-reached", "hallway-lateral-limit", "hallway-wall-contact"):
+            assert trial[name]["status"] == hallway.FAIL, name
+    assert hallway.assess_trial(before, TH, "t")["status"] == hallway.FAIL

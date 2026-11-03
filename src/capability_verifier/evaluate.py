@@ -81,7 +81,7 @@ class HallwayEvaluator:
     version = hallway.VERSION
 
     def assess(self, observation, thresholds, evidence_id, seed=None):
-        if observation.get("format") != hallway.OBSERVATION_FORMAT:
+        if observation.get("format") not in hallway.OBSERVATION_FORMATS:
             return [
                 hallway.assessment(
                     n, INSUFFICIENT, f"unknown observation format{hallway._seed(seed)}", evidence_id

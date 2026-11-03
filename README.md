@@ -268,7 +268,7 @@ must be new; move prior artifacts aside before repeating a local export.
 
 ## Walk-hallway evaluators
 
-`capability_verifier.hallway` assesses each `livingproof-hallway-observation/1.0.0` trial with
+`capability_verifier.hallway` assesses each `livingproof-hallway-observation/1.0.0` or `/2.0.0` trial with
 four deterministic evaluators: `hallway-exit-reached`, `hallway-lateral-limit`,
 `hallway-wall-contact` and `hallway-fall`. It judges each trial with `all-required-v1`, then
 aggregates k of N with a Wilson 95% interval. Each rationale names the check, the time and the
@@ -282,6 +282,13 @@ manifest. The manifest echoes the robot repository's committed `verification.loc
 nothing is hard-coded here. Thresholds come from the robot profile, the configuration profile
 and the world. Every assessment records `assessor.type` (`deterministic`, `human` or `agent`).
 Human and agent conclusions enter through `recorded=` and are judged by the same policy.
+
+`hallway-exit-reached` passes only a `crossed_exit` trial whose base crossed the exit line
+inside the exit segment (|y| <= half the world's `clear_width`, read from the trace sample at
+`exit_time`). A crossing outside the segment fails (`via: exit-outside-segment`), as does a 2.0.0
+`left_hallway` end (the rationale names the wall it left through). An exit whose crossing point
+cannot be read, or an end the format does not define, is INSUFFICIENT. Any other observation
+format is refused: every evaluator reports INSUFFICIENT. Any wall contact still fails.
 
 `hallway-specs.lock.json` pins the catalog. While it says `"tag": "UNRELEASED"`,
 `HALLWAY_SPECS_SOURCE` must name a local checkout that holds the locked commit. A release
