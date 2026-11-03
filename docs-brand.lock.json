@@ -1,7 +1,7 @@
 {
   "repository": "Living-Proof-Labs/collaboration-guidelines",
-  "version": "unreleased",
-  "commit": "fd0013d133b5d3cd507b3edc1326c7a0b0cf405e",
+  "version": "v7.4.0",
+  "commit": "613e3d97bbb1f00836d88b25c380b9eafdcfb15a",
   "path": "brand/docs/brand.css",
   "sha256": "bacab61d25e4d87fa29a868238028f148e88429a6d4aba1c22a7886109707dac"
 }
