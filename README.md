@@ -315,11 +315,23 @@ and grade do not depend on them. The primary is chosen by a fixed category prece
 `hallway-fall`, `hallway-lateral-limit`, `hallway-wall-contact`, `hallway-exit-reached`
 (`evaluate.FAILURE_PRECEDENCE`); within a category the earliest `t` comes first (untimed
 last), then recorded order; checks not listed (recorded reviews) follow, by name. It is a
-label, not a root cause: `t` for a lateral failure is the time of the maximum, so a contact
-can carry an earlier time than the drift that led to it, and maxima alone cannot establish
-cause. A fall ranks first because later checks then describe a robot that is down; drift
+label, not a root cause: the lateral `t` is when the base first passed the limit, while a
+contact can come earlier from a shoulder or foot (Go1 seed 1: contact 10.30 s, lateral
+10.60 s), and maxima alone cannot establish cause. A fall ranks first because later checks then describe a robot that is down; drift
 ranks before contact, since a contact means the lateral clearance was already exceeded;
 not reaching the exit ranks last, as the outcome the other failures explain.
+
+Each 1.1.0 assessment `run` also carries, additively (not in the reporter's summary shape, so
+reporter v3.0.3's exact `1.1.0` check is unaffected and the bundle is not bumped):
+
+- `failure_summary`: `failed_trials` (each FAIL result counted once) and `by_primary`, one
+  entry per primary check in precedence order with `count`, `seeds` and `result_ids`. A FAIL
+  with no structured failure counts under `check: null`.
+- `worst`: one entry per deterministic check, copied from the stored assessments with its
+  `seed`, `t` and `result_id`: the largest lateral (`t` is the peak, from the new
+  `details.peak_time`), the deepest wall contact (and its `wall`; `observed` null when no
+  trial touched a wall), the lowest base height, and the latest exit time with `missing`, the
+  trials that have none. Ties keep the earlier result; INSUFFICIENT assessments are skipped.
 
 ## Reusable walk-hallway workflow (robot repositories)
 

@@ -317,3 +317,49 @@ def test_compare_assessment_ignores_the_derived_primary_split():
     assert compare.differences({"assessment": a}, report) == []
     report["decisions"][0]["status"] = P
     assert compare.differences({"assessment": a}, report) == ["decisions differ"]
+
+
+def test_run_summary_counts_each_failed_trial_once_and_keeps_the_worst_values():
+    """cv #36: failure summary by primary category, and worst value per check with its seed."""
+    drift_and_contact = observation(
+        max_abs_lateral={"value": 0.62, "time": 10.1},
+        wall_contacts=[
+            {"wall": "wall-left", "start": 9.5, "end": 9.7, "depth": 0.01},
+            {"wall": "wall-left", "start": 10.2, "end": 10.7, "depth": 0.04},
+        ],
+    )
+    obs = [observation(), drift_and_contact, FAILING["wall_contacts"], FAILING["exit_time"]]
+    results = []
+    for seed, o in enumerate(obs, start=1):
+        r = result(f"r{seed}", obs=o, plan={**PLAN, "trials": 4, "required_passes": 3})
+        r["original_result"] = {"status": "x", "seed": seed}
+        results.append(r)
+    run = evaluate.assess_bundle(results, {r["id"]: True for r in results})["runs"][0]
+    assert run["grade"] == F and run["k"] == 1
+    assert run["failure_summary"] == {
+        "failed_trials": 3,
+        "by_primary": [
+            {"check": "hallway-lateral-limit", "count": 1, "seeds": [2], "result_ids": ["r2"]},
+            {"check": "hallway-wall-contact", "count": 1, "seeds": [3], "result_ids": ["r3"]},
+            {"check": "hallway-exit-reached", "count": 1, "seeds": [4], "result_ids": ["r4"]},
+        ],
+    }
+    worst = {w["check"]: w for w in run["worst"]}
+    assert worst["hallway-lateral-limit"] == {
+        "check": "hallway-lateral-limit", "worst": "max", "unit": "m",
+        "observed": 0.62, "seed": 2, "t": 10.1, "result_id": "r2",
+    }  # fmt: skip
+    deep = worst["hallway-wall-contact"]
+    assert (deep["observed"], deep["seed"], deep["t"], deep["wall"]) == (0.04, 2, 10.2, "wall-left")
+    assert (worst["hallway-fall"]["observed"], worst["hallway-fall"]["seed"]) == (0.71, 1)
+    assert worst["hallway-exit-reached"]["missing"] == 1
+    # Not part of the reporter's summary shape (its 1.1.0 check reads only RUN keys).
+    summary = evaluate.as_reporter_summary(run)
+    assert "failure_summary" not in summary and "worst" not in summary
+
+
+def test_run_summary_with_no_failures_or_contacts():
+    run = evaluate.assess_bundle([result()], {"r1": True})["runs"][0]
+    assert run["failure_summary"] == {"failed_trials": 0, "by_primary": []}
+    contact = next(w for w in run["worst"] if w["check"] == "hallway-wall-contact")
+    assert contact["observed"] is None and contact["seed"] is None

@@ -367,7 +367,14 @@ def lateral_limit(o, th, eid, seed=None):
             FAIL,
             text,
             eid,
-            {"observed": v, "threshold": limit, "time": t, "margin": margin, "failures": [f]},
+            {
+                "observed": v,
+                "threshold": limit,
+                "time": t,
+                "peak_time": e["time"],
+                "margin": margin,
+                "failures": [f],
+            },
         )
     text = f"lateral {a} m <= {b} m, largest at {e['time']:.2f} s{_seed(seed)}"
     return assessment(
@@ -375,7 +382,13 @@ def lateral_limit(o, th, eid, seed=None):
         PASS,
         text,
         eid,
-        {"observed": v, "threshold": limit, "time": e["time"], "margin": margin},
+        {
+            "observed": v,
+            "threshold": limit,
+            "time": e["time"],
+            "peak_time": e["time"],
+            "margin": margin,
+        },
     )
 
 

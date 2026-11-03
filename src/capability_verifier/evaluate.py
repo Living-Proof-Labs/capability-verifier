@@ -339,9 +339,107 @@ class Aggregator:
                     "result_ids": [r["id"] for r in members],
                     "failures": [dict(f) for r in members for f in by_id[r["id"]].failures],
                     "prototype": members[0]["provenance"].get("prototype"),
+                    # Additive (cv #36); not in the reporter's summary shape.
+                    "failure_summary": failure_summary(members, by_id),
+                    "worst": worst_observed(members),
                 }
             )
         return runs
+
+
+def _seed_of(result: dict):
+    seed = (result.get("original_result") or {}).get("seed")
+    return seed if type(seed) is int else None
+
+
+def failure_summary(members: list, by_id: dict) -> dict:
+    """Each FAIL result counted once, under its primary failure check (cv #36).
+
+    ``by_primary`` follows ``FAILURE_PRECEDENCE`` (other checks after, by name); a FAIL with no
+    structured failure (a recorded review that gave none) counts under ``check: null``.
+    """
+    groups: dict = {}
+    for r in members:
+        d = by_id[r["id"]]
+        if d.status != FAIL:
+            continue
+        primary = _primary(d.failures)[0]
+        groups.setdefault(primary["check"] if primary else None, []).append(r)
+
+    def rank(check):
+        if check in FAILURE_PRECEDENCE:
+            return (FAILURE_PRECEDENCE.index(check), "")
+        return (len(FAILURE_PRECEDENCE), "" if check is None else check)
+
+    return {
+        "failed_trials": sum(len(v) for v in groups.values()),
+        "by_primary": [
+            {
+                "check": check,
+                "count": len(rs),
+                "seeds": [_seed_of(r) for r in rs],
+                "result_ids": [r["id"] for r in rs],
+            }
+            for check, rs in sorted(groups.items(), key=lambda kv: rank(kv[0]))
+        ],
+    }
+
+
+# Per check: which stored value is worst, its unit, and which detail holds its time.
+WORST = (
+    ("hallway-lateral-limit", "max", "m", "peak_time"),
+    ("hallway-wall-contact", "max", "m", None),
+    ("hallway-fall", "min", "m", "time"),
+    ("hallway-exit-reached", "max", "s", "time"),
+)
+
+
+def worst_observed(members: list) -> list:
+    """Worst stored value per deterministic check across a run's trials (cv #36).
+
+    Lateral: the largest |y| (``max_abs_lateral``) and when it peaked. Wall contact: the deepest
+    contact (from the structured failures: depth, start time, wall); ``observed`` is null when
+    no trial touched a wall. Fall: the lowest base height. Exit: the latest exit time among
+    trials that crossed it, and ``missing`` counts trials with no exit time (did not exit, or
+    left the hallway). Copied from the stored assessments, never recomputed from evidence;
+    INSUFFICIENT assessments are skipped. Ties keep the earlier result.
+    """
+    out = []
+    for check, sense, unit, time_key in WORST:
+        best, missing = None, 0
+        for r in members:
+            for a in r["assessments"]:
+                if a["evaluator"] != check or a["status"] not in (PASS, FAIL):
+                    continue
+                details = a["provenance"].get("details") or {}
+                if check == "hallway-wall-contact":
+                    cands = [
+                        (f["observed"], f["t"], {"wall": f["wall"]} if "wall" in f else {})
+                        for f in structured_failures(a)
+                    ]
+                else:
+                    v = details.get("observed")
+                    if not _number(v):
+                        missing += 1
+                        continue
+                    t = details.get(time_key, details.get("time"))
+                    cands = [(v, t, {})]
+                for v, t, extra in cands:
+                    worse = best is None or (v > best[0] if sense == "max" else v < best[0])
+                    if worse:
+                        best = (v, t, extra, r)
+        entry = {"check": check, "worst": sense, "unit": unit}
+        if best is None:
+            entry.update({"observed": None, "seed": None, "t": None, "result_id": None})
+        else:
+            v, t, extra, r = best
+            entry.update(
+                {"observed": v, "seed": _seed_of(r), "t": t, "result_id": r["id"], **extra}
+            )
+        if check == "hallway-exit-reached":
+            entry["missing"] = missing
+        out.append(entry)
+    return out
 
 
 POLICIES = {(AllRequiredV1.id, AllRequiredV1.version): AllRequiredV1}
