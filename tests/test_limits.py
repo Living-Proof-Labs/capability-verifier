@@ -190,3 +190,24 @@ def test_the_locked_catalog_description_names_its_commit(tmp_path):
     d = tool.description(text, "c" * 40)
     assert d["source"]["commit"] == "c" * 40
     assert tool.description(tmp_path / "absent.json") is None
+
+
+def test_the_locked_catalog_description_reaches_the_bundle(tmp_path, monkeypatch):
+    """specs v1.9.0 carries description.json; the lock pins its sha256 and the export copies it."""
+    lock = json.loads((Path(__file__).parents[1] / "hallway-specs.lock.json").read_text())
+    path = "specs/scenarios/walk-hallway/description.json"
+    assert path in lock["files"]
+    tool = _tool()
+    if not tool.DESCRIPTION.is_file():
+        pytest.skip("locked catalog not fetched (tools/fetch_hallway_specs.py)")
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    src = tmp_path / "evidence"
+    src.mkdir()
+    out = tmp_path / "verified"
+    tool.export(_manifest(src), out, True, "1.1.0")
+    bundle = json.loads((out / "bundle" / "manifest.json").read_text())
+    source = bundle["description"]["source"]
+    assert source == {"path": path, "sha256": lock["files"][path], "commit": lock["commit"]}
+    assert bundle["results"][0]["spec"]["commit"] == lock["commit"]
+    assert {r["decision"]["status"] for r in bundle["results"]} == {hallway.PASS}

@@ -347,7 +347,7 @@ bundle bump; no grading decision reads them:
   `specs/scenarios/walk-hallway/description.json` (`livingproof-scenario-description/0.1`),
   copied unchanged with its `source` path, sha256 and catalog commit, once per bundle. It
   is written only when the catalog has the file, and refused if it names another scenario
-  revision or world; catalogs up to v1.8.0 have none, so today's bundles carry only limits.
+  revision or world; catalogs up to v1.8.0 have none; the lock pins v1.9.0, the first that does.
 
 ## Reusable walk-hallway workflow (robot repositories)
 
