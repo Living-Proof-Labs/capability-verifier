@@ -42,6 +42,7 @@ CONTRACTS = {
     (SPECS, "b4ba31eb2c7eaca2721d68d5d375260e2a114449", "0.1.0"),  # pre-merge candidate
     (SPECS, "a378e92216fd9498984f290e677b9f4e7a33232c", "0.1.0"),  # specs #25 candidate
     (SPECS, "0bdf1db3f975b044692c0b8f1ec37737ad8b889f", "0.1.0"),  # v1.6.1
+    (SPECS, "d677bd9770e60a6d42ea597966799e119dc7dd18", "0.1.0"),  # v1.9.0 (adds description.json)
 }
 EVALUATOR_VERSIONS = {name: hallway.VERSION for name in hallway.EVALUATORS}
 FAILURE_KEYS = {"check", "observed", "limit", "unit", "t", "seed"}

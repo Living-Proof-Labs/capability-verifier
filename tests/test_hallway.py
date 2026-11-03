@@ -253,7 +253,7 @@ def _manifest(tmp_path, plan=PLAN, failing_seed=None):
         },
         "world": {
             "id": "hallway-open",
-            "version": "1.0.0",
+            "version": "0.1.0",
             "clear_width": 1.4,
             "route_length": 5.5,
         },
