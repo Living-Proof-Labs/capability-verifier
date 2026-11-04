@@ -1,0 +1,10 @@
+{
+  "name": "G1 hallway demo (same image as walk-hallway.yml)",
+  "image": "ghcr.io/living-proof-labs/capability-verifier-hallway@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "remoteUser": "lpl",
+  "updateRemoteUserUID": true,
+  "overrideCommand": true,
+  "workspaceFolder": "/work",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/work,type=bind",
+  "customizations": {"vscode": {"extensions": ["ms-python.python"]}}
+}

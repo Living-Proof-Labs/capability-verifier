@@ -203,6 +203,12 @@ jobs:
   evidence:
     needs: plan
     runs-on: ubuntu-24.04
+    container:
+      # The hallway image (Dockerfile target `hallway`) by digest: osmesa, uv 0.13.6 and the
+      # locked dependencies pre-synced. DIGEST is a placeholder until the first image release.
+      image: ghcr.io/living-proof-labs/capability-verifier-hallway@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # Checkout and artifact actions write the runner-owned workspace.
+      options: --user root
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -218,8 +224,6 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           persist-credentials: false
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
-      - run: python3 -m pip install --user uv==0.13.6
       - name: Setup (locked environment, pinned upstream files)
         run: |
           uv sync --locked
@@ -245,6 +249,12 @@ jobs:
   verify:
     needs: [plan, evidence]
     runs-on: ubuntu-24.04
+    container:
+      # The hallway image (Dockerfile target `hallway`) by digest: osmesa, uv 0.13.6 and the
+      # locked dependencies pre-synced. DIGEST is a placeholder until the first image release.
+      image: ghcr.io/living-proof-labs/capability-verifier-hallway@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # Checkout and artifact actions write the runner-owned workspace.
+      options: --user root
     env:
       LIVINGPROOF_VERIFIER_VERSION: ${{ needs.plan.outputs.verifier-version }}
     strategy:
@@ -258,7 +268,6 @@ jobs:
           repository: ${{ needs.plan.outputs.verifier-repository }}
           ref: ${{ needs.plan.outputs.verifier-commit }}
           persist-credentials: false
-      - run: python3 -m pip install --user uv==0.13.6
       - run: uv sync --locked
       - name: Walk-hallway catalog from the verifier's own lock
         run: uv run --no-sync python tools/fetch_hallway_specs.py
@@ -283,6 +292,12 @@ jobs:
     needs: [plan, verify]
     if: inputs.media && needs.plan.outputs.media-capable == 'true'
     runs-on: ubuntu-24.04
+    container:
+      # The hallway image (Dockerfile target `hallway`) by digest: osmesa, uv 0.13.6 and the
+      # locked dependencies pre-synced. DIGEST is a placeholder until the first image release.
+      image: ghcr.io/living-proof-labs/capability-verifier-hallway@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # Checkout and artifact actions write the runner-owned workspace.
+      options: --user root
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -299,8 +314,6 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           persist-credentials: false
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
-      - run: python3 -m pip install --user uv==0.13.6
       - name: Setup (locked environment, pinned upstream files)
         run: |
           uv sync --locked
