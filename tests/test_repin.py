@@ -209,3 +209,39 @@ def test_cli_checks_the_robot_repository_named_by_root(tmp_path, capsys, monkeyp
     (tmp_path / "verification.lock.json").write_text(repin.dump(lock))
     assert repin.main(["--root", str(tmp_path), "--check"]) == 1
     assert "NOT RELEASED: releases.runner is PENDING_RELEASE" in capsys.readouterr().out
+
+
+def test_image_digest_returns_the_index_digest_of_a_multi_arch_tag(monkeypatch):
+    index = "sha256:" + "a" * 64
+    seen = []
+
+    class Response:
+        def __init__(self, body=b"", headers=None):
+            self.body, self.headers = body, headers or {}
+
+        def read(self, *_):
+            return self.body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    def fake_urlopen(req, timeout):
+        url = req if isinstance(req, str) else req.full_url
+        if "/token?" in url:
+            return Response(json.dumps({"token": "t"}).encode())
+        seen.append(req)
+        # The registry answers an index-accepting HEAD with the index (manifest list) digest,
+        # not either per-arch manifest digest.
+        return Response(headers={"Docker-Content-Digest": index})
+
+    monkeypatch.setattr(repin.urllib.request, "urlopen", fake_urlopen)
+    image = "ghcr.io/living-proof-labs/capability-verifier-hallway"
+    assert repin.image_digest(image, "1.15.0") == index
+    (req,) = seen
+    assert req.get_method() == "HEAD"
+    accept = req.get_header("Accept")
+    assert accept.split(", ")[0] == "application/vnd.oci.image.index.v1+json"
+    assert "application/vnd.docker.distribution.manifest.list.v2+json" in accept

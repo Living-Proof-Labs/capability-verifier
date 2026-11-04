@@ -277,43 +277,255 @@ jobs:
           gh release upload "$RELEASE_TAG" release-runs/*.zip release-runs/CATALOG.md release-runs/BUNDLE-SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
           gh release edit "$RELEASE_TAG" --draft=false --repo "$GITHUB_REPOSITORY"
 
-  hallway-image:
-    # One image for the G1 hallway demo, the devcontainer and walk-hallway.yml (amd64 first).
-    # Its digest goes in this release's notes; robot locks pin it as releases.verifier.digest.
+  hallway-image-tag:
+    # Version tags are never retagged: an existing image:<version> fails the release. Only an
+    # explicit registry "manifest unknown"/not-found counts as absent; any other error fails.
     needs: [release]
     if: needs.release.outputs.draft-created == 'true'
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
-      packages: write
+      packages: read
     env:
       IMAGE: ghcr.io/living-proof-labs/capability-verifier-hallway
       RELEASE_TAG: ${{ needs.release.outputs.git-tag }}
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ needs.release.outputs.git-tag }}
           persist-credentials: false
-      - name: Build and push the hallway image (linux/amd64)
-        id: push
+      - name: Refuse to retag an existing version
+        id: tag
         env:
           GH_TOKEN: ${{ github.token }}
           ACTOR: ${{ github.actor }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
           version="${RELEASE_TAG#v}"
-          docker build --platform linux/amd64 --target hallway -t "$IMAGE:$version" .
-          docker push "$IMAGE:$version"
-          echo "ref=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$version")" >> "$GITHUB_OUTPUT"
-      - name: Record the digest in the release notes
+          .github/scripts/hallway-tag-absent.sh "$IMAGE:$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  hallway-image-build:
+    # Native per-arch builds (livingproof's amd64/arm64 runner matrix), pushed by digest only:
+    # no per-arch tags. hallway-image-merge makes the image:<version> index from these digests.
+    needs: [release, hallway-image-tag]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/living-proof-labs/capability-verifier-hallway
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.release.outputs.git-tag }}
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Build and push ${{ matrix.platform }} by digest
+        id: push
         env:
           GH_TOKEN: ${{ github.token }}
-          REF: ${{ steps.push.outputs.ref }}
+          ACTOR: ${{ github.actor }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker buildx build --platform "$PLATFORM" --target hallway \
+            --output "type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true" \
+            --metadata-file metadata.json .
+          digest=$(jq -er '."containerimage.digest"' metadata.json)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "$digest" > "digest-${{ matrix.architecture }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hallway-digest-${{ matrix.architecture }}
+          path: digest-${{ matrix.architecture }}
+          if-no-files-found: error
+          retention-days: 1
+
+  hallway-image-merge:
+    needs: [release, hallway-image-tag, hallway-image-build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/living-proof-labs/capability-verifier-hallway
+      VERSION: ${{ needs.hallway-image-tag.outputs.version }}
+    outputs:
+      digest: ${{ steps.create.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.release.outputs.git-tag }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: hallway-digest-*
+          merge-multiple: true
+          path: digests
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Create the image:<version> index (no-retag check again first)
+        id: create
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          .github/scripts/hallway-tag-absent.sh "$IMAGE:$VERSION"
+          amd64=$(cat digests/digest-amd64); arm64=$(cat digests/digest-arm64)
+          docker buildx imagetools create -t "$IMAGE:$VERSION" "$IMAGE@$amd64" "$IMAGE@$arm64"
+          digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -er .digest)
+          docker buildx imagetools inspect "$IMAGE@$digest" --raw \
+            | jq -e '[.manifests[].platform | "\(.os)/\(.architecture)"] | sort == ["linux/amd64","linux/arm64"]'
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Record the index digest in the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release.outputs.git-tag }}
+          DIGEST: ${{ steps.create.outputs.digest }}
         run: |
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > notes.md
           # shellcheck disable=SC2016 # the backticks are Markdown, not a substitution
-          printf '\n## Hallway image (linux/amd64)\n\n`%s`\n' "$REF" >> notes.md
+          printf '\n## Hallway image (linux/amd64, linux/arm64 index)\n\n`%s:%s@%s`\n' "$IMAGE" "$VERSION" "$DIGEST" >> notes.md
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+
+  hallway-image-verify:
+    # Pull image@index-digest natively on each arch and reproduce the stock G1 hallway result.
+    needs: [release, hallway-image-merge]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+            machine: x86_64
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    env:
+      REF: ghcr.io/living-proof-labs/capability-verifier-hallway@${{ needs.hallway-image-merge.outputs.digest }}
+      ARCH: ${{ matrix.architecture }}
+      MACHINE: ${{ matrix.machine }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.release.outputs.git-tag }}
+          persist-credentials: false
+          path: cv
+      - name: Check out livingproof-verification at the image's lock commit
+        id: lock
+        run: |
+          commit=$(sed -n 's/^ARG VERIFICATION_LOCK_COMMIT=//p' cv/Dockerfile)
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: Living-Proof-Labs/livingproof-verification
+          ref: ${{ steps.lock.outputs.commit }}
+          persist-credentials: false
+          path: lpv
+      - name: Pull natively, with no platform mismatch
+        run: |
+          [ "$(uname -m)" = "$MACHINE" ] || { echo "runner is $(uname -m), expected $MACHINE" >&2; exit 1; }
+          docker pull "$REF" 2>&1 | tee pull.log
+          if grep -qi 'platform' pull.log; then echo "platform warning on pull" >&2; exit 1; fi
+          image_arch=$(docker image inspect "$REF" --format '{{.Architecture}}')
+          [ "$image_arch" = "$ARCH" ] || { echo "pulled $image_arch, expected $ARCH" >&2; exit 1; }
+          in_container=$(docker run --rm --entrypoint uname "$REF" -m)
+          [ "$in_container" = "$MACHINE" ] || { echo "container is $in_container, expected $MACHINE" >&2; exit 1; }
+      - name: Reproduce stock G1 hallway 12/20 FAIL
+        working-directory: lpv
+        run: |
+          set +e
+          docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" "$REF" \
+            capability verify run --reporter source verifications/unitree-g1-stock-mujoco-hallway.toml 2>&1 | tee ../verify.log
+          set -e
+          expected='12/20 trials PASS (needs 18), Wilson 95% [0.3866, 0.7812]: FAIL'
+          grep -qF "$expected" ../verify.log || { echo "did not reproduce: $expected" >&2; exit 1; }
+          echo "$ARCH: \`$expected\`" >> "$GITHUB_STEP_SUMMARY"
+
+  hallway-image-pr:
+    # PR dry run of the release's per-arch build + verify, natively on each arch. Nothing is
+    # pushed or tagged: the image is loaded into the runner's docker and there is no merge/index.
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            machine: x86_64
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    env:
+      REF: capability-verifier-hallway:pr-${{ matrix.architecture }}
+      ARCH: ${{ matrix.architecture }}
+      MACHINE: ${{ matrix.machine }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          path: cv
+      - name: Read the image's lock commit
+        id: lock
+        run: |
+          commit=$(sed -n 's/^ARG VERIFICATION_LOCK_COMMIT=//p' cv/Dockerfile)
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: Living-Proof-Labs/livingproof-verification
+          ref: ${{ steps.lock.outputs.commit }}
+          persist-credentials: false
+          path: lpv
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Build ${{ matrix.platform }} natively and load it (no push, no tag on a registry)
+        working-directory: cv
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          [ "$(uname -m)" = "$MACHINE" ] || { echo "runner is $(uname -m), expected $MACHINE" >&2; exit 1; }
+          docker buildx build --platform "$PLATFORM" --target hallway --load -t "$REF" . 2>&1 | tee ../build.log
+          if grep -Ei 'warn.*platform|platform.*(mismatch|does not match)' ../build.log; then
+            echo "platform warning on build" >&2; exit 1
+          fi
+      - name: Check the loaded image runs natively, with no platform mismatch
+        run: |
+          image_arch=$(docker image inspect "$REF" --format '{{.Architecture}}')
+          [ "$image_arch" = "$ARCH" ] || { echo "built $image_arch, expected $ARCH" >&2; exit 1; }
+          docker run --rm --entrypoint uname "$REF" -m > run.log 2>&1
+          cat run.log
+          if grep -qi 'platform' run.log; then echo "platform warning on run" >&2; exit 1; fi
+          [ "$(tail -n1 run.log)" = "$MACHINE" ] || { echo "container is not $MACHINE" >&2; exit 1; }
+      - name: Reproduce stock G1 hallway 12/20 FAIL
+        working-directory: lpv
+        run: |
+          set +e
+          docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" "$REF" \
+            capability verify run --reporter source verifications/unitree-g1-stock-mujoco-hallway.toml 2>&1 | tee ../verify.log
+          set -e
+          expected='12/20 trials PASS (needs 18), Wilson 95% [0.3866, 0.7812]: FAIL'
+          grep -qF "$expected" ../verify.log || { echo "did not reproduce: $expected" >&2; exit 1; }
+          echo "$ARCH: \`$expected\`" >> "$GITHUB_STEP_SUMMARY"
 
   documentation:
     runs-on: ubuntu-24.04
