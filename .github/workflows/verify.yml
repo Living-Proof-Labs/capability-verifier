@@ -242,8 +242,27 @@ jobs:
     with:
       draft-release: true
   release-reports:
-    needs: [verify, report, release]
-    if: needs.release.outputs.draft-created == 'true'
+    # Publishes the draft release, so it waits for every hallway image job: a failed image never
+    # gets a published release. Explicit results, because a skipped/failed need must stop this
+    # job rather than be ignored; the merge job has already added the image line to the draft.
+    needs:
+      - verify
+      - report
+      - release
+      - hallway-image-tag
+      - hallway-image-build
+      - hallway-image-merge
+      - hallway-image-verify
+    if: >-
+      ${{ !cancelled()
+      && needs.release.outputs.draft-created == 'true'
+      && needs.verify.result == 'success'
+      && needs.report.result == 'success'
+      && needs.release.result == 'success'
+      && needs.hallway-image-tag.result == 'success'
+      && needs.hallway-image-build.result == 'success'
+      && needs.hallway-image-merge.result == 'success'
+      && needs.hallway-image-verify.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write

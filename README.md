@@ -119,6 +119,16 @@ GitHub release notes are generated; no generated changelog or version bumps are
 committed. The Python project version is a development placeholder; release tags
 identify published source.
 
+### When a release fails after a push
+
+Published tags, including `capability-verifier-hallway:<version>`, are never moved
+or retagged. If a release step fails after something was pushed, the tag stays up,
+that version is marked unverified (it is not pinned anywhere, and the next release
+says so in `.github/release-notes/<next version>.md`), and the fix ships as the next
+patch. The GitHub release is published only after every hallway image job passes.
+Example: the 1.15.0 image index was pushed before its platform check failed, so
+1.15.0 stays published but unverified, and 1.15.1 carries the fix and that note.
+
 Original code, fixtures, tooling and documentation here are Apache-2.0; see
 [LICENSE](LICENSE). Downloaded spec content under `.specs/specs/` is CC BY 4.0,
 copyright Living Proof Labs contributors, from the immutable catalog version
