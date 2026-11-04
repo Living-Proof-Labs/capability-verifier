@@ -46,9 +46,11 @@ ARG ROBOT_REPOSITORY=Living-Proof-Labs/livingproof-unitree-g1
 ARG ROBOT_COMMIT=4de6de66fbfdfdcd438f2f5bf77431125dcbce54
 ARG VERIFIER_COMMIT=58388d3c5f970e11deae940c26d8558abb36314e
 ARG REPORTER_COMMIT=f084f252de3e5af91a8099eacfd805dec291e9ec
-# The build fails unless these defaults are what this lock names (robot.commit and
-# releases.verifier/reporter.commit): relock there, then bump them here.
-ARG VERIFICATION_LOCK_URL=https://raw.githubusercontent.com/Living-Proof-Labs/livingproof-verification/main/verifications/unitree-g1-stock-mujoco-hallway.lock.json
+# The build fails unless these defaults are what the G1 hallway lock at
+# livingproof-verification VERIFICATION_LOCK_COMMIT names (robot.commit and
+# releases.verifier/reporter.commit): relock there, then bump all of them here together.
+ARG VERIFICATION_LOCK_COMMIT=1d5e9c2d872b9701ea2c80829cd8a45436996381
+ARG VERIFICATION_LOCK_URL=https://raw.githubusercontent.com/Living-Proof-Labs/livingproof-verification/${VERIFICATION_LOCK_COMMIT}/verifications/unitree-g1-stock-mujoco-hallway.lock.json
 ENV UV_PYTHON_DOWNLOADS=never UV_CACHE_DIR=/opt/uv-cache UV_LINK_MODE=copy \
     MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa \
     PATH=/opt/lpl/bin:$PATH
