@@ -43,13 +43,13 @@ RUN set -eu; \
     rm -rf /var/lib/apt/lists/*
 ARG LIVINGPROOF_REF=v1.4.9
 ARG ROBOT_REPOSITORY=Living-Proof-Labs/livingproof-unitree-g1
-ARG ROBOT_COMMIT=4de6de66fbfdfdcd438f2f5bf77431125dcbce54
-ARG VERIFIER_COMMIT=58388d3c5f970e11deae940c26d8558abb36314e
+ARG ROBOT_COMMIT=7cb7b576239c7db6f71db3b239d48912eda243db
+ARG VERIFIER_COMMIT=be50e20ffed0beb18a6c6435e11333912ec48be3
 ARG REPORTER_COMMIT=f084f252de3e5af91a8099eacfd805dec291e9ec
 # The build fails unless these defaults are what the G1 hallway lock at
 # livingproof-verification VERIFICATION_LOCK_COMMIT names (robot.commit and
 # releases.verifier/reporter.commit): relock there, then bump all of them here together.
-ARG VERIFICATION_LOCK_COMMIT=1d5e9c2d872b9701ea2c80829cd8a45436996381
+ARG VERIFICATION_LOCK_COMMIT=b747ae3fc136bb6ac80596e12e7a464f4fed8974
 ARG VERIFICATION_LOCK_URL=https://raw.githubusercontent.com/Living-Proof-Labs/livingproof-verification/${VERIFICATION_LOCK_COMMIT}/verifications/unitree-g1-stock-mujoco-hallway.lock.json
 ENV UV_PYTHON_DOWNLOADS=never UV_CACHE_DIR=/opt/uv-cache UV_LINK_MODE=copy \
     MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa \
