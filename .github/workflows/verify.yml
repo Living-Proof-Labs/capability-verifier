@@ -277,6 +277,44 @@ jobs:
           gh release upload "$RELEASE_TAG" release-runs/*.zip release-runs/CATALOG.md release-runs/BUNDLE-SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
           gh release edit "$RELEASE_TAG" --draft=false --repo "$GITHUB_REPOSITORY"
 
+  hallway-image:
+    # One image for the G1 hallway demo, the devcontainer and walk-hallway.yml (amd64 first).
+    # Its digest goes in this release's notes; robot locks pin it as releases.verifier.digest.
+    needs: [release]
+    if: needs.release.outputs.draft-created == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    env:
+      IMAGE: ghcr.io/living-proof-labs/capability-verifier-hallway
+      RELEASE_TAG: ${{ needs.release.outputs.git-tag }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.release.outputs.git-tag }}
+          persist-credentials: false
+      - name: Build and push the hallway image (linux/amd64)
+        id: push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          version="${RELEASE_TAG#v}"
+          docker build --platform linux/amd64 --target hallway -t "$IMAGE:$version" .
+          docker push "$IMAGE:$version"
+          echo "ref=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$version")" >> "$GITHUB_OUTPUT"
+      - name: Record the digest in the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ steps.push.outputs.ref }}
+        run: |
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > notes.md
+          # shellcheck disable=SC2016 # the backticks are Markdown, not a substitution
+          printf '\n## Hallway image (linux/amd64)\n\n`%s`\n' "$REF" >> notes.md
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+
   documentation:
     runs-on: ubuntu-24.04
     env:
