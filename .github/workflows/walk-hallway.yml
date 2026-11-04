@@ -118,6 +118,7 @@ jobs:
       verifier-commit: ${{ steps.lock.outputs.verifier-commit }}
       verifier-version: ${{ steps.lock.outputs.verifier-version }}
       reporter-image: ${{ steps.lock.outputs.reporter-image }}
+      verifier-image: ${{ steps.lock.outputs.verifier-image }}
       media-capable: ${{ steps.capability.outputs.media-capable }}
       bundle-version: ${{ steps.capability.outputs.bundle-version }}
     steps:
@@ -145,6 +146,7 @@ jobs:
             echo "verifier-repository=$(jq -r '.releases.verifier.repository' verification.lock.json)"
             echo "verifier-commit=$(jq -r '.releases.verifier.commit' verification.lock.json)"
             echo "verifier-version=$(jq -r '.releases.verifier.tag | ltrimstr("v")' verification.lock.json)"
+            echo "verifier-image=$(jq -r '.releases.verifier | if .image then .image + ":" + (.tag | ltrimstr("v")) + "@" + .digest else "" end' verification.lock.json)"
             echo "reporter-image=$(jq -r '.releases.reporter.image + ":" + (.releases.reporter.tag | ltrimstr("v")) + "@" + .releases.reporter.digest' verification.lock.json)"
           } >> "$GITHUB_OUTPUT"
       - name: Media and bundle capability from the locks
@@ -204,10 +206,11 @@ jobs:
     needs: plan
     runs-on: ubuntu-24.04
     container:
-      # The hallway image (Dockerfile target `hallway`) by digest: osmesa, uv 0.13.6 and the
-      # locked dependencies pre-synced. DIGEST is a placeholder until the first image release.
-      image: ghcr.io/living-proof-labs/capability-verifier-hallway@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      # Checkout and artifact actions write the runner-owned workspace.
+      # The hallway image from the lock (releases.verifier.image:tag@digest): osmesa, uv and
+      # the locked dependencies pre-synced. A lock without it runs on the runner (empty image).
+      image: ${{ needs.plan.outputs.verifier-image }}
+      # The image's user is lpl (uid 1000), but actions/checkout, upload-artifact and
+      # download-artifact write the runner-owned workspace (/__w, uid 1001), so run as root.
       options: --user root
     timeout-minutes: 120
     strategy:
@@ -224,6 +227,10 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           persist-credentials: false
+      - if: needs.plan.outputs.verifier-image == ''
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
+      - if: needs.plan.outputs.verifier-image == ''
+        run: python3 -m pip install --user uv==0.13.6
       - name: Setup (locked environment, pinned upstream files)
         run: |
           uv sync --locked
@@ -250,10 +257,11 @@ jobs:
     needs: [plan, evidence]
     runs-on: ubuntu-24.04
     container:
-      # The hallway image (Dockerfile target `hallway`) by digest: osmesa, uv 0.13.6 and the
-      # locked dependencies pre-synced. DIGEST is a placeholder until the first image release.
-      image: ghcr.io/living-proof-labs/capability-verifier-hallway@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      # Checkout and artifact actions write the runner-owned workspace.
+      # The hallway image from the lock (releases.verifier.image:tag@digest): osmesa, uv and
+      # the locked dependencies pre-synced. A lock without it runs on the runner (empty image).
+      image: ${{ needs.plan.outputs.verifier-image }}
+      # The image's user is lpl (uid 1000), but actions/checkout, upload-artifact and
+      # download-artifact write the runner-owned workspace (/__w, uid 1001), so run as root.
       options: --user root
     env:
       LIVINGPROOF_VERIFIER_VERSION: ${{ needs.plan.outputs.verifier-version }}
@@ -268,6 +276,8 @@ jobs:
           repository: ${{ needs.plan.outputs.verifier-repository }}
           ref: ${{ needs.plan.outputs.verifier-commit }}
           persist-credentials: false
+      - if: needs.plan.outputs.verifier-image == ''
+        run: python3 -m pip install --user uv==0.13.6
       - run: uv sync --locked
       - name: Walk-hallway catalog from the verifier's own lock
         run: uv run --no-sync python tools/fetch_hallway_specs.py
@@ -293,10 +303,11 @@ jobs:
     if: inputs.media && needs.plan.outputs.media-capable == 'true'
     runs-on: ubuntu-24.04
     container:
-      # The hallway image (Dockerfile target `hallway`) by digest: osmesa, uv 0.13.6 and the
-      # locked dependencies pre-synced. DIGEST is a placeholder until the first image release.
-      image: ghcr.io/living-proof-labs/capability-verifier-hallway@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      # Checkout and artifact actions write the runner-owned workspace.
+      # The hallway image from the lock (releases.verifier.image:tag@digest): osmesa, uv and
+      # the locked dependencies pre-synced. A lock without it runs on the runner (empty image).
+      image: ${{ needs.plan.outputs.verifier-image }}
+      # The image's user is lpl (uid 1000), but actions/checkout, upload-artifact and
+      # download-artifact write the runner-owned workspace (/__w, uid 1001), so run as root.
       options: --user root
     timeout-minutes: 120
     strategy:
@@ -314,6 +325,10 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           persist-credentials: false
+      - if: needs.plan.outputs.verifier-image == ''
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
+      - if: needs.plan.outputs.verifier-image == ''
+        run: python3 -m pip install --user uv==0.13.6
       - name: Setup (locked environment, pinned upstream files)
         run: |
           uv sync --locked

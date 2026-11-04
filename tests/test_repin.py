@@ -113,6 +113,59 @@ def locked_commits(repository, tag):
     )
 
 
+def locked_digests(image, tag):
+    return next(
+        r["digest"]
+        for r in LOCK["releases"].values()
+        if r.get("image") == image and r["tag"] == f"v{tag}"
+    )
+
+
+def with_verifier_image(digest=DIGEST, image=repin.VERIFIER_IMAGE):
+    lock = json.loads(json.dumps(LOCK))
+    lock["releases"]["verifier"].update(image=image, digest=digest)
+    return lock
+
+
+def test_verifier_hallway_image_needs_a_digest_and_the_hallway_name():
+    assert repin.check(with_verifier_image(), PYPROJECT) == []
+    no_digest = with_verifier_image()
+    del no_digest["releases"]["verifier"]["digest"]
+    assert "releases.verifier has an image but no sha256 digest" in repin.check(
+        no_digest, PYPROJECT
+    )
+    other = with_verifier_image(image="ghcr.io/someone/else")
+    assert any(
+        "releases.verifier.image is 'ghcr.io/someone/else'" in p
+        for p in repin.check(other, PYPROJECT)
+    )
+
+
+def test_check_confirms_each_image_tag_has_its_locked_digest():
+    lock = with_verifier_image()
+    published = {repin.VERIFIER_IMAGE: DIGEST, LOCK["releases"]["reporter"]["image"]: None}
+
+    def registry(image, tag):
+        return published[image] or locked_digests(image, tag)
+
+    assert repin.check(lock, PYPROJECT, locked_commits, registry) == []
+    published[repin.VERIFIER_IMAGE] = "sha256:" + "e" * 64
+    tag = LOCK["releases"]["verifier"]["tag"].removeprefix("v")
+    assert repin.check(lock, PYPROJECT, locked_commits, registry) == [
+        f"releases.verifier: {repin.VERIFIER_IMAGE}:{tag} is sha256:{'e' * 64}, "
+        f"not the locked {DIGEST}"
+    ]
+    assert repin.check(lock, PYPROJECT) == []  # offline: format only
+
+
+def test_check_reports_an_unpublished_image():
+    def unpublished(image, tag):
+        raise SystemExit(f"{image}:{tag} is not published (404); release it first")
+
+    problems = repin.check(with_verifier_image(), PYPROJECT, locked_commits, unpublished)
+    assert len(problems) == 2 and all("not published" in p for p in problems)
+
+
 def test_check_confirms_each_tag_resolves_to_its_locked_commit():
     assert repin.check(LOCK, PYPROJECT, locked_commits) == []
     moved = json.loads(json.dumps(LOCK))
@@ -139,6 +192,7 @@ def test_cli_check_resolves_tags_unless_offline(tmp_path, capsys, monkeypatch):
     shutil.copy(FIXTURE / "verification.lock.json", tmp_path)
     shutil.copy(FIXTURE / "pyproject.toml", tmp_path)
     monkeypatch.setattr(repin, "resolve", lambda repository, tag: "0" * 40)
+    monkeypatch.setattr(repin, "image_digest", locked_digests)
     assert repin.main(["--root", str(tmp_path), "--check"]) == 1
     assert "not the locked" in capsys.readouterr().out
     assert repin.main(["--root", str(tmp_path), "--check", "--offline"]) == 0
@@ -146,6 +200,7 @@ def test_cli_check_resolves_tags_unless_offline(tmp_path, capsys, monkeypatch):
 
 def test_cli_checks_the_robot_repository_named_by_root(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(repin, "resolve", locked_commits)
+    monkeypatch.setattr(repin, "image_digest", locked_digests)
     shutil.copy(FIXTURE / "verification.lock.json", tmp_path)
     shutil.copy(FIXTURE / "pyproject.toml", tmp_path)
     assert repin.main(["--root", str(tmp_path), "--check"]) == 0
