@@ -376,7 +376,7 @@ jobs:
     needs: [release, hallway-image-tag, hallway-image-build]
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write
       packages: write
     env:
       IMAGE: ghcr.io/living-proof-labs/capability-verifier-hallway
