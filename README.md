@@ -3,11 +3,16 @@
 **[Start here: documentation](https://docs.livingprooflabs.com/capability-verifier/)**
 
 A small Python reference for Living Proof Labs: collect evidence, assess it with
-multiple evaluators, then apply an explicit grading policy. This is a deterministic
-fixture demonstration, **not robot safety certification**. No robot, simulator,
-AI service, dashboard or server is required.
+multiple evaluators, then apply an explicit grading policy. It is **not robot safety
+certification**. The fixture demo below is deterministic and needs no robot, simulator,
+AI service, dashboard or server; the [Quickstart](https://docs.livingprooflabs.com/quickstart.html)
+runs the verifier on a MuJoCo simulation.
 
 ## Quickstart
+
+To verify a real controller in simulation, start with the
+[Quickstart](https://docs.livingprooflabs.com/quickstart.html). The fixture demo
+below runs without a simulator.
 
 Install [Git](https://git-scm.com/downloads),
 [Docker with Compose v2](https://docs.docker.com/compose/install/), and
