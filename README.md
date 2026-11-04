@@ -3,9 +3,10 @@
 **[Start here: documentation](https://docs.livingprooflabs.com/capability-verifier/)**
 
 A small Python reference for Living Proof Labs: collect evidence, assess it with
-multiple evaluators, then apply an explicit grading policy. This is a deterministic
-fixture demonstration, **not robot safety certification**. No robot, simulator,
-AI service, dashboard or server is required.
+multiple evaluators, then apply an explicit grading policy. It is **not robot safety
+certification**. The fixture demo below is deterministic and needs no robot, simulator,
+AI service, dashboard or server; the [Quickstart](https://docs.livingprooflabs.com/quickstart.html)
+runs the verifier on a MuJoCo simulation.
 
 ## Quickstart
 
