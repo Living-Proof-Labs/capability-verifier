@@ -444,7 +444,7 @@ jobs:
           if grep -qi 'platform' pull.log; then echo "platform warning on pull" >&2; exit 1; fi
           image_arch=$(docker image inspect "$REF" --format '{{.Architecture}}')
           [ "$image_arch" = "$ARCH" ] || { echo "pulled $image_arch, expected $ARCH" >&2; exit 1; }
-          in_container=$(docker run --rm "$REF" uname -m)
+          in_container=$(docker run --rm --entrypoint uname "$REF" -m)
           [ "$in_container" = "$MACHINE" ] || { echo "container is $in_container, expected $MACHINE" >&2; exit 1; }
       - name: Reproduce stock G1 hallway 12/20 FAIL
         working-directory: lpv
@@ -512,7 +512,7 @@ jobs:
         run: |
           image_arch=$(docker image inspect "$REF" --format '{{.Architecture}}')
           [ "$image_arch" = "$ARCH" ] || { echo "built $image_arch, expected $ARCH" >&2; exit 1; }
-          docker run --rm "$REF" uname -m > run.log 2>&1
+          docker run --rm --entrypoint uname "$REF" -m > run.log 2>&1
           cat run.log
           if grep -qi 'platform' run.log; then echo "platform warning on run" >&2; exit 1; fi
           [ "$(tail -n1 run.log)" = "$MACHINE" ] || { echo "container is not $MACHINE" >&2; exit 1; }
