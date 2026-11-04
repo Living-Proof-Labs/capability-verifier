@@ -457,6 +457,76 @@ jobs:
           grep -qF "$expected" ../verify.log || { echo "did not reproduce: $expected" >&2; exit 1; }
           echo "$ARCH: \`$expected\`" >> "$GITHUB_STEP_SUMMARY"
 
+  hallway-image-pr:
+    # PR dry run of the release's per-arch build + verify, natively on each arch. Nothing is
+    # pushed or tagged: the image is loaded into the runner's docker and there is no merge/index.
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            machine: x86_64
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    env:
+      REF: capability-verifier-hallway:pr-${{ matrix.architecture }}
+      ARCH: ${{ matrix.architecture }}
+      MACHINE: ${{ matrix.machine }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          path: cv
+      - name: Read the image's lock commit
+        id: lock
+        run: |
+          commit=$(sed -n 's/^ARG VERIFICATION_LOCK_COMMIT=//p' cv/Dockerfile)
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: Living-Proof-Labs/livingproof-verification
+          ref: ${{ steps.lock.outputs.commit }}
+          persist-credentials: false
+          path: lpv
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Build ${{ matrix.platform }} natively and load it (no push, no tag on a registry)
+        working-directory: cv
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          [ "$(uname -m)" = "$MACHINE" ] || { echo "runner is $(uname -m), expected $MACHINE" >&2; exit 1; }
+          docker buildx build --platform "$PLATFORM" --target hallway --load -t "$REF" . 2>&1 | tee ../build.log
+          if grep -Ei 'warn.*platform|platform.*(mismatch|does not match)' ../build.log; then
+            echo "platform warning on build" >&2; exit 1
+          fi
+      - name: Check the loaded image runs natively, with no platform mismatch
+        run: |
+          image_arch=$(docker image inspect "$REF" --format '{{.Architecture}}')
+          [ "$image_arch" = "$ARCH" ] || { echo "built $image_arch, expected $ARCH" >&2; exit 1; }
+          docker run --rm "$REF" uname -m > run.log 2>&1
+          cat run.log
+          if grep -qi 'platform' run.log; then echo "platform warning on run" >&2; exit 1; fi
+          [ "$(tail -n1 run.log)" = "$MACHINE" ] || { echo "container is not $MACHINE" >&2; exit 1; }
+      - name: Reproduce stock G1 hallway 12/20 FAIL
+        working-directory: lpv
+        run: |
+          set +e
+          docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/work" "$REF" \
+            capability verify run --reporter source verifications/unitree-g1-stock-mujoco-hallway.toml 2>&1 | tee ../verify.log
+          set -e
+          expected='12/20 trials PASS (needs 18), Wilson 95% [0.3866, 0.7812]: FAIL'
+          grep -qF "$expected" ../verify.log || { echo "did not reproduce: $expected" >&2; exit 1; }
+          echo "$ARCH: \`$expected\`" >> "$GITHUB_STEP_SUMMARY"
+
   documentation:
     runs-on: ubuntu-24.04
     env:
