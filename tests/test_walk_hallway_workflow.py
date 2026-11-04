@@ -258,3 +258,15 @@ def test_pre_and_dev_releases_fail_closed_and_never_count_as_the_release(tmp_pat
 def test_capability_installs_pinned_packaging_before_the_gate():
     block = WORKFLOW[WORKFLOW.index("id: capability") :]
     assert block.index("pip install --user packaging==") < block.index("<<'PY'")
+
+
+def test_evidence_verify_and_media_run_in_the_locked_hallway_image():
+    assert ".releases.verifier | if .image then .image" in STEPS
+    assert "ghcr.io/living-proof-labs/capability-verifier-hallway" not in STEPS  # lock only
+    for job in ("evidence", "verify", "media"):
+        body = WORKFLOW.split(f"\n  {job}:\n", 1)[1].split("\n  report:\n", 1)[0]
+        head = body.split("    steps:\n", 1)[0]
+        assert "image: ${{ needs.plan.outputs.verifier-image }}" in head, job
+        assert "options: --user root" in head, job
+    # without an image in the lock the jobs still provision the runner themselves
+    assert STEPS.count("if: needs.plan.outputs.verifier-image == ''") == 5

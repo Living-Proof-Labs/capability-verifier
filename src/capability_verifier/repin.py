@@ -14,10 +14,15 @@ with an ``image`` (the reporter) also records ``digest``: the registry's manifes
 the runner also rewrites its ``[tool.uv.sources]`` line in pyproject.toml to that tag and
 reruns ``uv lock``. The workflow reads every other ref straight from the lock.
 
+The verifier entry may carry ``image`` (the hallway image,
+``ghcr.io/living-proof-labs/capability-verifier-hallway``); walk-hallway.yml then runs its
+evidence, verify and media jobs in ``image:X.Y.Z@digest``.
+
 ``--check`` fails while any ref is PENDING_RELEASE, while an image entry has no sha256 digest,
-while the runner source in
+while the verifier image is not the hallway image, while the runner source in
 pyproject.toml is not the locked tag, if any dependency is path-pinned, and when a locked tag
-does not resolve (``git ls-remote``) to its locked commit. ``--offline`` skips that last check.
+does not resolve (``git ls-remote``) to its locked commit or a locked image tag's registry
+digest is not its locked digest. ``--offline`` skips those last two checks.
 Stdlib only, so CI can run it before installing anything.
 """
 
@@ -47,6 +52,7 @@ MANIFESTS = ", ".join(
     ]
 )
 RUNNER_DIST = "livingproof-sim-mujoco"
+VERIFIER_IMAGE = "ghcr.io/living-proof-labs/capability-verifier-hallway"
 SOURCE = re.compile(rf"^{RUNNER_DIST}\s*=\s*\{{(?P<body>[^}}]*)\}}", re.M)
 
 
@@ -97,9 +103,10 @@ def runner_source(text: str) -> str | None:
     return m.group("body").strip() if m else None
 
 
-def check(lock: dict, pyproject: str, resolver=None) -> list[str]:
+def check(lock: dict, pyproject: str, resolver=None, digester=None) -> list[str]:
     """Problems with the lock; with ``resolver`` also every tag that does not resolve to its
-    locked commit (a moved or deleted tag, or a hand-edited commit)."""
+    locked commit (a moved or deleted tag, or a hand-edited commit); with ``digester`` also
+    every image whose ``image:X.Y.Z`` manifest is not the locked digest."""
     problems = [
         f"releases.{name} is {PENDING} (expected {ref.get('expected', 'a release tag')})"
         for name, ref in lock["releases"].items()
@@ -116,6 +123,9 @@ def check(lock: dict, pyproject: str, resolver=None) -> list[str]:
             and not DIGEST.fullmatch(ref.get("digest", ""))
         ):
             problems.append(f"releases.{name} has an image but no sha256 digest")
+    verifier_image = lock["releases"].get("verifier", {}).get("image")
+    if verifier_image is not None and verifier_image != VERIFIER_IMAGE:
+        problems.append(f"releases.verifier.image is {verifier_image!r}, not {VERIFIER_IMAGE}")
     if re.search(r"^\S+\s*=\s*\{[^}]*\bpath\s*=", pyproject, re.M):
         problems.append("pyproject.toml has a path-pinned dependency")
     runner = lock["releases"]["runner"]
@@ -135,6 +145,22 @@ def check(lock: dict, pyproject: str, resolver=None) -> list[str]:
                 problems.append(
                     f"releases.{name}: {ref['repository']} tag {ref['tag']} is {commit}, "
                     f"not the locked {ref['commit']}"
+                )
+    if digester is not None:
+        for name, ref in lock["releases"].items():
+            if not ("image" in ref and TAG.fullmatch(ref.get("tag", ""))):
+                continue
+            if not DIGEST.fullmatch(ref.get("digest", "")):
+                continue  # reported above
+            try:
+                digest = digester(ref["image"], ref["tag"].removeprefix("v"))
+            except (SystemExit, OSError) as e:
+                problems.append(f"releases.{name}: cannot read {ref['image']}:{ref['tag']}: {e}")
+                continue
+            if digest != ref["digest"]:
+                problems.append(
+                    f"releases.{name}: {ref['image']}:{ref['tag'].removeprefix('v')} is {digest}, "
+                    f"not the locked {ref['digest']}"
                 )
     return problems
 
@@ -200,7 +226,9 @@ def main(argv=None) -> int:
     lock_path, pyproject_path = a.root / a.lock, a.root / PYPROJECT
     lock, pyproject = json.loads(lock_path.read_text()), pyproject_path.read_text()
     if a.check:
-        problems = check(lock, pyproject, None if a.offline else resolve)
+        problems = (
+            check(lock, pyproject) if a.offline else check(lock, pyproject, resolve, image_digest)
+        )
         for p in problems:
             print(f"NOT RELEASED: {p}")
         if not problems:
