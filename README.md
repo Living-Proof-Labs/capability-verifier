@@ -9,6 +9,10 @@ AI service, dashboard or server is required.
 
 ## Quickstart
 
+To verify a real controller in simulation, start with the
+[Quickstart](https://docs.livingprooflabs.com/quickstart.html). The fixture demo
+below runs without a simulator.
+
 Install [Git](https://git-scm.com/downloads),
 [Docker with Compose v2](https://docs.docker.com/compose/install/), and
 [Task 3.54.0](https://taskfile.dev/docs/installation), then start Docker.

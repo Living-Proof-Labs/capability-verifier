@@ -3,6 +3,8 @@
 Choose the task you want to reproduce. The canonical instructions remain in
 Start here; these links open the relevant section in this manual.
 
+- [Verify a controller in simulation](https://docs.livingprooflabs.com/quickstart.html):
+  run the Unitree G1 stock controller through walk-hallway, 20 seeded trials.
 - [Run the known-good fixture demonstration](../README.md#quickstart): install
   Docker and Task, execute the pinned example and compare expected results.
 - [Produce portable evidence and manifests](../README.md#portable-reporting-input):
@@ -15,4 +17,4 @@ Start here; these links open the relevant section in this manual.
 Related reading: [reporter manual](https://docs.livingprooflabs.com/livingproof-capability-report/)
 and [capability specification manual](https://docs.livingprooflabs.com/robot-capability-specs/).
 Their current explanations aid discovery; the commands above keep exact released
-versions. This verifier executes recorded fixtures, not a robot or simulator.
+versions. The fixture demo executes recorded fixtures; the Quickstart runs a simulator.
