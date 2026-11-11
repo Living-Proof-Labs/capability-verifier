@@ -287,16 +287,58 @@ must be new; move prior artifacts aside before repeating a local export.
 four deterministic evaluators: `hallway-exit-reached`, `hallway-lateral-limit`,
 `hallway-wall-contact` and `hallway-fall`. It judges each trial with `all-required-v1`, then
 aggregates k of N with a Wilson 95% interval. Each rationale names the check, the time and the
-limit, the time (2 decimals) and the seed, for example `lateral 0.62 m > 0.49 m at 10.26 s (seed 7)` or
-`wall contact depth 0.03 m at 4.50 s (seed 2)`. Lengths gain decimals until observed and limit differ. Each
-failed check is also structured as `{check, observed, limit, unit, t, seed}` (plus `wall` for contacts and `via` for exits outside the segment or a `left_hallway` end),
-listed per assessment (`details.failures`), per trial and for the whole run (`failures`).
+limit, and the time (2 decimals). Evidence 1.0.0 also names the seed, for example
+`lateral 0.62 m > 0.49 m at 10.26 s (seed 7)` or `wall contact depth 0.03 m at 4.50 s (seed 2)`.
+Evidence 2.0.0 names the trial index in that sentence, for example `(trial 2)`. Lengths gain
+decimals until observed and limit differ. Each failed check is also structured as
+`{check, observed, limit, unit, t, seed}` (plus `wall` for contacts and `via` for exits outside
+the segment or a `left_hallway` end), listed per assessment (`details.failures`), per trial and
+for the whole run (`failures`). For evidence 2.0.0 the integer in `seed` is the trial index:
+the failure schema and the pinned reporter still use that field, and they have no index field.
 
-The trial plan (trials, seeds, command speed, required passes) is read from the evidence
-manifest. The manifest echoes the robot repository's committed `verification.lock.json`, so
-nothing is hard-coded here. Thresholds come from the robot profile, the configuration profile
-and the world. Every assessment records `assessor.type` (`deterministic`, `human` or `agent`).
-Human and agent conclusions enter through `recorded=` and are judged by the same policy.
+## Accepted hallway evidence and media
+
+Two evidence formats are accepted. Anything else is a `ManifestError` that names the format;
+it is not a `KeyError`.
+
+- `livingproof-hallway-evidence/1.0.0` (legacy). `plan.trials` is an integer, `plan.seeds` is
+  the seed list, and `plan.required_passes` is the k-of-N threshold. Trial files are keyed by
+  seed. This stays accepted so a robot that still records it (livingproof-sim-mujoco v1.8.3
+  and the locks pinned to that release) keeps verifying after it takes this verifier, until
+  it repins the runner.
+- `livingproof-hallway-evidence/2.0.0`. `plan.trials` and the manifest's `trials` are objects,
+  `{"count": N, ...}`. There are no `plan.seeds` and no `plan.required_passes`; a manifest
+  that still carries either is refused. Trial files are `trial-NN.json`, keyed by `index`
+  (1 through N). `trials.reproducibility` is `compared`, `identical` and `finding`. When the
+  identical trials disagree, `finding` is `{kind: "test-system", name: "reproducibility", ...}`.
+
+The same k-of-N aggregator grades both. Format 2.0.0 has no required-pass count, and the
+trials are identical repeats of the nominal pose, so the threshold used for that format is
+N: every trial has to pass. That is the existing aggregator with one input filled in, not a
+new grading policy. The per-trial evaluators are unchanged. A reproducibility finding is
+copied onto the verification result (`findings`) and into each bundle result's provenance.
+It is a test-system finding. It is not a robot FAIL, and it does not change the grade. A
+missing or unreadable observation is still `INSUFFICIENT_EVIDENCE` for that trial. If none
+of the planned trials complete, k-of-N with threshold N grades the run
+`INSUFFICIENT_EVIDENCE`. Reclassifying those trials as a test-system `ERROR` status, and
+dropping them from N, belongs to the later grading-policy change. The reporter bundle schema
+only allows `PASS`, `FAIL` and `INSUFFICIENT_EVIDENCE` as assessment statuses.
+
+Result ids stay `{configuration}-seed-NN`. For format 2.0.0, NN is the trial index. The
+pinned reporter matches a video link by a result id ending in `-seed-NN` and rejects any
+other link field, so the walk-hallway workflow still writes that integer under `seed`.
+
+Media manifests follow the same split. `livingproof-hallway-media/1.0.0` trial entries carry
+`seed`. `livingproof-hallway-media/2.0.0` entries carry `index` and the files are named
+`trial-NN`. Any other media format fails the workflow step with a message that names the
+format, before it reads `seed` or `index`.
+
+The trial plan (command speed, and for 1.0.0 the seeds and required passes) is read from the
+evidence manifest. The manifest echoes the robot repository's committed
+`verification.lock.json`, so nothing is hard-coded here. Thresholds come from the robot
+profile, the configuration profile and the world. Every assessment records `assessor.type`
+(`deterministic`, `human` or `agent`). Human and agent conclusions enter through `recorded=`
+and are judged by the same policy.
 
 `hallway-exit-reached` passes only a `crossed_exit` trial whose base crossed the exit line
 inside the exit segment (|y| <= half the world's `clear_width`, read from the trace sample at
@@ -385,13 +427,16 @@ let a cross-robot workflow call it once per robot. `python3 -m capability_verifi
 repositories' `tools/repin.py`.
 
 The `media` job (on by default, `media: false` to skip) runs `livingproof_sim_mujoco.media`:
-an MCAP file for every trial and a video for the first PASS and the first FAIL seed, each
-re-run checked against its evidence sha256. It uploads `<prefix>mcap-<configuration>` and
+an MCAP file for every trial and a video for the first PASS and the first FAIL trial, each
+re-run checked against its evidence sha256. Media 1.0.0 selects that trial by `seed`. Media
+2.0.0 selects it by `index`. It uploads `<prefix>mcap-<configuration>` and
 `<prefix>video-<configuration>-seed-NN-{pass,fail}` artifacts and writes their
 `artifact-url`s and the run URL to `<prefix>links-<configuration>`, which the report job
 passes to `--evidence-links` (of `grade` or `render`, below); the reporter renders them in report.md, report.json and
-the PR comment. It runs only when the robot's locks can use it (`uv.lock` has
-livingproof-sim-mujoco >= 1.6.0 with the `media` extra, and the reporter tag is >= 1.11.0);
+the PR comment. The link field is still `seed`, because that is the field the pinned reporter
+accepts; for media 2.0.0 the integer is the trial index. It runs only when the robot's locks
+can use it (`uv.lock` has livingproof-sim-mujoco >= 1.6.0 with the `media` extra, and the
+reporter tag is >= 1.11.0);
 robots still on older pins skip it instead of failing. A skipped or failed media job never
 blocks the report or the PR comment; the report is then rendered without links. Release
 uploads use `--clobber`, so re-running a partly uploaded release still publishes it.

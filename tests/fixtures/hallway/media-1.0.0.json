@@ -1,0 +1,20 @@
+{
+  "format": "livingproof-hallway-media/1.0.0",
+  "configuration": "stock",
+  "trials": [
+    {
+      "seed": 7,
+      "observation_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mcap": {"path": "mcap/seed-07.mcap", "bytes": 1, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "status": "PASS",
+      "video": {"path": "video/seed-07-pass.mp4", "bytes": 1, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+    },
+    {
+      "seed": 8,
+      "observation_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mcap": {"path": "mcap/seed-08.mcap", "bytes": 1, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "status": "FAIL",
+      "video": {"path": "video/seed-08-fail.mp4", "bytes": 1, "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
+    }
+  ]
+}

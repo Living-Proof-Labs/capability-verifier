@@ -1,0 +1,11 @@
+{
+  "format": "livingproof-hallway-media/9.0.0",
+  "configuration": "stock",
+  "trials": [
+    {
+      "index": 1,
+      "status": "PASS",
+      "video": {"path": "video/trial-01-pass.mp4", "bytes": 1, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+    }
+  ]
+}

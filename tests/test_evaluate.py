@@ -191,6 +191,11 @@ def test_retained_human_assessment_is_judged_with_the_rest():
         ([P] * 3, {}, U, 3),  # no usable plan: N is what was recorded
         ([P] * 3, dict(PLAN, required_passes=None), U, 20),
         ([P] * 3, dict(PLAN, trials="20"), U, 3),
+        # Evidence 2.0.0: trials.count, no required_passes. The threshold is N.
+        ([P, P, P], {"command_speed": 0.5, "trials": {"count": 3}}, P, 3),
+        ([P, F], {"trials": {"count": 2}}, F, 2),
+        ([P], {"trials": {"count": 3}}, U, 3),
+        ([P, P, P], {"trials": {"count": True}}, U, 3),
     ],
 )
 def test_aggregator_matches_reporter_rules(statuses, plan, grade, n):

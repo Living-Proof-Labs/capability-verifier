@@ -1,0 +1,74 @@
+{
+  "format": "livingproof-hallway-evidence/2.0.0",
+  "plan": {
+    "command_speed": 0.5,
+    "trials": {
+      "count": 3
+    }
+  },
+  "robot": {
+    "id": "unitree-g1",
+    "profile": {
+      "class": "humanoid",
+      "dimensions": {
+        "width": 0.42
+      }
+    }
+  },
+  "configuration": {
+    "name": "stock",
+    "version": "1.1.0",
+    "profile": {
+      "locomotion": {
+        "fall_base_height": 0.5
+      }
+    }
+  },
+  "world": {
+    "id": "hallway-open",
+    "version": "0.1.0",
+    "clear_width": 1.4,
+    "route_length": 5.5
+  },
+  "preconditions": [
+    {
+      "name": "fits_width",
+      "met": true,
+      "detail": "0.42 + 2 x 0.05 = 0.52 m vs 1.4 m"
+    }
+  ],
+  "trials": {
+    "count": 3,
+    "results": [
+      {
+        "index": 1,
+        "path": "trials/trial-01.json",
+        "sha256": "7664f748c7e0d58a32bc7dfdf924c1250057bdfc809af33124259f17686307d7",
+        "trajectory_sha256": "c9d8e3fd7fb1fcadcdf4b7cfef11ee88742f70f5758eb8f0a88ffe468d223f2d",
+        "outcome": "crossed_exit",
+        "wall_clock_s": 1.0
+      },
+      {
+        "index": 2,
+        "path": "trials/trial-02.json",
+        "sha256": "7664f748c7e0d58a32bc7dfdf924c1250057bdfc809af33124259f17686307d7",
+        "trajectory_sha256": "c9d8e3fd7fb1fcadcdf4b7cfef11ee88742f70f5758eb8f0a88ffe468d223f2d",
+        "outcome": "crossed_exit",
+        "wall_clock_s": 1.0
+      },
+      {
+        "index": 3,
+        "path": "trials/trial-03.json",
+        "sha256": "7664f748c7e0d58a32bc7dfdf924c1250057bdfc809af33124259f17686307d7",
+        "trajectory_sha256": "c9d8e3fd7fb1fcadcdf4b7cfef11ee88742f70f5758eb8f0a88ffe468d223f2d",
+        "outcome": "crossed_exit",
+        "wall_clock_s": 1.0
+      }
+    ],
+    "reproducibility": {
+      "compared": true,
+      "identical": true,
+      "finding": null
+    }
+  }
+}

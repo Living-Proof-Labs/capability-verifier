@@ -244,10 +244,21 @@ def _export(
         }
         if missing:
             provenance["missing_evidence"] = missing
+        if result.get("findings"):
+            # Copied, not graded. A reproducibility finding stays a test-system record.
+            provenance["findings"] = result["findings"]
         if note:
             provenance["prototype"] = note
         if dev_note:
             provenance["producer"] = dev_note
+        original = {"status": t["status"]}
+        if "index" in t:
+            original["index"] = t["index"]
+            # The reporter's seed column and evidence-link match have no index field.
+            # For evidence 2.0.0 this integer is the trial index.
+            original["seed"] = t["index"]
+        else:
+            original["seed"] = t["seed"]
         results.append(
             {
                 "id": t["id"],
@@ -269,7 +280,7 @@ def _export(
                 ],
                 "assessments": assessments,
                 "provenance": provenance,
-                "original_result": {"status": t["status"], "seed": t["seed"]},
+                "original_result": original,
             }
         )
     if bundle_version == "1.1.0":

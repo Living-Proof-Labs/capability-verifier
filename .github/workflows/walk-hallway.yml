@@ -2,7 +2,7 @@
 # Reusable walk-hallway verification chain for one robot repository:
 #   check (lint, profiles, robot tests) | plan (lock -> matrix, repin --check) -> evidence
 #   (livingproof_sim_mujoco.evidence on the robot's adapter) -> verify (this verifier at the lock's commit) ->
-#   media (MCAP for every trial, video for the first PASS and FAIL seeds, named artifacts and
+#   media (MCAP for every trial, video for the first PASS and FAIL trial, named artifacts and
 #   their URLs) -> report (reporter image from the lock renders the bundle 1.1.0 decisions;
 #   it never grades; with the run and artifact links) ->
 #   comment (reporter image `comment`).
@@ -49,8 +49,9 @@ on:
         default: true
       media:
         description: >-
-          Record MCAP for every trial and video for the first PASS and FAIL seeds
-          (livingproof_sim_mujoco.media, runner >= 1.6.0 with the `media` extra; reporter >= 1.11.0)
+          Record MCAP for every trial and video for the first PASS and FAIL trial
+          (livingproof_sim_mujoco.media, runner >= 1.6.0 with the `media` extra; reporter >= 1.11.0).
+          Media 1.0.0 names that trial by seed; media 2.0.0 names it by index.
         type: boolean
         default: true
     outputs:
@@ -298,7 +299,7 @@ jobs:
           retention-days: 30
           if-no-files-found: error
   media:
-    # Recordings for links, never a grade: every seed is re-run and must hash to its evidence.
+    # Recordings for links, never a grade: every trial is re-run and must hash to its evidence.
     needs: [plan, verify]
     if: inputs.media && needs.plan.outputs.media-capable == 'true'
     runs-on: ubuntu-24.04
@@ -348,19 +349,44 @@ jobs:
         with:
           name: ${{ inputs.artifact-prefix }}verified-${{ matrix.configuration }}
           path: verified
-      - name: Recordings (MCAP every trial; video for the first PASS and first FAIL seed)
+      - name: Recordings (MCAP every trial; video for the first PASS and first FAIL trial)
         id: media
         env:
           ADAPTER: ${{ steps.adapter.outputs.ref }}
         run: |
           uv run --no-sync python -m livingproof_sim_mujoco.media "$ADAPTER" "$CONFIGURATION" evidence verified/verification.json media
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          for t in json.load(open("media/media.json"))["trials"]:
-              if "video" in t:
-                  kind = t["status"].lower()
-                  print(f"{kind}-seed={t['seed']}")
-                  print(f"{kind}-path=media/{t['video']['path']}")
+          import json, sys
+          doc = json.load(open("media/media.json"))
+          fmt = doc.get("format") if isinstance(doc, dict) else None
+          if fmt == "livingproof-hallway-media/2.0.0":
+              key = "index"
+          elif fmt == "livingproof-hallway-media/1.0.0":
+              key = "seed"
+          else:
+              sys.exit(
+                  "media.json format %r is not livingproof-hallway-media/1.0.0 "
+                  "or livingproof-hallway-media/2.0.0" % (fmt,)
+              )
+          trials = doc.get("trials")
+          if not isinstance(trials, list):
+              sys.exit("media.json field 'trials' has the wrong type")
+          for t in trials:
+              if not isinstance(t, dict) or "video" not in t:
+                  continue
+              if key not in t or isinstance(t[key], bool) or type(t[key]) is not int:
+                  sys.exit("media.json trial video is missing an integer %s" % key)
+              kind = str(t.get("status", "")).lower()
+              if kind not in ("pass", "fail"):
+                  sys.exit("media.json trial video status %r is not PASS or FAIL" % (t.get("status"),))
+              video = t.get("video")
+              if not isinstance(video, dict) or not isinstance(video.get("path"), str):
+                  sys.exit("media.json trial video path is missing")
+              # Output names stay pass-seed and fail-seed. The pinned reporter's link
+              # schema has a seed field and no index field. For media 2.0.0 the integer
+              # is the trial index.
+              print(f"{kind}-seed={t[key]}")
+              print(f"{kind}-path=media/{video['path']}")
           PY
       - id: mcap
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -405,6 +431,7 @@ jobs:
           for status in ("PASS", "FAIL"):
               url, seed = e[f"{status}_URL"], e[f"{status}_SEED"]
               if url:  # no FAIL (or no PASS) trial, no video
+                  # `seed` is the reporter's field name. Media 2.0.0 stores the trial index there.
                   links.append({"label": "video", "url": url, "kind": "video",
                                 "seed": int(seed), "status": status})
           print(json.dumps({"run": e["RUN_URL"], "links": links}, indent=2))
