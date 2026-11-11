@@ -14,11 +14,11 @@ of the robot's ``verification.lock.json`` and the releases it names (runner, ver
 reporter image digest, specs) for review. ``--check`` re-resolves nothing: it fails when the
 definition changed since locking, when the robot lock at the locked commit no longer has the
 recorded sha256, or when ``--workflow`` does not call ``walk-hallway.yml`` at the locked
-verifier commit with the locked robot repository and commit. Only the calls for this
-definition are checked (job id equal to the definition id, or ``with.repository`` equal to the
-locked robot repository, compared case-insensitively without ``.git``), so one workflow can
-hold several robots. A call that belongs to no definition beside this one (an unknown
-repository or an expression) is refused.
+verifier commit with the locked robot repository and commit. The job for a definition is the
+one whose id equals the definition id; repository, configurations, ``uses`` and ref are
+checked on that job. Pairing is by job id, so one workflow can hold several definitions that
+share a robot repository. If that job is absent, the check fails. Any other procedure-calling
+job whose id is not a definition is refused.
 
 ``run`` checks the lock, checks out the robot at the locked commit and the verifier at the
 commit the robot lock names, then executes the named ``run:`` scripts of that verifier
@@ -207,44 +207,23 @@ def runs_procedure(job, procedure: str, root: Path | None = None) -> bool:
     return False
 
 
-def normal_repository(value) -> str | None:
-    """How GitHub resolves ``OWNER/REPO``: case-insensitive, with an optional ``.git``."""
-    if not isinstance(value, str):
-        return None
-    value = value.strip().lower()
-    return value[:-4] if value.endswith(".git") else value
+def _for_definition(name: str, definition_id: str | None) -> bool:
+    """Whether this procedure job is the definition's call: its id equals the definition id."""
+    return definition_id is not None and name == definition_id
 
 
-def _for_definition(name: str, job: dict, lock: dict, definition_id: str | None) -> bool:
-    """Whether a job that runs the procedure is this definition's call: its job id is the
-    definition id, or it passes the locked robot repository however it is spelled (case,
-    ``.git``). A call that names no repository cannot be another robot's, so it is checked."""
-    if definition_id is not None and name == definition_id:
-        return True
-    w = job.get("with") if isinstance(job.get("with"), dict) else {}
-    if "repository" not in w:
-        return True
-    return normal_repository(w["repository"]) == normal_repository(lock["robot"]["repository"])
+def _for_other(name: str, others: set[str]) -> bool:
+    """Whether this procedure job's id is another known definition.
+
+    That definition's own check covers the call. A shared robot repository does not.
+    """
+    return name in others
 
 
-def _for_other(name: str, job: dict, others: dict[str, str]) -> bool:
-    """Whether the call belongs to another known definition (by its job id or its literal
-    ``OWNER/REPO``); that definition's own check covers it."""
-    if name in others:
-        return True
-    w = job.get("with") if isinstance(job.get("with"), dict) else {}
-    repository = w.get("repository")
-    return (
-        isinstance(repository, str)
-        and bool(REPO.fullmatch(repository.strip().removesuffix(".git")))
-        and normal_repository(repository) in {normal_repository(r) for r in others.values()}
-    )
-
-
-def other_definitions(definition: Path) -> dict[str, str]:
-    """The other definitions beside ``definition``: id to robot repository. A file that is
-    not a valid definition is left out, so a call for it is refused rather than trusted."""
-    found = {}
+def other_definitions(definition: Path) -> set[str]:
+    """Ids of the other definitions beside ``definition``. A file that is not a valid
+    definition is left out, so a procedure call for it is refused rather than trusted."""
+    found = set()
     for path in sorted(definition.parent.glob("*.toml")):
         if path.resolve() == definition.resolve():
             continue
@@ -252,7 +231,7 @@ def other_definitions(definition: Path) -> dict[str, str]:
             d = load_definition(path)
         except DefinitionError:
             continue
-        found[d["id"]] = d["robot"]["repository"]
+        found.add(d["id"])
     return found
 
 
@@ -260,16 +239,16 @@ def workflow_problems(
     lock: dict,
     workflow: Path,
     definition_id: str | None = None,
-    others: dict[str, str] | None = None,
+    others: set[str] | None = None,
 ) -> list[str]:
-    """Compare the parsed ``uses:`` and ``with:`` of every job that runs the procedure for this
-    definition, in ``workflow`` and in every other workflow file beside it.
+    """Compare the parsed ``uses:`` and ``with:`` of the job whose id is this definition's, in
+    ``workflow`` and in every other workflow file beside it.
 
-    A job is this definition's call when its job id is ``definition_id`` or it passes the
-    locked robot repository; calls for other robots are left to their own locks. Comments,
-    other keys and other jobs never satisfy the check: at least one job in ``workflow`` must be
-    this definition's call, and every such job in any workflow file, under any file name,
-    owner, path or ref, must call the procedure exactly as locked.
+    Pairing is by job id. Repository, configurations, ``uses`` and ref are checked on that
+    job. Comments, other keys and other jobs never satisfy the check: ``workflow`` must contain
+    a job with this definition's id, and that job, under any file name, owner, path or ref,
+    must call the procedure exactly as locked. A procedure-calling job whose id is another
+    definition is left to that definition. Any other procedure-calling job is refused.
     """
     v = lock["releases"]["verifier"]
     target = f"{v['repository']}/{PROCEDURES[lock['procedure']]}"
@@ -288,19 +267,18 @@ def workflow_problems(
         calls = {
             name: job
             for name, job in jobs.items()
-            if runs_procedure(job, lock["procedure"], root)
-            and _for_definition(name, job, lock, definition_id)
+            if runs_procedure(job, lock["procedure"], root) and _for_definition(name, definition_id)
         }
+        known = others or set()
         for name, job in jobs.items():
             if (
                 name not in calls
                 and runs_procedure(job, lock["procedure"], root)
-                and not _for_other(name, job, others or {})
+                and not _for_other(name, known)
             ):
-                w = job.get("with") if isinstance(job.get("with"), dict) else {}
                 problems.append(
-                    f"{path}: job {name}: calls {target} for {w.get('repository')!r}, which is "
-                    "no known definition's OWNER/REPO; every call must belong to a definition"
+                    f"{path}: job {name}: calls the procedure, but job id {name!r} is no known "
+                    "definition; every procedure-calling job's id must be a definition"
                 )
         if index == 0 and not calls:
             problems.append(
