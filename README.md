@@ -317,7 +317,12 @@ trials are identical repeats of the nominal pose, so the threshold used for that
 N: every trial has to pass. That is the existing aggregator with one input filled in, not a
 new grading policy. The per-trial evaluators are unchanged. A reproducibility finding is
 copied onto the verification result (`findings`) and into each bundle result's provenance.
-It is a test-system finding. It is not a robot FAIL, and it does not change the grade. A
+It is a test-system finding. It is not a robot FAIL, and it does not change the grade.
+`livingproof-sim-mujoco` v2.0.0 exits 4 after writing that finding. The walk-hallway
+evidence step captures the exit code and branches on it: 4 continues into verify, and
+any other non-zero exit fails the evidence job before verify. Verify prints
+`test-system reproducibility: ...` and then exits 4, so the verify job fails after the
+finding is on the record. A robot `PASS` or `FAIL` with no finding still exits 0. A
 missing or unreadable observation is still `INSUFFICIENT_EVIDENCE` for that trial. If none
 of the planned trials complete, k-of-N with threshold N grades the run
 `INSUFFICIENT_EVIDENCE`. Reclassifying those trials as a test-system `ERROR` status, and

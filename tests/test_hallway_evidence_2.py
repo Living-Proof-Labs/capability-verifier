@@ -4,6 +4,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -312,6 +313,88 @@ def test_the_workflow_rejects_an_unknown_media_format(tmp_path):
     assert done.returncode != 0
     assert "livingproof-hallway-media/9.0.0" in done.stderr
     assert "KeyError" not in done.stderr and "Traceback" not in done.stderr
+
+
+def _tool():
+    spec = importlib.util.spec_from_file_location(
+        "verify_hallway_tool_exit", Path(__file__).parents[1] / "tools" / "verify_hallway.py"
+    )
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    return tool
+
+
+def _cli(manifest, out):
+    env = os.environ.copy()
+    env["LIVINGPROOF_VERIFIER_VERSION"] = "1.15.2"
+    env["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
+    return subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).parents[1] / "tools" / "verify_hallway.py"),
+            "--bundle-version",
+            "1.1.0",
+            str(manifest),
+            str(out),
+        ],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _with_finding(tmp_path):
+    dest = tmp_path / "evidence"
+    shutil.copytree(EVIDENCE, dest)
+    manifest = json.loads((dest / "manifest.json").read_text())
+    manifest["trials"]["reproducibility"] = {
+        "compared": True,
+        "identical": False,
+        "finding": FINDING,
+    }
+    path = dest / "manifest.json"
+    path.write_text(json.dumps(manifest) + "\n")
+    return path
+
+
+def test_verify_exits_0_when_the_trials_agree(tmp_path):
+    done = _cli(_copy(tmp_path), tmp_path / "verified")
+    assert done.returncode == 0, done.stderr
+    assert "test-system" not in done.stdout
+    assert "exiting 4" not in done.stderr
+
+
+def test_verify_reports_the_finding_then_exits_4(tmp_path):
+    """Simulated sim-mujoco 2.0.0 evidence: observations still pass, the manifest carries the finding."""
+    out = tmp_path / "verified"
+    done = _cli(_with_finding(tmp_path), out)
+    assert done.returncode == 4, done.stderr
+    assert "test-system reproducibility:" in done.stdout
+    assert FINDING["detail"] in done.stdout
+    assert "exiting 4" in done.stderr
+    grade = next(line for line in done.stdout.splitlines() if "trials PASS" in line)
+    assert grade.endswith(": PASS")
+    assert "reproducibility" not in grade
+    report = json.loads((out / "verification.json").read_text())
+    assert report["summary"]["grade"] == hallway.PASS
+    assert report["findings"] == [FINDING]
+    assert [t["status"] for t in report["trials"]] == [hallway.PASS, hallway.PASS, hallway.PASS]
+    bundle = json.loads((out / "bundle" / "manifest.json").read_text())
+    assert bundle["results"][0]["provenance"]["findings"][0]["kind"] == "test-system"
+    assert bundle["results"][0]["original_result"]["status"] == hallway.PASS
+
+
+def test_a_finding_that_is_not_test_system_is_refused():
+    with pytest.raises(SystemExit, match="not test-system") as caught:
+        _tool().job_exit({"findings": [{"kind": "FAIL", "name": "robot", "detail": "fell"}]})
+    assert caught.value.code == "finding kind is not test-system: 'robot'"
+
+
+def test_job_exit_is_0_without_a_finding_and_4_with_one():
+    assert _tool().job_exit({"summary": {"grade": hallway.PASS}}) == 0
+    assert _tool().job_exit({"findings": [], "summary": {"grade": hallway.FAIL}}) == 0
+    assert _tool().job_exit({"findings": [FINDING], "summary": {"grade": hallway.PASS}}) == 4
 
 
 def test_evidence_2_plan_is_the_same_threshold_the_bundle_aggregator_uses():

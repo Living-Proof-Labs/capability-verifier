@@ -8,6 +8,10 @@ Writes ``<out>/verification.json`` (per-trial assessments and the k/N summary) a
 livingproof-capability-report. The bundle schema accepts only released catalog tags;
 with an UNRELEASED hallway lock the export refuses unless ``--prototype`` is given,
 which writes the placeholder tag ``v0.0.0`` and says so in every result's provenance.
+
+Exit 0: the assessment is written and there is no test-system finding. Exit 4: the
+assessment is written, the summary has printed the finding, and the process stops so
+the job is not green. Exit 4 is that finding. A robot PASS or FAIL is exit 0.
 """
 
 import argparse
@@ -16,8 +20,9 @@ import os
 import re
 import shutil
 import signal
-import tempfile
 import subprocess
+import sys
+import tempfile
 import threading
 from pathlib import Path
 
@@ -315,6 +320,23 @@ def _export(
     return result
 
 
+def job_exit(result: dict) -> int:
+    """0 when the assessment has no test-system finding, else 4.
+
+    Call this only after the summary has been printed and the files have been
+    written. 4 means the finding is on the record and the job must not stay green.
+    It is not a robot grade. A finding of any other kind is refused.
+    """
+    findings = result.get("findings") or []
+    if not findings:
+        return 0
+    bad = [f for f in findings if f.get("kind") != "test-system"]
+    if bad:
+        names = ", ".join(repr(f.get("name")) for f in bad)
+        raise SystemExit(f"finding kind is not test-system: {names}")
+    return 4
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("manifest", type=Path)
@@ -335,3 +357,10 @@ if __name__ == "__main__":
     except ProducerError as e:
         raise SystemExit(f"cannot label the bundle producer: {e}") from None
     print("\n".join(hallway.summary_lines(r)))
+    code = job_exit(r)
+    if code:
+        print(
+            "test-system finding reported; exiting 4. The robot grade above is unchanged.",
+            file=sys.stderr,
+        )
+        raise SystemExit(code)
