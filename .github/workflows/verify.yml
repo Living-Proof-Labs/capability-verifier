@@ -273,10 +273,22 @@ jobs:
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2
         with:
           version: '3.54.0'
-      - uses: actions/download-artifact@v4
+      # The report job may have run in an earlier attempt than this one (a "re-run failed jobs"
+      # after a flaky documentation test keeps report's attempt-1 artifact), so match any attempt
+      # of this run and use the newest. github.run_attempt is this job's attempt, not report's.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: verifier-${{ needs.verify.outputs.source-version }}-runs-amd64-${{ github.run_id }}-${{ github.run_attempt }}
-          path: verified-runs
+          pattern: verifier-${{ needs.verify.outputs.source-version }}-runs-amd64-${{ github.run_id }}-*
+          path: verified-runs-attempts
+      - name: Use the newest report attempt's verified runs
+        env:
+          PREFIX: verifier-${{ needs.verify.outputs.source-version }}-runs-amd64-${{ github.run_id }}-
+        run: |
+          latest=$(find verified-runs-attempts -mindepth 1 -maxdepth 1 -type d -name "$PREFIX*" \
+            | sed "s|^verified-runs-attempts/$PREFIX||" | sort -n | tail -n1)
+          [ -n "$latest" ] || { echo "no $PREFIX<attempt> artifact in this run" >&2; exit 1; }
+          echo "using ${PREFIX}${latest}"
+          mv "verified-runs-attempts/${PREFIX}${latest}" verified-runs
       - name: Name bundles for the actual new release
         env:
           RELEASE_TAG: ${{ needs.release.outputs.git-tag }}
