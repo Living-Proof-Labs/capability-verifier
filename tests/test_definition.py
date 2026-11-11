@@ -58,7 +58,7 @@ def _lock(tmp_path, path):
     return json.loads(d.lock_path(path).read_text())
 
 
-def _workflow(tmp_path, lock, **change):
+def _workflow(tmp_path, lock, job="g1-stock", **change):
     v = lock["releases"]["verifier"]
     values = {
         "uses": f"{v['repository']}/.github/workflows/walk-hallway.yml@{v['commit']}",
@@ -69,7 +69,7 @@ def _workflow(tmp_path, lock, **change):
     }
     path = tmp_path / "verify.yml"
     path.write_text(
-        "jobs:\n  g1:\n    uses: {uses}\n    with:\n      repository: {repository}\n"
+        f"jobs:\n  {job}:\n    uses: {{uses}}\n    with:\n      repository: {{repository}}\n"
         "      ref: {ref}\n      configurations: {configurations}\n".format(**values)
     )
     return path
@@ -128,7 +128,7 @@ def test_a_tampered_lock_is_refused(tmp_path, robot):
 def test_a_workflow_call_that_drifts_from_the_lock_is_refused(tmp_path, robot, change):
     path = _definition(tmp_path)
     lock = _lock(tmp_path, path)
-    with pytest.raises(SystemExit, match="verify.yml: job g1: must"):
+    with pytest.raises(SystemExit, match="verify.yml: job g1-stock: must"):
         d.check(path, tmp_path / "w2", _workflow(tmp_path, lock, **change))
 
 
@@ -170,7 +170,7 @@ def test_the_pin_in_another_job_or_key_does_not_count(tmp_path, robot):
         "env:\n"
         f"  PIN: 'uses: {_pin(lock)}'\n"
         "jobs:\n"
-        "  g1:\n"
+        "  g1-stock:\n"
         f"    uses: {_pin(lock).split('@')[0]}@main\n"
         "    with:\n"
         f"      repository: {lock['robot']['repository']}\n"
@@ -181,7 +181,7 @@ def test_the_pin_in_another_job_or_key_does_not_count(tmp_path, robot):
         "    steps:\n"
         f"      - uses: {_pin(lock)}\n"
     )
-    with pytest.raises(SystemExit, match="job g1: must call"):
+    with pytest.raises(SystemExit, match="job g1-stock: must call"):
         d.check(path, tmp_path / "w2", wf)
 
 
@@ -205,7 +205,7 @@ def test_a_second_call_to_any_walk_hallway_is_refused(tmp_path, robot, uses):
         f"      repository: {lock['robot']['repository']}\n      ref: main\n"
         "      configurations: '[\"stock\"]'\n"
     )
-    with pytest.raises(SystemExit, match="job extra: must call"):
+    with pytest.raises(SystemExit, match="job extra: calls .*no known definition"):
         d.check(path, tmp_path / "w2", wf)
 
 
@@ -383,7 +383,7 @@ def _workflows_dir(tmp_path, lock):
 
 def _call(uses, lock, ref="main"):
     return (
-        f"jobs:\n  sneaky:\n    uses: {uses}\n    with:\n"
+        f"jobs:\n  g1-stock:\n    uses: {uses}\n    with:\n"
         f"      repository: {lock['robot']['repository']}\n      ref: {ref}\n"
         "      configurations: '[\"stock\"]'\n"
     )
@@ -413,7 +413,7 @@ def test_calls_in_every_workflow_file_are_checked(tmp_path, robot, uses):
     wf_dir, wf = _workflows_dir(tmp_path, lock)
     assert d.check(path, tmp_path / "w2", wf)
     (wf_dir / "nightly.yaml").write_text(_call(uses, lock))
-    with pytest.raises(SystemExit, match=r"nightly.yaml: job sneaky: must call"):
+    with pytest.raises(SystemExit, match=r"nightly.yaml: job g1-stock: must call"):
         d.check(path, tmp_path / "w2", wf)
 
 
@@ -423,10 +423,11 @@ def test_a_renamed_local_copy_is_found_by_its_interface(tmp_path, robot):
     wf_dir, wf = _workflows_dir(tmp_path, lock)
     (wf_dir / "hallway-copy.yml").write_text(WORKFLOW)
     # Called without the procedure's inputs, so only the copy's interface identifies it.
+    # The job id is the definition's, so the recognized call is checked against the lock.
     (wf_dir / "other.yml").write_text(
-        "jobs:\n  copy:\n    uses: ./.github/workflows/hallway-copy.yml\n"
+        "jobs:\n  g1-stock:\n    uses: ./.github/workflows/hallway-copy.yml\n"
     )
-    with pytest.raises(SystemExit, match=r"other.yml: job copy: must call"):
+    with pytest.raises(SystemExit, match=r"other.yml: job g1-stock: must call"):
         d.check(path, tmp_path / "w2", wf)
 
 
@@ -469,11 +470,11 @@ def test_an_edited_robot_repository_is_refused_before_any_fetch(
 
 
 def test_a_call_for_another_repository_is_not_this_definitions_call(tmp_path, robot):
-    # Job g1 is not named g1-stock, so a different repository makes it another robot's call.
+    # Job g1 is not the definition id, so the call is not this definition's.
     path = _definition(tmp_path)
     lock = _lock(tmp_path, path)
     with pytest.raises(SystemExit, match="no job calls .* for Org/robot"):
-        d.check(path, tmp_path / "w2", _workflow(tmp_path, lock, repository="Org/other"))
+        d.check(path, tmp_path / "w2", _workflow(tmp_path, lock, job="g1", repository="Org/other"))
 
 
 def _multi(tmp_path, lock, **mine):
@@ -564,4 +565,64 @@ def test_another_known_robots_call_still_passes(tmp_path, robot):
     wf = _multi(tmp_path, lock)
     (tmp_path / "proj" / "t1.toml").unlink()
     with pytest.raises(SystemExit, match="booster-t1-stock: calls .*no known definition"):
+        d.check(path, tmp_path / "w2", wf)
+
+
+def test_two_definitions_on_one_repository_are_paired_by_job_id(tmp_path, robot):
+    """Each definition takes the job with its id, including when they share a repository."""
+    stock = _definition(tmp_path)
+    stock_lock = _lock(tmp_path, stock)
+    playground = tmp_path / "proj" / "g1-playground.toml"
+    playground.write_text(
+        f'format = "{d.DEFINITION_FORMAT}"\nid = "g1-playground"\nprocedure = "walk-hallway"\n'
+        '[robot]\nrepository = "Org/robot"\nref = "main"\nconfigurations = ["playground"]\n'
+    )
+    play_lock = _lock(tmp_path, playground)
+    v = stock_lock["releases"]["verifier"]
+    call = f"{v['repository']}/.github/workflows/walk-hallway.yml@{v['commit']}"
+    wf = tmp_path / "verify.yml"
+    wf.write_text(
+        "jobs:\n"
+        f"  g1-stock:\n    uses: {call}\n    with:\n"
+        f"      repository: {stock_lock['robot']['repository']}\n"
+        f"      ref: {stock_lock['robot']['commit']}\n"
+        "      configurations: '[\"stock\"]'\n"
+        f"  g1-playground:\n    uses: {call}\n    with:\n"
+        f"      repository: {play_lock['robot']['repository']}\n"
+        f"      ref: {play_lock['robot']['commit']}\n"
+        "      configurations: '[\"playground\"]'\n"
+    )
+    assert d.check(stock, tmp_path / "w-stock", wf) == stock_lock
+    assert d.check(playground, tmp_path / "w-play", wf) == play_lock
+    # The other job's configurations stay with that definition.
+    wf.write_text(wf.read_text().replace('["playground"]', '["stock"]', 1))
+    assert d.check(stock, tmp_path / "w-stock2", wf) == stock_lock
+    with pytest.raises(SystemExit, match="job g1-playground: must pass the locked configurations"):
+        d.check(playground, tmp_path / "w-play2", wf)
+
+
+def test_a_missing_job_id_is_refused(tmp_path, robot):
+    """A call for this robot under another job id does not stand in for the definition."""
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    wf = _workflow(tmp_path, lock, job="g1")
+    with pytest.raises(SystemExit, match=r"no job calls .* \(job g1-stock\)"):
+        d.check(path, tmp_path / "w2", wf)
+
+
+def test_an_unknown_job_id_is_refused(tmp_path, robot):
+    """A procedure call whose job id is not a definition is refused, pin and repository aside."""
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    wf = _workflow(tmp_path, lock)
+    pinned = _pin(lock)
+    wf.write_text(
+        wf.read_text() + f"  extra:\n    uses: {pinned}\n    with:\n"
+        f"      repository: {lock['robot']['repository']}\n"
+        f"      ref: {lock['robot']['commit']}\n"
+        "      configurations: '[\"stock\"]'\n"
+    )
+    with pytest.raises(
+        SystemExit, match=r"job extra: calls the procedure, but job id 'extra' is no known"
+    ):
         d.check(path, tmp_path / "w2", wf)
