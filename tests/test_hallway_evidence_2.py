@@ -1,0 +1,323 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Evidence 2.0.0 and media 2.0.0, plus a clean refusal of any format this verifier does not know."""
+
+import hashlib
+import importlib.util
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from capability_verifier import evaluate, hallway
+
+FIXTURES = Path(__file__).parent / "fixtures" / "hallway"
+EVIDENCE = FIXTURES / "evidence-2.0.0"
+WORKFLOW = Path(__file__).parents[1] / ".github" / "workflows" / "walk-hallway.yml"
+FINDING = {
+    "kind": "test-system",
+    "name": "reproducibility",
+    "detail": (
+        "Identical trials disagreed on trajectory hash or outcome. "
+        "This is a test-system reproducibility finding, not a robot FAIL."
+    ),
+    "trajectory_sha256": ["a" * 64, "b" * 64],
+    "outcomes": ["crossed_exit", "crossed_exit"],
+}
+
+
+def _load():
+    return json.loads((EVIDENCE / "manifest.json").read_text())
+
+
+def _copy(tmp_path, manifest=None):
+    dest = tmp_path / "evidence"
+    shutil.copytree(EVIDENCE, dest)
+    if manifest is not None:
+        (dest / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    return dest / "manifest.json"
+
+
+def _rewrite(path, change):
+    obs = json.loads(path.read_text())
+    change(obs)
+    body = (json.dumps(obs, separators=(",", ":")) + "\n").encode()
+    path.write_bytes(body)
+    return hashlib.sha256(body).hexdigest()
+
+
+def test_fixture_matches_the_producer_trial_record():
+    """The committed fixture uses the producer's file bytes and trial-result keys."""
+    manifest = _load()
+    assert manifest["format"] == "livingproof-hallway-evidence/2.0.0"
+    assert manifest["plan"] == {"command_speed": 0.5, "trials": {"count": 3}}
+    assert "seeds" not in manifest["plan"] and "required_passes" not in manifest["plan"]
+    report = manifest["trials"]
+    assert report["count"] == 3 and report["reproducibility"]["identical"] is True
+    assert report["reproducibility"]["finding"] is None
+    for trial in report["results"]:
+        raw = (EVIDENCE / trial["path"]).read_bytes()
+        assert hashlib.sha256(raw).hexdigest() == trial["sha256"]
+        assert trial["path"] == f"trials/trial-{trial['index']:02d}.json"
+        assert set(trial) == {
+            "index",
+            "path",
+            "sha256",
+            "trajectory_sha256",
+            "outcome",
+            "wall_clock_s",
+        }
+        assert trial["outcome"] == "crossed_exit"
+
+
+def test_evidence_2_0_0_grades_every_identical_trial(tmp_path):
+    result = hallway.verify(_copy(tmp_path))
+    assert [t["index"] for t in result["trials"]] == [1, 2, 3]
+    assert [t["id"] for t in result["trials"]] == [
+        "stock-seed-01",
+        "stock-seed-02",
+        "stock-seed-03",
+    ]
+    assert "seed" not in result["trials"][0]
+    assert all(t["status"] == hallway.PASS for t in result["trials"])
+    summary = result["summary"]
+    assert (summary["k"], summary["n"], summary["required_passes"], summary["grade"]) == (
+        3,
+        3,
+        3,
+        hallway.PASS,
+    )
+    assert result["findings"] == []
+    assert "findings" not in summary
+
+
+def test_a_reproducibility_finding_is_not_a_robot_fail(tmp_path):
+    dest = tmp_path / "evidence"
+    shutil.copytree(EVIDENCE, dest)
+    digest = _rewrite(
+        dest / "trials" / "trial-02.json",
+        lambda obs: obs["max_abs_lateral"].update(value=0.22),
+    )
+    manifest = json.loads((dest / "manifest.json").read_text())
+    manifest["trials"]["results"][1]["sha256"] = digest
+    manifest["trials"]["reproducibility"] = {
+        "compared": True,
+        "identical": False,
+        "finding": FINDING,
+    }
+    (dest / "manifest.json").write_text(json.dumps(manifest) + "\n")
+    result = hallway.verify(dest / "manifest.json")
+    assert result["summary"]["grade"] == hallway.PASS
+    assert result["findings"] == [FINDING]
+    assert result["summary"]["findings"] == [FINDING]
+    assert any(
+        line.startswith("test-system reproducibility:") for line in hallway.summary_lines(result)
+    )
+
+
+def test_a_robot_fail_stays_a_robot_fail_beside_the_finding(tmp_path):
+    dest = tmp_path / "evidence"
+    shutil.copytree(EVIDENCE, dest)
+    digest = _rewrite(
+        dest / "trials" / "trial-02.json",
+        lambda obs: obs.update(max_abs_lateral={"value": 0.62, "time": 10.1}),
+    )
+    manifest = json.loads((dest / "manifest.json").read_text())
+    manifest["trials"]["results"][1]["sha256"] = digest
+    manifest["trials"]["reproducibility"] = {
+        "compared": True,
+        "identical": False,
+        "finding": FINDING,
+    }
+    (dest / "manifest.json").write_text(json.dumps(manifest) + "\n")
+    result = hallway.verify(dest / "manifest.json")
+    assert result["summary"]["grade"] == hallway.FAIL
+    assert result["findings"][0]["kind"] == "test-system"
+    failed = result["trials"][1]
+    assert failed["index"] == 2 and failed["status"] == hallway.FAIL
+    assert failed["failures"][0]["seed"] == 2
+    assert "(trial 2)" in failed["assessments"][1]["rationale"]
+    assert "reproducibility" not in failed["assessments"][1]["rationale"]
+
+
+def test_no_completed_trial_is_insufficient_evidence(tmp_path):
+    path = _copy(tmp_path)
+    for trial in path.parent.glob("trials/*.json"):
+        trial.unlink()
+    result = hallway.verify(path)
+    assert all(t["status"] == hallway.INSUFFICIENT for t in result["trials"])
+    assert result["summary"]["grade"] == hallway.INSUFFICIENT
+    assert result["summary"]["grade"] != hallway.FAIL
+
+
+def test_evidence_2_0_0_exports_the_finding_without_changing_the_grade(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.15.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    dest = tmp_path / "evidence"
+    shutil.copytree(EVIDENCE, dest)
+    digest = _rewrite(
+        dest / "trials" / "trial-03.json",
+        lambda obs: obs["max_abs_lateral"].update(value=0.2),
+    )
+    manifest = json.loads((dest / "manifest.json").read_text())
+    manifest["trials"]["results"][2]["sha256"] = digest
+    manifest["trials"]["reproducibility"] = {
+        "compared": True,
+        "identical": False,
+        "finding": FINDING,
+    }
+    (dest / "manifest.json").write_text(json.dumps(manifest) + "\n")
+    spec = importlib.util.spec_from_file_location(
+        "verify_hallway_tool_v2", Path(__file__).parents[1] / "tools" / "verify_hallway.py"
+    )
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    tool.export(
+        dest / "manifest.json", tmp_path / "verified", prototype=True, bundle_version="1.1.0"
+    )
+    report = json.loads((tmp_path / "verified" / "verification.json").read_text())
+    bundle = json.loads((tmp_path / "verified" / "bundle" / "manifest.json").read_text())
+    assert report["summary"]["grade"] == hallway.PASS
+    assert report["findings"] == [FINDING]
+    assert bundle["results"][0]["provenance"]["findings"] == [FINDING]
+    assert bundle["results"][0]["original_result"] == {
+        "status": hallway.PASS,
+        "index": 1,
+        "seed": 1,
+    }
+    assert bundle["assessment"]["runs"][0]["grade"] == hallway.PASS
+    assert bundle["assessment"]["runs"][0]["required_passes"] == 3
+
+
+@pytest.mark.parametrize(
+    "mutate, message",
+    [
+        (lambda m: m.update(format="livingproof-hallway-evidence/9.0.0"), "9.0.0"),
+        (lambda m: m["plan"].update(seeds=[1, 2, 3]), "plan.seeds"),
+        (lambda m: m["plan"].update(required_passes=2), "plan.required_passes"),
+        (lambda m: m["plan"].update(trials=3), "plan.trials"),
+        (lambda m: m.update(format=3), "wrong type"),
+    ],
+)
+def test_unknown_or_retired_evidence_is_a_manifest_error(mutate, message):
+    manifest = _load()
+    mutate(manifest)
+    with pytest.raises(hallway.ManifestError, match=message) as caught:
+        hallway.validate_manifest(manifest)
+    assert not isinstance(caught.value, KeyError)
+
+
+def test_a_v2_body_with_an_unknown_format_does_not_read_seeds():
+    """The old validator read plan.seeds before it looked at the format string."""
+    manifest = _load()
+    manifest["format"] = "livingproof-hallway-evidence/1.5.0"
+    with pytest.raises(hallway.ManifestError, match="1.5.0") as caught:
+        hallway.validate_manifest(manifest)
+    assert "plan.seeds" not in str(caught.value)
+
+
+def test_indexes_must_be_one_through_count(tmp_path):
+    manifest = _load()
+    manifest["trials"]["results"][2]["index"] = 4
+    path = _copy(tmp_path, manifest)
+    with pytest.raises(hallway.ManifestError, match="indexes"):
+        hallway.verify(path)
+
+
+def test_an_unmet_precondition_on_2_0_0_is_unsupported(tmp_path):
+    manifest = _load()
+    manifest["robot"]["profile"]["dimensions"]["width"] = 1.41
+    manifest["world"]["clear_width"] = 1.5
+    manifest["trials"]["results"] = []
+    manifest["trials"]["reproducibility"] = {"compared": False, "identical": None, "finding": None}
+    path = _copy(tmp_path, manifest)
+    result = hallway.verify(path)
+    assert result["summary"]["grade"] == hallway.UNSUPPORTED
+    assert result["trials"] == []
+    assert result["findings"] == []
+
+
+def test_one_trial_is_not_a_comparison(tmp_path):
+    manifest = _load()
+    manifest["plan"]["trials"]["count"] = 1
+    manifest["trials"]["count"] = 1
+    manifest["trials"]["results"] = manifest["trials"]["results"][:1]
+    manifest["trials"]["reproducibility"] = {"compared": False, "identical": None, "finding": None}
+    result = hallway.verify(_copy(tmp_path, manifest))
+    assert result["summary"]["grade"] == hallway.PASS
+    assert (
+        result["summary"]["k"],
+        result["summary"]["n"],
+        result["summary"]["required_passes"],
+    ) == (
+        1,
+        1,
+        1,
+    )
+    assert result["findings"] == []
+
+
+def test_media_formats_name_their_trial_key():
+    assert (
+        hallway.media_trial_key(json.loads((FIXTURES / "media-2.0.0.json").read_text())) == "index"
+    )
+    assert (
+        hallway.media_trial_key(json.loads((FIXTURES / "media-1.0.0.json").read_text())) == "seed"
+    )
+    with pytest.raises(hallway.ManifestError, match="9.0.0") as caught:
+        hallway.media_trial_key(json.loads((FIXTURES / "media-unknown.json").read_text()))
+    assert not isinstance(caught.value, KeyError)
+
+
+def _media_script():
+    text = WORKFLOW.read_text()
+    block = text[text.index("- name: Recordings") :]
+    body = block[block.index("<<'PY'") :]
+    body = body[body.index("\n") + 1 : body.index("\n          PY\n")]
+    return "\n".join(line[10:] for line in body.splitlines()) + "\n"
+
+
+def _run_media(tmp_path, name):
+    media = tmp_path / "media"
+    media.mkdir(parents=True)
+    shutil.copy(FIXTURES / name, media / "media.json")
+    done = subprocess.run(
+        [sys.executable, "-c", _media_script()],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    # The workflow redirects this script's stdout to GITHUB_OUTPUT. Here stdout is the script.
+    return done, done.stdout
+
+
+def test_the_workflow_reads_index_for_media_2_and_seed_for_media_1(tmp_path):
+    script = _media_script()
+    assert "livingproof-hallway-media/2.0.0" in script
+    assert "livingproof-hallway-media/1.0.0" in script
+    assert "t['seed']" not in script and 't["seed"]' not in script
+    ok, text = _run_media(tmp_path / "v2", "media-2.0.0.json")
+    assert ok.returncode == 0, ok.stderr
+    assert "pass-seed=1" in text and "fail-seed=3" in text
+    assert "video/trial-01-pass.mp4" in text and "video/trial-03-fail.mp4" in text
+    ok, text = _run_media(tmp_path / "v1", "media-1.0.0.json")
+    assert ok.returncode == 0, ok.stderr
+    assert "pass-seed=7" in text and "fail-seed=8" in text
+
+
+def test_the_workflow_rejects_an_unknown_media_format(tmp_path):
+    done, _ = _run_media(tmp_path, "media-unknown.json")
+    assert done.returncode != 0
+    assert "livingproof-hallway-media/9.0.0" in done.stderr
+    assert "KeyError" not in done.stderr and "Traceback" not in done.stderr
+
+
+def test_evidence_2_plan_is_the_same_threshold_the_bundle_aggregator_uses():
+    grade, n, rationale = evaluate.Aggregator().grade(
+        [hallway.PASS, hallway.PASS, hallway.FAIL],
+        {"trials": {"count": 3}},
+    )
+    assert (grade, n) == (hallway.FAIL, 3)
+    assert "needs 3" in rationale

@@ -1,0 +1,26 @@
+{
+  "format": "livingproof-hallway-media/2.0.0",
+  "configuration": "stock",
+  "run_id": "walk-hallway-unitree-g1-stock-example",
+  "trials": [
+    {
+      "index": 1,
+      "observation_sha256": "7664f748c7e0d58a32bc7dfdf924c1250057bdfc809af33124259f17686307d7",
+      "mcap": {"path": "mcap/trial-01.mcap", "bytes": 1, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "status": "PASS",
+      "video": {"path": "video/trial-01-pass.mp4", "bytes": 1, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+    },
+    {
+      "index": 2,
+      "observation_sha256": "7664f748c7e0d58a32bc7dfdf924c1250057bdfc809af33124259f17686307d7",
+      "mcap": {"path": "mcap/trial-02.mcap", "bytes": 1, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+    },
+    {
+      "index": 3,
+      "observation_sha256": "7664f748c7e0d58a32bc7dfdf924c1250057bdfc809af33124259f17686307d7",
+      "mcap": {"path": "mcap/trial-03.mcap", "bytes": 1, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "status": "FAIL",
+      "video": {"path": "video/trial-03-fail.mp4", "bytes": 1, "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
+    }
+  ]
+}

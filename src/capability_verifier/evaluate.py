@@ -284,7 +284,11 @@ def run_key(result: dict) -> tuple:
 
 
 class Aggregator:
-    """k-of-n-wilson95: k PASS of planned N, needing ``required_passes``; Wilson 95%."""
+    """k-of-n-wilson95: k PASS of planned N, needing ``required_passes``; Wilson 95%.
+
+    Evidence 2.0.0 has no ``required_passes``. ``hallway.planned_counts`` supplies N
+    as the threshold. That is the same rule, not a new aggregation.
+    """
 
     id, version = hallway.AGGREGATION["id"], hallway.AGGREGATION["version"]
 
@@ -294,10 +298,10 @@ class Aggregator:
 
     def grade(self, statuses: list, plan: dict) -> tuple[str, int, str]:
         """(grade, planned N, rationale) for one run's per-result statuses."""
-        n, need = plan.get("trials"), plan.get("required_passes")
+        n, need = hallway.planned_counts(plan)
         k = statuses.count(PASS)
-        usable = type(n) is int and type(need) is int
-        planned = n if type(n) is int and n > 0 else len(statuses)
+        usable = type(n) is int and type(need) is int and not isinstance(n, bool)
+        planned = n if type(n) is int and not isinstance(n, bool) and n > 0 else len(statuses)
         if INCOMPATIBLE in statuses:
             return INCOMPATIBLE, planned, f"{statuses.count(INCOMPATIBLE)} result(s) INCOMPATIBLE"
         if not usable:
@@ -324,6 +328,7 @@ class Aggregator:
             grade, planned, rationale = self.grade(statuses, plan)
             k = statuses.count(PASS)
             lower, upper = wilson(k, planned)
+            _n, need = hallway.planned_counts(plan)
             runs.append(
                 {
                     "capability": CAPABILITY,
@@ -333,7 +338,7 @@ class Aggregator:
                     "run_id": key[-1],
                     "k": k,
                     "n": planned,
-                    "required_passes": plan.get("required_passes"),
+                    "required_passes": need,
                     "interval": {"method": "wilson", "level": 0.95, "lower": lower, "upper": upper},
                     "grade": grade,
                     "rationale": rationale,

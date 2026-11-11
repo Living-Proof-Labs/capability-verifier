@@ -3,10 +3,11 @@
 
 Inputs are evidence only: an evidence manifest written by the simulator (it echoes the
 robot repository's verification lock, including the trial plan) and one observation
-file per trial. Nothing here hard-codes a trial count, seed list or speed; they come
-from the manifest's ``plan``. Thresholds are resolved from the robot profile, the
-configuration profile and the world quantities, as the specification's acceptance
-table defines.
+file per trial. Nothing here hard-codes a trial count or speed. Evidence 1.0.0 carries
+those in ``plan.trials``, ``plan.seeds`` and ``plan.required_passes``. Evidence 2.0.0
+carries ``plan.trials.count`` identical nominal trials and no seeds or required passes.
+Thresholds are resolved from the robot profile, the configuration profile and the
+world quantities, as the specification's acceptance table defines.
 
 Every assessment records its assessor. These evaluators are ``deterministic``.
 Assessments by a ``human`` or an ``agent`` arrive through the same recorded-input
@@ -56,7 +57,15 @@ OBSERVATION_ENDS = {
     "livingproof-hallway-observation/1.0.0": {"crossed_exit", "time_limit", "non_finite_state"},
     OBSERVATION_FORMAT: {"crossed_exit", "time_limit", "non_finite_state", "left_hallway"},
 }
+# 1.0.0 stays accepted. Robots pinned to livingproof-sim-mujoco v1.8.3 still record it,
+# and they keep verifying if they update this verifier before they repin the runner.
 MANIFEST_FORMAT = "livingproof-hallway-evidence/1.0.0"
+EVIDENCE_V1 = MANIFEST_FORMAT
+EVIDENCE_V2 = "livingproof-hallway-evidence/2.0.0"
+MANIFEST_FORMATS = frozenset({EVIDENCE_V1, EVIDENCE_V2})
+MEDIA_V1 = "livingproof-hallway-media/1.0.0"
+MEDIA_V2 = "livingproof-hallway-media/2.0.0"
+MEDIA_FORMATS = frozenset({MEDIA_V1, MEDIA_V2})
 
 
 class ManifestError(ValueError):
@@ -99,11 +108,33 @@ def _is(value, kind) -> bool:
     return isinstance(value, kind)
 
 
-def validate_manifest(manifest) -> None:
-    """Raise ManifestError naming the first missing or mistyped field; nothing is assessed."""
-    if not isinstance(manifest, dict):
-        raise ManifestError("manifest: expected a JSON object")
-    for path, kind in MANIFEST_FIELDS:
+# Evidence 2.0.0: plan.trials and the trials record are objects. Seeds and required_passes
+# are not part of this format. The results list may be empty when a precondition is unmet
+# (no trial is graded); the index check then happens only for a run that is graded.
+V2_FIELDS = (
+    ("plan", dict),
+    ("plan.trials", dict),
+    ("plan.command_speed", _NUM),
+    ("robot", dict),
+    ("robot.id", str),
+    ("robot.profile.dimensions.width", "{value}"),
+    ("configuration", dict),
+    ("configuration.name", str),
+    ("configuration.version", str),
+    ("configuration.profile.locomotion.fall_base_height", "{value}"),
+    ("world", dict),
+    ("world.id", str),
+    ("world.version", str),
+    ("world.clear_width", _NUM),
+    ("world.route_length", _NUM),
+    ("trials", dict),
+)
+V2_RESULT_FIELDS = (("index", _INT), ("path", str), ("sha256", str))
+_ABSENT = object()
+
+
+def _check_fields(manifest, fields) -> None:
+    for path, kind in fields:
         node = manifest
         for i, key in enumerate(path.split(".")):
             if not isinstance(node, dict) or key not in node:
@@ -112,8 +143,66 @@ def validate_manifest(manifest) -> None:
             node = node[key]
         if not _is(node, kind):
             raise ManifestError(f"manifest field '{path}' has the wrong type")
-    if manifest["format"] != MANIFEST_FORMAT:
-        raise ManifestError(f"manifest field 'format' is not {MANIFEST_FORMAT}")
+
+
+def _positive_count(value, where: str) -> None:
+    if not _is(value, _INT) or value < 1:
+        raise ManifestError(f"manifest field '{where}' must be an integer >= 1")
+
+
+def _validate_finding(finding) -> None:
+    kind = finding.get("kind", _ABSENT)
+    if kind is _ABSENT:
+        raise ManifestError("manifest field 'trials.reproducibility.finding.kind' is missing")
+    if kind != "test-system":
+        raise ManifestError(
+            "manifest field 'trials.reproducibility.finding.kind' must be 'test-system'"
+        )
+    name = finding.get("name")
+    if not isinstance(name, str) or not name:
+        raise ManifestError(
+            "manifest field 'trials.reproducibility.finding.name' is missing or not a string"
+        )
+    if not isinstance(finding.get("detail"), str):
+        raise ManifestError(
+            "manifest field 'trials.reproducibility.finding.detail' has the wrong type"
+        )
+
+
+def _validate_reproducibility(report) -> None:
+    for key in ("compared", "identical", "finding"):
+        if key not in report:
+            raise ManifestError(f"manifest field 'trials.reproducibility.{key}' is missing")
+    if not isinstance(report["compared"], bool):
+        raise ManifestError("manifest field 'trials.reproducibility.compared' has the wrong type")
+    identical, finding = report["identical"], report["finding"]
+    if identical is not None and not isinstance(identical, bool):
+        raise ManifestError("manifest field 'trials.reproducibility.identical' has the wrong type")
+    if finding is not None and not isinstance(finding, dict):
+        raise ManifestError("manifest field 'trials.reproducibility.finding' has the wrong type")
+    if report["compared"] is False:
+        if identical is not None or finding is not None:
+            raise ManifestError(
+                "manifest field 'trials.reproducibility' is not a comparison, "
+                "so identical and finding must be null"
+            )
+        return
+    if identical is None:
+        raise ManifestError(
+            "manifest field 'trials.reproducibility.identical' is missing for a comparison"
+        )
+    if identical is True and finding is not None:
+        raise ManifestError(
+            "manifest field 'trials.reproducibility.finding' must be null when trials agree"
+        )
+    if identical is False:
+        if not isinstance(finding, dict):
+            raise ManifestError("manifest field 'trials.reproducibility.finding' is missing")
+        _validate_finding(finding)
+
+
+def _validate_v1(manifest) -> None:
+    _check_fields(manifest, MANIFEST_FIELDS)
     if not all(_is(s, _INT) for s in manifest["plan"]["seeds"]):
         raise ManifestError("manifest field 'plan.seeds' must list integers")
     for i, t in enumerate(manifest["trials"]):
@@ -124,6 +213,82 @@ def validate_manifest(manifest) -> None:
                 raise ManifestError(f"manifest field 'trials[{i}].{key}' is missing")
             if not _is(t[key], kind):
                 raise ManifestError(f"manifest field 'trials[{i}].{key}' has the wrong type")
+
+
+def _validate_v2(manifest) -> None:
+    _check_fields(manifest, V2_FIELDS)
+    for retired in ("seeds", "required_passes"):
+        if retired in manifest["plan"]:
+            raise ManifestError(f"manifest field 'plan.{retired}' is not part of {EVIDENCE_V2}")
+    plan_trials = manifest["plan"]["trials"]
+    if "count" not in plan_trials:
+        raise ManifestError("manifest field 'plan.trials.count' is missing")
+    _positive_count(plan_trials["count"], "plan.trials.count")
+    trials = manifest["trials"]
+    for key, kind in (("count", _INT), ("results", list), ("reproducibility", dict)):
+        if key not in trials:
+            raise ManifestError(f"manifest field 'trials.{key}' is missing")
+        if not _is(trials[key], kind):
+            raise ManifestError(f"manifest field 'trials.{key}' has the wrong type")
+    _positive_count(trials["count"], "trials.count")
+    if trials["count"] != manifest["plan"]["trials"]["count"]:
+        raise ManifestError(
+            f"manifest field 'trials.count' {trials['count']} does not match "
+            f"plan.trials.count {manifest['plan']['trials']['count']}"
+        )
+    for i, t in enumerate(trials["results"]):
+        if not isinstance(t, dict):
+            raise ManifestError(f"manifest field 'trials.results[{i}]' has the wrong type")
+        for key, kind in V2_RESULT_FIELDS:
+            if key not in t:
+                raise ManifestError(f"manifest field 'trials.results[{i}].{key}' is missing")
+            if not _is(t[key], kind):
+                raise ManifestError(
+                    f"manifest field 'trials.results[{i}].{key}' has the wrong type"
+                )
+        if t["index"] < 1:
+            raise ManifestError(
+                f"manifest field 'trials.results[{i}].index' must be an integer >= 1"
+            )
+    _validate_reproducibility(trials["reproducibility"])
+
+
+def validate_manifest(manifest) -> None:
+    """Raise ManifestError naming the first missing or mistyped field; nothing is assessed.
+
+    Unknown evidence formats are refused here, before any format-specific field is read.
+    """
+    if not isinstance(manifest, dict):
+        raise ManifestError("manifest: expected a JSON object")
+    fmt = manifest.get("format", _ABSENT)
+    if fmt is _ABSENT:
+        raise ManifestError("manifest field 'format' is missing")
+    if not isinstance(fmt, str):
+        raise ManifestError("manifest field 'format' has the wrong type")
+    if fmt not in MANIFEST_FORMATS:
+        accepted = ", ".join(sorted(MANIFEST_FORMATS))
+        raise ManifestError(f"manifest field 'format' {fmt!r} is not one of {accepted}")
+    if fmt == EVIDENCE_V2:
+        _validate_v2(manifest)
+    else:
+        _validate_v1(manifest)
+
+
+def media_trial_key(document) -> str:
+    """Trial identity key for a media manifest: ``index`` at 2.0.0, ``seed`` at legacy 1.0.0."""
+    if not isinstance(document, dict):
+        raise ManifestError("media manifest: expected a JSON object")
+    fmt = document.get("format", _ABSENT)
+    if fmt is _ABSENT:
+        raise ManifestError("media field 'format' is missing")
+    if not isinstance(fmt, str):
+        raise ManifestError("media field 'format' has the wrong type")
+    if fmt == MEDIA_V2:
+        return "index"
+    if fmt == MEDIA_V1:
+        return "seed"
+    accepted = ", ".join(sorted(MEDIA_FORMATS))
+    raise ManifestError(f"media field 'format' {fmt!r} is not one of {accepted}")
 
 
 def millimetres(metres: float) -> int:
@@ -325,13 +490,23 @@ def failure(check, observed, limit, unit, t, seed, **extra):
         "limit": limit,
         "unit": unit,
         "t": None if t is None else round(t, 2),
-        "seed": seed,
+        "seed": _seed_number(seed),
         **extra,
     }
 
 
 def _seed(seed):
+    """Parenthetical for a rationale. An int is a 1.0.0 seed; ``("trial", n)`` is a 2.0.0 index."""
+    if isinstance(seed, tuple) and len(seed) == 2 and seed[0] == "trial":
+        return f" (trial {seed[1]})"
     return f" (seed {seed})" if seed is not None else ""
+
+
+def _seed_number(seed):
+    """The integer stored in a structured failure's ``seed`` field (a seed, or a trial index)."""
+    if isinstance(seed, tuple) and len(seed) == 2 and seed[0] == "trial":
+        return seed[1]
+    return seed
 
 
 def _insufficient(name, what, eid, seed):
@@ -567,12 +742,32 @@ def wilson(k, n, z=1.959963984540054):
     return [round(max(0.0, c - h), 4), round(min(1.0, c + h), 4)]
 
 
+def planned_counts(plan: dict) -> tuple:
+    """``(n, required_passes)`` for the existing k-of-N grade.
+
+    Evidence 1.0.0 stores an integer ``plan.trials`` and ``plan.required_passes``.
+    Evidence 2.0.0 stores ``plan.trials.count`` and no ``required_passes``. Those trials
+    are identical nominal repeats, so this keeps the same aggregator and sets the
+    threshold to N: every trial has to pass. A count that is not an integer >= 1 is
+    not a usable plan (``(None, None)``).
+    """
+    trials = plan.get("trials") if isinstance(plan, dict) else None
+    if isinstance(trials, dict):
+        n = trials.get("count")
+        if isinstance(n, bool) or type(n) is not int or n < 1:
+            return None, None
+        return n, n
+    if isinstance(plan, dict):
+        return plan.get("trials"), plan.get("required_passes")
+    return None, None
+
+
 def aggregate(trials, plan):
     """k of the planned N. Wilson uses the planned N; a missing trial counts as not passed
     and makes the grade INSUFFICIENT_EVIDENCE (same rule as the capability report)."""
     k = sum(t["status"] == PASS for t in trials)
     unsure = sum(t["status"] == INSUFFICIENT for t in trials)
-    n, need = plan["trials"], plan["required_passes"]
+    n, need = planned_counts(plan)
     if len(trials) != n:
         grade = INSUFFICIENT
     elif k >= need:
@@ -595,6 +790,27 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def reproducibility_findings(manifest: dict) -> list | None:
+    """Test-system findings copied from an evidence 2.0.0 manifest, or None for 1.0.0.
+
+    A reproducibility disagreement is one of these findings. It is not a trial status
+    and it is not a robot FAIL. Evidence 1.0.0 has no such record.
+    """
+    if manifest.get("format") != EVIDENCE_V2:
+        return None
+    finding = manifest["trials"]["reproducibility"]["finding"]
+    return [dict(finding)] if finding else []
+
+
+def _with_findings(result: dict, findings: list | None) -> dict:
+    if findings is None:
+        return result
+    result["findings"] = findings
+    if findings:
+        result["summary"] = {**result["summary"], "findings": findings}
+    return result
+
+
 def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
     """Assess every trial named by the evidence manifest; return per-trial and k/N results."""
     manifest_path = Path(manifest_path)
@@ -610,22 +826,36 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
         reason = f"precondition {unmet['name']} unmet" + (
             f": {unmet['detail']}" if unmet["detail"] else ""
         )
-        return {
-            "plan": plan,
-            "policy": POLICY,
-            "trials": [],
-            "unsupported": unmet,
-            "summary": {
-                "k": 0,
-                "n": plan["trials"],
-                "required_passes": plan["required_passes"],
-                "grade": UNSUPPORTED,
-                "reason": reason,
-                "aggregation": AGGREGATION,
+        n, need = planned_counts(plan)
+        return _with_findings(
+            {
+                "plan": plan,
+                "policy": POLICY,
+                "trials": [],
+                "unsupported": unmet,
+                "summary": {
+                    "k": 0,
+                    "n": n,
+                    "required_passes": need,
+                    "grade": UNSUPPORTED,
+                    "reason": reason,
+                    "aggregation": AGGREGATION,
+                },
+                "failures": [],
             },
-            "failures": [],
-        }
-    if (
+            reproducibility_findings(manifest),
+        )
+    v2 = manifest["format"] == EVIDENCE_V2
+    if v2:
+        count = plan["trials"]["count"]
+        results = manifest["trials"]["results"]
+        indexes = [t["index"] for t in results]
+        if sorted(indexes) != list(range(1, count + 1)):
+            raise ManifestError(
+                f"trials: indexes {sorted(indexes)} do not match trials.count {count}"
+            )
+        ordered = sorted(results, key=lambda t: t["index"])
+    elif (
         sorted(t["seed"] for t in manifest["trials"]) != sorted(plan["seeds"])
         or len(plan["seeds"]) != plan["trials"]
     ):
@@ -633,11 +863,17 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
             f"trials: seeds {sorted(t['seed'] for t in manifest['trials'])} do not match "
             f"plan.seeds {sorted(plan['seeds'])} with plan.trials {plan['trials']}"
         )
+    else:
+        ordered = sorted(manifest["trials"], key=lambda t: t["seed"])
     th = thresholds(manifest)
     base = manifest_path.parent
     trials = []
-    for t in sorted(manifest["trials"], key=lambda t: t["seed"]):
-        eid = f"{manifest['configuration']['name']}-seed-{t['seed']:02d}"
+    for t in ordered:
+        # The id keeps the -seed- suffix. The pinned reporter matches video links on it
+        # and has no index field. For evidence 2.0.0 the number is the trial index.
+        number = t["index"] if v2 else t["seed"]
+        eid = f"{manifest['configuration']['name']}-seed-{number:02d}"
+        seed_arg = ("trial", number) if v2 else number
         path = base / t["path"]
         if not path.exists() or _sha(path) != t["sha256"]:
             res = {
@@ -651,8 +887,9 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
             try:
                 observation = json.loads(path.read_text())
             except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                label = f"index={number}" if v2 else f"seed={number}"
                 raise ManifestError(
-                    f"trials[seed={t['seed']}]: {t['path']} is not valid JSON: {e}"
+                    f"trials[{label}]: {t['path']} is not valid JSON: {e}"
                 ) from None
             res = assess_trial(
                 observation,
@@ -660,38 +897,47 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
                 eid,
                 (recorded or {}).get(eid, ()),
                 plan.get("required_assessors", ()),
-                t["seed"],
+                seed_arg,
             )
         res.setdefault("failures", [])
-        trials.append(
-            {
-                "id": eid,
-                "seed": t["seed"],
-                "evidence": {"id": eid, "path": t["path"], "sha256": t["sha256"]},
-                **res,
-            }
-        )
-    return {
-        "plan": plan,
-        "thresholds": th,
-        "limits": limits(manifest),
-        "policy": POLICY,
-        "trials": trials,
-        "summary": aggregate(trials, plan),
-        "failures": [f for t in trials for f in t["failures"]],
-    }
+        record = {
+            "id": eid,
+            "evidence": {"id": eid, "path": t["path"], "sha256": t["sha256"]},
+            **res,
+        }
+        if v2:
+            record["index"] = number
+        else:
+            record["seed"] = number
+        trials.append(record)
+    return _with_findings(
+        {
+            "plan": plan,
+            "thresholds": th,
+            "limits": limits(manifest),
+            "policy": POLICY,
+            "trials": trials,
+            "summary": aggregate(trials, plan),
+            "failures": [f for t in trials for f in t["failures"]],
+        },
+        reproducibility_findings(manifest),
+    )
 
 
 def summary_lines(result: dict) -> list[str]:
     s = result["summary"]
     if s["grade"] == UNSUPPORTED:
-        return [f"{UNSUPPORTED}: {s['reason']} (no trials assessed)"]
-    lines = [
-        f"{s['k']}/{s['n']} trials PASS (needs {s['required_passes']}), "
-        f"Wilson 95% [{s['wilson95'][0]:.4f}, {s['wilson95'][1]:.4f}]: {s['grade']}"
-    ]
-    for t in result["trials"]:
-        if t["status"] != PASS:
-            why = "; ".join(a["rationale"] for a in t["assessments"] if a["status"] != PASS)
-            lines.append(f"  seed {t['seed']:2d} {t['status']}: {why}")
+        lines = [f"{UNSUPPORTED}: {s['reason']} (no trials assessed)"]
+    else:
+        lines = [
+            f"{s['k']}/{s['n']} trials PASS (needs {s['required_passes']}), "
+            f"Wilson 95% [{s['wilson95'][0]:.4f}, {s['wilson95'][1]:.4f}]: {s['grade']}"
+        ]
+        for t in result["trials"]:
+            if t["status"] != PASS:
+                why = "; ".join(a["rationale"] for a in t["assessments"] if a["status"] != PASS)
+                where = f"trial {t['index']:2d}" if "index" in t else f"seed {t['seed']:2d}"
+                lines.append(f"  {where} {t['status']}: {why}")
+    for finding in result.get("findings") or []:
+        lines.append(f"test-system {finding['name']}: {finding['detail']}")
     return lines
