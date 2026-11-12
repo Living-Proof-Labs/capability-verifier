@@ -1,0 +1,1214 @@
+{
+  "schema_version": "1.1.0",
+  "producer": {
+    "id": "capability-verifier",
+    "version": "1.16.3",
+    "commit": "44acb9ed412a04fc458addba47fdf019b6d21027"
+  },
+  "results": [
+    {
+      "id": "playground-seed-01",
+      "spec": {
+        "repository": "https://github.com/Living-Proof-Labs/robot-capability-specs",
+        "tag": "v1.9.0",
+        "commit": "d677bd9770e60a6d42ea597966799e119dc7dd18",
+        "capability": "walk-hallway",
+        "revision": "0.1.0"
+      },
+      "system": {
+        "id": "unitree-g1/playground",
+        "version": "1.0.0"
+      },
+      "environment": {
+        "id": "hallway-open",
+        "version": "0.1.0"
+      },
+      "evidence": [
+        {
+          "id": "playground-seed-01",
+          "path": "evidence/trial-01.json",
+          "sha256": "48b6078f3deb763cd1595d727bff52baac95b335de96e57db1402ee6ece9840b"
+        }
+      ],
+      "assessments": [
+        {
+          "id": "playground-seed-01/hallway-exit-reached",
+          "evaluator": "hallway-exit-reached",
+          "kind": "deterministic",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "exit at 9.60 s <= 27.00 s (17.40 s spare) (trial 1)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-01"
+          ],
+          "provenance": {
+            "assessor": {
+              "type": "deterministic",
+              "id": "hallway-exit-reached",
+              "version": "1.0.0"
+            },
+            "details": {
+              "observed": 9.6,
+              "threshold": 27.0,
+              "time": 9.6,
+              "margin": 17.4
+            }
+          }
+        },
+        {
+          "id": "playground-seed-01/hallway-lateral-limit",
+          "evaluator": "hallway-lateral-limit",
+          "kind": "deterministic",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "lateral 0.09 m <= 0.49 m, largest at 5.24 s (trial 1)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-01"
+          ],
+          "provenance": {
+            "assessor": {
+              "type": "deterministic",
+              "id": "hallway-lateral-limit",
+              "version": "1.0.0"
+            },
+            "details": {
+              "observed": 0.0903,
+              "threshold": 0.49,
+              "time": 5.24,
+              "peak_time": 5.24,
+              "margin": 0.3997
+            }
+          }
+        },
+        {
+          "id": "playground-seed-01/hallway-wall-contact",
+          "evaluator": "hallway-wall-contact",
+          "kind": "deterministic",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "no wall contact; closest 0.250 m at 0.00 s (trial 1)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-01"
+          ],
+          "provenance": {
+            "assessor": {
+              "type": "deterministic",
+              "id": "hallway-wall-contact",
+              "version": "1.0.0"
+            },
+            "details": {
+              "observed": 0,
+              "threshold": 0,
+              "time": 0.0,
+              "margin": 0.25
+            }
+          }
+        },
+        {
+          "id": "playground-seed-01/hallway-fall",
+          "evaluator": "hallway-fall",
+          "kind": "deterministic",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "base height 0.71 m >= 0.50 m, lowest at 2.90 s (trial 1)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-01"
+          ],
+          "provenance": {
+            "assessor": {
+              "type": "deterministic",
+              "id": "hallway-fall",
+              "version": "1.0.0"
+            },
+            "details": {
+              "observed": 0.7065,
+              "threshold": 0.5,
+              "time": 2.9,
+              "margin": 0.2065
+            }
+          }
+        }
+      ],
+      "provenance": {
+        "run_id": "walk-hallway-unitree-g1-playground-20261112T051141Z",
+        "plan": {
+          "command_speed": 0.5,
+          "trials": {
+            "count": 3
+          }
+        },
+        "thresholds": {
+          "time_limit": 27.0,
+          "lateral_limit": 0.49,
+          "half_width": 0.75,
+          "fall_height": 0.5
+        },
+        "limits": {
+          "lateral_limit": {
+            "value": 0.49,
+            "unit": "m",
+            "formula": "clear_width / 2 - robot_width / 2",
+            "inputs": {
+              "clear_width": 1.5,
+              "robot_width": 0.52,
+              "robot_width_source": "robot.profile.dimensions.width"
+            }
+          },
+          "exit_segment": {
+            "value": 0.75,
+            "unit": "m",
+            "formula": "|y| <= clear_width / 2",
+            "inputs": {
+              "clear_width": 1.5
+            }
+          },
+          "time_limit": {
+            "value": 27.0,
+            "unit": "s",
+            "formula": "2 * route_length / command_speed + 5 s",
+            "inputs": {
+              "route_length": 5.5,
+              "command_speed": 0.5
+            }
+          },
+          "fall_height": {
+            "value": 0.5,
+            "unit": "m",
+            "formula": "configuration.profile.locomotion.fall_base_height",
+            "inputs": {}
+          },
+          "fits_width": {
+            "met": true,
+            "unit": "m",
+            "formula": "robot_width + 2 * wall_clearance <= clear_width",
+            "inputs": {
+              "robot_width": 0.52,
+              "robot_class": "humanoid",
+              "wall_clearance": 0.05,
+              "clear_width": 1.5
+            },
+            "detail": "0.52 + 2 x 0.05 = 0.620 m <= 1.5 m (recomputed by the verifier)"
+          }
+        },
+        "policy": {
+          "id": "all-required-v1",
+          "version": "1.0.0"
+        },
+        "lock": {
+          "path": "verification.lock.json",
+          "sha256": "54dcb1a0fe5078928b66594410d745eef1406b3a96357dc81bc08c2be0d81825",
+          "content": {
+            "format": "livingproof-verification-lock/1.0.0",
+            "scenario": "walk-hallway@0.1.0",
+            "$comment": "releases is the one place release refs live. PENDING_RELEASE entries are filled by `task repin -- runner=vX.Y.Z verifier=vX.Y.Z reporter=vX.Y.Z` once those tags exist; `task repin:check` fails while any remain.",
+            "releases": {
+              "specs": {
+                "repository": "Living-Proof-Labs/robot-capability-specs",
+                "tag": "v2.0.2",
+                "commit": "16524cbfeef18ff0454ebf125668b010d38a3993"
+              },
+              "runner": {
+                "repository": "Living-Proof-Labs/livingproof-sim-mujoco",
+                "tag": "v2.0.3",
+                "commit": "292589ad15582c26cff2bffcc851e3abaf4ea708"
+              },
+              "verifier": {
+                "repository": "Living-Proof-Labs/capability-verifier",
+                "tag": "v1.16.3",
+                "commit": "44acb9ed412a04fc458addba47fdf019b6d21027",
+                "image": "ghcr.io/living-proof-labs/capability-verifier-hallway",
+                "digest": "sha256:228d1893601399acb445979fe4c8694f579a6061a4437bdc6c36c00821d7424c"
+              },
+              "reporter": {
+                "repository": "Living-Proof-Labs/livingproof-capability-report",
+                "tag": "v3.4.0",
+                "commit": "9290993732b50032f93f9ba55d39112918758477",
+                "image": "ghcr.io/living-proof-labs/livingproof-capability-report",
+                "digest": "sha256:ad7760d6197ade7df4103b43ad81f7c4f04761eec1da4357ac665e650bcc374b"
+              }
+            },
+            "world": {
+              "id": "hallway-open",
+              "version": "0.1.0",
+              "repository": "Living-Proof-Labs/livingproof-worlds",
+              "tag": "v1.1.0",
+              "commit": "9b3e7119aa93a3370383227fb30bd39a9dd72b4b"
+            },
+            "configurations": [
+              {
+                "name": "stock",
+                "version": "1.1.0",
+                "path": "configurations/stock.json",
+                "sha256": "b8f8a6dd2e2286744359404eb6c46562b73875aef9de50276777ddccb2239770"
+              },
+              {
+                "name": "playground",
+                "version": "1.0.0",
+                "path": "configurations/playground.json",
+                "sha256": "d4e68f256c89a80e2b2ad815cf43c566ba7bb2ef6114fe22f71bd954f1f920a6"
+              }
+            ],
+            "plan": {
+              "trials": {
+                "count": 3
+              },
+              "command_speed": 0.5
+            }
+          }
+        },
+        "simulator": {
+          "simulator": {
+            "id": "mujoco",
+            "version": "3.17.0",
+            "adapter": "livingproof-sim-mujoco",
+            "adapter_commit": "292589ad15582c26cff2bffcc851e3abaf4ea708"
+          },
+          "runner": {
+            "version": "2.0.3",
+            "tag": "v2.0.3",
+            "commit": "292589ad15582c26cff2bffcc851e3abaf4ea708"
+          },
+          "base_body": "pelvis",
+          "walls": [
+            "wall-left",
+            "wall-right"
+          ],
+          "source_commit": "862cf979f57e40d6158070c59b432b0cf4eaa4bd"
+        },
+        "summary": {
+          "k": 3,
+          "n": 3,
+          "required_passes": 3,
+          "wilson95": [
+            0.4385,
+            1.0
+          ],
+          "grade": "PASS",
+          "aggregation": {
+            "id": "k-of-n-wilson95",
+            "version": "1.0.0"
+          }
+        }
+      },
+      "original_result": {
+        "status": "PASS",
+        "index": 1,
+        "seed": 1
+      },
+      "decision": {
+        "status": "PASS",
+        "reason": "All four hallway evaluators and every retained assessment pass",
+        "failures": [],
+        "assessor_types": [
+          "deterministic"
+        ],
+        "primary_failure": null,
+        "secondary_failures": [],
+        "policy": {
+          "id": "all-required-v1",
+          "version": "1.0.0"
+        }
+      }
+    },
+    {
+      "id": "playground-seed-02",
+      "spec": {
+        "repository": "https://github.com/Living-Proof-Labs/robot-capability-specs",
+        "tag": "v1.9.0",
+        "commit": "d677bd9770e60a6d42ea597966799e119dc7dd18",
+        "capability": "walk-hallway",
+        "revision": "0.1.0"
+      },
+      "system": {
+        "id": "unitree-g1/playground",
+        "version": "1.0.0"
+      },
+      "environment": {
+        "id": "hallway-open",
+        "version": "0.1.0"
+      },
+      "evidence": [
+        {
+          "id": "playground-seed-02",
+          "path": "evidence/trial-02.json",
+          "sha256": "48b6078f3deb763cd1595d727bff52baac95b335de96e57db1402ee6ece9840b"
+        }
+      ],
+      "assessments": [
+        {
+          "id": "playground-seed-02/hallway-exit-reached",
+          "evaluator": "hallway-exit-reached",
+          "kind": "deterministic",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "exit at 9.60 s <= 27.00 s (17.40 s spare) (trial 2)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-02"
+          ],
+          "provenance": {
+            "assessor": {
+              "type": "deterministic",
+              "id": "hallway-exit-reached",
+              "version": "1.0.0"
+            },
+            "details": {
+              "observed": 9.6,
+              "threshold": 27.0,
+              "time": 9.6,
+              "margin": 17.4
+            }
+          }
+        },
+        {
+          "id": "playground-seed-02/hallway-lateral-limit",
+          "evaluator": "hallway-lateral-limit",
+          "kind": "deterministic",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "lateral 0.09 m <= 0.49 m, largest at 5.24 s (trial 2)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-02"
+          ],
+          "provenance": {
+            "assessor": {
+              "type": "deterministic",
+              "id": "hallway-lateral-limit",
+              "version": "1.0.0"
+            },
+            "details": {
+              "observed": 0.0903,
+              "threshold": 0.49,
+              "time": 5.24,
+              "peak_time": 5.24,
+              "margin": 0.3997
+            }
+          }
+        },
+        {
+          "id": "playground-seed-02/hallway-wall-contact",
+          "evaluator": "hallway-wall-contact",
+          "kind": "deterministic",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "no wall contact; closest 0.250 m at 0.00 s (trial 2)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-02"
+          ],
+          "provenance": {
+            "assessor": {
+              "type": "deterministic",
+              "id": "hallway-wall-contact",
+              "version": "1.0.0"
+            },
+            "details": {
+              "observed": 0,
+              "threshold": 0,
+              "time": 0.0,
+              "margin": 0.25
+            }
+          }
+        },
+        {
+          "id": "playground-seed-02/hallway-fall",
+          "evaluator": "hallway-fall",
+          "kind": "deterministic",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "base height 0.71 m >= 0.50 m, lowest at 2.90 s (trial 2)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-02"
+          ],
+          "provenance": {
+            "assessor": {
+              "type": "deterministic",
+              "id": "hallway-fall",
+              "version": "1.0.0"
+            },
+            "details": {
+              "observed": 0.7065,
+              "threshold": 0.5,
+              "time": 2.9,
+              "margin": 0.2065
+            }
+          }
+        }
+      ],
+      "provenance": {
+        "run_id": "walk-hallway-unitree-g1-playground-20261112T051141Z",
+        "plan": {
+          "command_speed": 0.5,
+          "trials": {
+            "count": 3
+          }
+        },
+        "thresholds": {
+          "time_limit": 27.0,
+          "lateral_limit": 0.49,
+          "half_width": 0.75,
+          "fall_height": 0.5
+        },
+        "limits": {
+          "lateral_limit": {
+            "value": 0.49,
+            "unit": "m",
+            "formula": "clear_width / 2 - robot_width / 2",
+            "inputs": {
+              "clear_width": 1.5,
+              "robot_width": 0.52,
+              "robot_width_source": "robot.profile.dimensions.width"
+            }
+          },
+          "exit_segment": {
+            "value": 0.75,
+            "unit": "m",
+            "formula": "|y| <= clear_width / 2",
+            "inputs": {
+              "clear_width": 1.5
+            }
+          },
+          "time_limit": {
+            "value": 27.0,
+            "unit": "s",
+            "formula": "2 * route_length / command_speed + 5 s",
+            "inputs": {
+              "route_length": 5.5,
+              "command_speed": 0.5
+            }
+          },
+          "fall_height": {
+            "value": 0.5,
+            "unit": "m",
+            "formula": "configuration.profile.locomotion.fall_base_height",
+            "inputs": {}
+          },
+          "fits_width": {
+            "met": true,
+            "unit": "m",
+            "formula": "robot_width + 2 * wall_clearance <= clear_width",
+            "inputs": {
+              "robot_width": 0.52,
+              "robot_class": "humanoid",
+              "wall_clearance": 0.05,
+              "clear_width": 1.5
+            },
+            "detail": "0.52 + 2 x 0.05 = 0.620 m <= 1.5 m (recomputed by the verifier)"
+          }
+        },
+        "policy": {
+          "id": "all-required-v1",
+          "version": "1.0.0"
+        },
+        "lock": {
+          "path": "verification.lock.json",
+          "sha256": "54dcb1a0fe5078928b66594410d745eef1406b3a96357dc81bc08c2be0d81825",
+          "content": {
+            "format": "livingproof-verification-lock/1.0.0",
+            "scenario": "walk-hallway@0.1.0",
+            "$comment": "releases is the one place release refs live. PENDING_RELEASE entries are filled by `task repin -- runner=vX.Y.Z verifier=vX.Y.Z reporter=vX.Y.Z` once those tags exist; `task repin:check` fails while any remain.",
+            "releases": {
+              "specs": {
+                "repository": "Living-Proof-Labs/robot-capability-specs",
+                "tag": "v2.0.2",
+                "commit": "16524cbfeef18ff0454ebf125668b010d38a3993"
+              },
+              "runner": {
+                "repository": "Living-Proof-Labs/livingproof-sim-mujoco",
+                "tag": "v2.0.3",
+                "commit": "292589ad15582c26cff2bffcc851e3abaf4ea708"
+              },
+              "verifier": {
+                "repository": "Living-Proof-Labs/capability-verifier",
+                "tag": "v1.16.3",
+                "commit": "44acb9ed412a04fc458addba47fdf019b6d21027",
+                "image": "ghcr.io/living-proof-labs/capability-verifier-hallway",
+                "digest": "sha256:228d1893601399acb445979fe4c8694f579a6061a4437bdc6c36c00821d7424c"
+              },
+              "reporter": {
+                "repository": "Living-Proof-Labs/livingproof-capability-report",
+                "tag": "v3.4.0",
+                "commit": "9290993732b50032f93f9ba55d39112918758477",
+                "image": "ghcr.io/living-proof-labs/livingproof-capability-report",
+                "digest": "sha256:ad7760d6197ade7df4103b43ad81f7c4f04761eec1da4357ac665e650bcc374b"
+              }
+            },
+            "world": {
+              "id": "hallway-open",
+              "version": "0.1.0",
+              "repository": "Living-Proof-Labs/livingproof-worlds",
+              "tag": "v1.1.0",
+              "commit": "9b3e7119aa93a3370383227fb30bd39a9dd72b4b"
+            },
+            "configurations": [
+              {
+                "name": "stock",
+                "version": "1.1.0",
+                "path": "configurations/stock.json",
+                "sha256": "b8f8a6dd2e2286744359404eb6c46562b73875aef9de50276777ddccb2239770"
+              },
+              {
+                "name": "playground",
+                "version": "1.0.0",
+                "path": "configurations/playground.json",
+                "sha256": "d4e68f256c89a80e2b2ad815cf43c566ba7bb2ef6114fe22f71bd954f1f920a6"
+              }
+            ],
+            "plan": {
+              "trials": {
+                "count": 3
+              },
+              "command_speed": 0.5
+            }
+          }
+        },
+        "simulator": {
+          "simulator": {
+            "id": "mujoco",
+            "version": "3.17.0",
+            "adapter": "livingproof-sim-mujoco",
+            "adapter_commit": "292589ad15582c26cff2bffcc851e3abaf4ea708"
+          },
+          "runner": {
+            "version": "2.0.3",
+            "tag": "v2.0.3",
+            "commit": "292589ad15582c26cff2bffcc851e3abaf4ea708"
+          },
+          "base_body": "pelvis",
+          "walls": [
+            "wall-left",
+            "wall-right"
+          ],
+          "source_commit": "862cf979f57e40d6158070c59b432b0cf4eaa4bd"
+        },
+        "summary": {
+          "k": 3,
+          "n": 3,
+          "required_passes": 3,
+          "wilson95": [
+            0.4385,
+            1.0
+          ],
+          "grade": "PASS",
+          "aggregation": {
+            "id": "k-of-n-wilson95",
+            "version": "1.0.0"
+          }
+        }
+      },
+      "original_result": {
+        "status": "PASS",
+        "index": 2,
+        "seed": 2
+      },
+      "decision": {
+        "status": "PASS",
+        "reason": "All four hallway evaluators and every retained assessment pass",
+        "failures": [],
+        "assessor_types": [
+          "deterministic"
+        ],
+        "primary_failure": null,
+        "secondary_failures": [],
+        "policy": {
+          "id": "all-required-v1",
+          "version": "1.0.0"
+        }
+      }
+    },
+    {
+      "id": "playground-seed-03",
+      "spec": {
+        "repository": "https://github.com/Living-Proof-Labs/robot-capability-specs",
+        "tag": "v1.9.0",
+        "commit": "d677bd9770e60a6d42ea597966799e119dc7dd18",
+        "capability": "walk-hallway",
+        "revision": "0.1.0"
+      },
+      "system": {
+        "id": "unitree-g1/playground",
+        "version": "1.0.0"
+      },
+      "environment": {
+        "id": "hallway-open",
+        "version": "0.1.0"
+      },
+      "evidence": [
+        {
+          "id": "playground-seed-03",
+          "path": "evidence/trial-03.json",
+          "sha256": "48b6078f3deb763cd1595d727bff52baac95b335de96e57db1402ee6ece9840b"
+        }
+      ],
+      "assessments": [
+        {
+          "id": "playground-seed-03/hallway-exit-reached",
+          "evaluator": "hallway-exit-reached",
+          "kind": "deterministic",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "exit at 9.60 s <= 27.00 s (17.40 s spare) (trial 3)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-03"
+          ],
+          "provenance": {
+            "assessor": {
+              "type": "deterministic",
+              "id": "hallway-exit-reached",
+              "version": "1.0.0"
+            },
+            "details": {
+              "observed": 9.6,
+              "threshold": 27.0,
+              "time": 9.6,
+              "margin": 17.4
+            }
+          }
+        },
+        {
+          "id": "playground-seed-03/hallway-lateral-limit",
+          "evaluator": "hallway-lateral-limit",
+          "kind": "deterministic",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "lateral 0.09 m <= 0.49 m, largest at 5.24 s (trial 3)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-03"
+          ],
+          "provenance": {
+            "assessor": {
+              "type": "deterministic",
+              "id": "hallway-lateral-limit",
+              "version": "1.0.0"
+            },
+            "details": {
+              "observed": 0.0903,
+              "threshold": 0.49,
+              "time": 5.24,
+              "peak_time": 5.24,
+              "margin": 0.3997
+            }
+          }
+        },
+        {
+          "id": "playground-seed-03/hallway-wall-contact",
+          "evaluator": "hallway-wall-contact",
+          "kind": "deterministic",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "no wall contact; closest 0.250 m at 0.00 s (trial 3)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-03"
+          ],
+          "provenance": {
+            "assessor": {
+              "type": "deterministic",
+              "id": "hallway-wall-contact",
+              "version": "1.0.0"
+            },
+            "details": {
+              "observed": 0,
+              "threshold": 0,
+              "time": 0.0,
+              "margin": 0.25
+            }
+          }
+        },
+        {
+          "id": "playground-seed-03/hallway-fall",
+          "evaluator": "hallway-fall",
+          "kind": "deterministic",
+          "version": "1.0.0",
+          "status": "PASS",
+          "rationale": "base height 0.71 m >= 0.50 m, lowest at 2.90 s (trial 3)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-03"
+          ],
+          "provenance": {
+            "assessor": {
+              "type": "deterministic",
+              "id": "hallway-fall",
+              "version": "1.0.0"
+            },
+            "details": {
+              "observed": 0.7065,
+              "threshold": 0.5,
+              "time": 2.9,
+              "margin": 0.2065
+            }
+          }
+        }
+      ],
+      "provenance": {
+        "run_id": "walk-hallway-unitree-g1-playground-20261112T051141Z",
+        "plan": {
+          "command_speed": 0.5,
+          "trials": {
+            "count": 3
+          }
+        },
+        "thresholds": {
+          "time_limit": 27.0,
+          "lateral_limit": 0.49,
+          "half_width": 0.75,
+          "fall_height": 0.5
+        },
+        "limits": {
+          "lateral_limit": {
+            "value": 0.49,
+            "unit": "m",
+            "formula": "clear_width / 2 - robot_width / 2",
+            "inputs": {
+              "clear_width": 1.5,
+              "robot_width": 0.52,
+              "robot_width_source": "robot.profile.dimensions.width"
+            }
+          },
+          "exit_segment": {
+            "value": 0.75,
+            "unit": "m",
+            "formula": "|y| <= clear_width / 2",
+            "inputs": {
+              "clear_width": 1.5
+            }
+          },
+          "time_limit": {
+            "value": 27.0,
+            "unit": "s",
+            "formula": "2 * route_length / command_speed + 5 s",
+            "inputs": {
+              "route_length": 5.5,
+              "command_speed": 0.5
+            }
+          },
+          "fall_height": {
+            "value": 0.5,
+            "unit": "m",
+            "formula": "configuration.profile.locomotion.fall_base_height",
+            "inputs": {}
+          },
+          "fits_width": {
+            "met": true,
+            "unit": "m",
+            "formula": "robot_width + 2 * wall_clearance <= clear_width",
+            "inputs": {
+              "robot_width": 0.52,
+              "robot_class": "humanoid",
+              "wall_clearance": 0.05,
+              "clear_width": 1.5
+            },
+            "detail": "0.52 + 2 x 0.05 = 0.620 m <= 1.5 m (recomputed by the verifier)"
+          }
+        },
+        "policy": {
+          "id": "all-required-v1",
+          "version": "1.0.0"
+        },
+        "lock": {
+          "path": "verification.lock.json",
+          "sha256": "54dcb1a0fe5078928b66594410d745eef1406b3a96357dc81bc08c2be0d81825",
+          "content": {
+            "format": "livingproof-verification-lock/1.0.0",
+            "scenario": "walk-hallway@0.1.0",
+            "$comment": "releases is the one place release refs live. PENDING_RELEASE entries are filled by `task repin -- runner=vX.Y.Z verifier=vX.Y.Z reporter=vX.Y.Z` once those tags exist; `task repin:check` fails while any remain.",
+            "releases": {
+              "specs": {
+                "repository": "Living-Proof-Labs/robot-capability-specs",
+                "tag": "v2.0.2",
+                "commit": "16524cbfeef18ff0454ebf125668b010d38a3993"
+              },
+              "runner": {
+                "repository": "Living-Proof-Labs/livingproof-sim-mujoco",
+                "tag": "v2.0.3",
+                "commit": "292589ad15582c26cff2bffcc851e3abaf4ea708"
+              },
+              "verifier": {
+                "repository": "Living-Proof-Labs/capability-verifier",
+                "tag": "v1.16.3",
+                "commit": "44acb9ed412a04fc458addba47fdf019b6d21027",
+                "image": "ghcr.io/living-proof-labs/capability-verifier-hallway",
+                "digest": "sha256:228d1893601399acb445979fe4c8694f579a6061a4437bdc6c36c00821d7424c"
+              },
+              "reporter": {
+                "repository": "Living-Proof-Labs/livingproof-capability-report",
+                "tag": "v3.4.0",
+                "commit": "9290993732b50032f93f9ba55d39112918758477",
+                "image": "ghcr.io/living-proof-labs/livingproof-capability-report",
+                "digest": "sha256:ad7760d6197ade7df4103b43ad81f7c4f04761eec1da4357ac665e650bcc374b"
+              }
+            },
+            "world": {
+              "id": "hallway-open",
+              "version": "0.1.0",
+              "repository": "Living-Proof-Labs/livingproof-worlds",
+              "tag": "v1.1.0",
+              "commit": "9b3e7119aa93a3370383227fb30bd39a9dd72b4b"
+            },
+            "configurations": [
+              {
+                "name": "stock",
+                "version": "1.1.0",
+                "path": "configurations/stock.json",
+                "sha256": "b8f8a6dd2e2286744359404eb6c46562b73875aef9de50276777ddccb2239770"
+              },
+              {
+                "name": "playground",
+                "version": "1.0.0",
+                "path": "configurations/playground.json",
+                "sha256": "d4e68f256c89a80e2b2ad815cf43c566ba7bb2ef6114fe22f71bd954f1f920a6"
+              }
+            ],
+            "plan": {
+              "trials": {
+                "count": 3
+              },
+              "command_speed": 0.5
+            }
+          }
+        },
+        "simulator": {
+          "simulator": {
+            "id": "mujoco",
+            "version": "3.17.0",
+            "adapter": "livingproof-sim-mujoco",
+            "adapter_commit": "292589ad15582c26cff2bffcc851e3abaf4ea708"
+          },
+          "runner": {
+            "version": "2.0.3",
+            "tag": "v2.0.3",
+            "commit": "292589ad15582c26cff2bffcc851e3abaf4ea708"
+          },
+          "base_body": "pelvis",
+          "walls": [
+            "wall-left",
+            "wall-right"
+          ],
+          "source_commit": "862cf979f57e40d6158070c59b432b0cf4eaa4bd"
+        },
+        "summary": {
+          "k": 3,
+          "n": 3,
+          "required_passes": 3,
+          "wilson95": [
+            0.4385,
+            1.0
+          ],
+          "grade": "PASS",
+          "aggregation": {
+            "id": "k-of-n-wilson95",
+            "version": "1.0.0"
+          }
+        }
+      },
+      "original_result": {
+        "status": "PASS",
+        "index": 3,
+        "seed": 3
+      },
+      "decision": {
+        "status": "PASS",
+        "reason": "All four hallway evaluators and every retained assessment pass",
+        "failures": [],
+        "assessor_types": [
+          "deterministic"
+        ],
+        "primary_failure": null,
+        "secondary_failures": [],
+        "policy": {
+          "id": "all-required-v1",
+          "version": "1.0.0"
+        }
+      }
+    }
+  ],
+  "assessment": {
+    "format": "livingproof-run-assessment/0.1",
+    "policy": {
+      "id": "all-required-v1",
+      "version": "1.0.0"
+    },
+    "aggregation": {
+      "id": "k-of-n-wilson95",
+      "version": "1.0.0"
+    },
+    "decisions": [
+      {
+        "result_id": "playground-seed-01",
+        "status": "PASS",
+        "reason": "All four hallway evaluators and every retained assessment pass",
+        "failures": [],
+        "assessor_types": [
+          "deterministic"
+        ],
+        "primary_failure": null,
+        "secondary_failures": []
+      },
+      {
+        "result_id": "playground-seed-02",
+        "status": "PASS",
+        "reason": "All four hallway evaluators and every retained assessment pass",
+        "failures": [],
+        "assessor_types": [
+          "deterministic"
+        ],
+        "primary_failure": null,
+        "secondary_failures": []
+      },
+      {
+        "result_id": "playground-seed-03",
+        "status": "PASS",
+        "reason": "All four hallway evaluators and every retained assessment pass",
+        "failures": [],
+        "assessor_types": [
+          "deterministic"
+        ],
+        "primary_failure": null,
+        "secondary_failures": []
+      }
+    ],
+    "runs": [
+      {
+        "capability": "walk-hallway",
+        "spec": {
+          "repository": "https://github.com/Living-Proof-Labs/robot-capability-specs",
+          "tag": "v1.9.0",
+          "commit": "d677bd9770e60a6d42ea597966799e119dc7dd18",
+          "capability": "walk-hallway",
+          "revision": "0.1.0"
+        },
+        "system": {
+          "id": "unitree-g1/playground",
+          "version": "1.0.0"
+        },
+        "environment": {
+          "id": "hallway-open",
+          "version": "0.1.0"
+        },
+        "run_id": "walk-hallway-unitree-g1-playground-20261112T051141Z",
+        "k": 3,
+        "n": 3,
+        "required_passes": 3,
+        "interval": {
+          "method": "wilson",
+          "level": 0.95,
+          "lower": 0.4385,
+          "upper": 1.0
+        },
+        "grade": "PASS",
+        "rationale": "3/3 PASS, needs 3",
+        "result_ids": [
+          "playground-seed-01",
+          "playground-seed-02",
+          "playground-seed-03"
+        ],
+        "failures": [],
+        "prototype": null,
+        "failure_summary": {
+          "failed_trials": 0,
+          "by_primary": []
+        },
+        "worst": [
+          {
+            "check": "hallway-lateral-limit",
+            "worst": "max",
+            "unit": "m",
+            "observed": 0.0903,
+            "seed": 1,
+            "t": 5.24,
+            "result_id": "playground-seed-01"
+          },
+          {
+            "check": "hallway-wall-contact",
+            "worst": "max",
+            "unit": "m",
+            "observed": null,
+            "seed": null,
+            "t": null,
+            "result_id": null
+          },
+          {
+            "check": "hallway-fall",
+            "worst": "min",
+            "unit": "m",
+            "observed": 0.7065,
+            "seed": 1,
+            "t": 2.9,
+            "result_id": "playground-seed-01"
+          },
+          {
+            "check": "hallway-exit-reached",
+            "worst": "max",
+            "unit": "s",
+            "observed": 9.6,
+            "seed": 1,
+            "t": 9.6,
+            "result_id": "playground-seed-01",
+            "missing": 0
+          }
+        ]
+      }
+    ]
+  },
+  "description": {
+    "source": {
+      "path": "specs/scenarios/walk-hallway/description.json",
+      "sha256": "74413a9e7e00d722af5ac63a511d3d7df7619381addf244693af965253eb239c",
+      "commit": "d677bd9770e60a6d42ea597966799e119dc7dd18"
+    },
+    "$comment": "Human-readable text for walk-hallway 0.1.0 on hallway-open 0.1.0 (specs #30). Text only; README.md stays normative.",
+    "format": "livingproof-scenario-description/0.1",
+    "scenario": {
+      "id": "walk-hallway",
+      "revision": "0.1.0"
+    },
+    "mission": {
+      "title": "Walk the hallway",
+      "description": "The robot starts at the hallway entrance and is commanded to walk straight ahead at 0.5 m/s. It must reach the exit, 5.5 m along the route, within 27 s, staying upright, never touching either wall, and staying within its lateral limit of the centreline.",
+      "success_criteria": [
+        {
+          "evaluator": "hallway-exit-reached",
+          "text": "Reaches the exit, 5.5 m along the route, within 27 s, crossing it inside the exit segment."
+        },
+        {
+          "evaluator": "hallway-wall-contact",
+          "text": "Never touches a side wall."
+        },
+        {
+          "evaluator": "hallway-fall",
+          "text": "Stays upright: the base never drops below the fall height."
+        },
+        {
+          "evaluator": "hallway-lateral-limit",
+          "text": "Stays within its lateral limit of the hallway centreline."
+        }
+      ],
+      "grading": "20 runs (seeds 1 to 20), no retries. A configuration passes when at least 18 of 20 runs pass. Results show k/20 with a Wilson 95% interval.",
+      "time_limit_explained": "27 s is twice the time the route takes at the commanded speed, plus 5 s (2 \u00d7 5.5 m \u00f7 0.5 m/s + 5 s)."
+    },
+    "world": {
+      "id": "hallway-open",
+      "content_version": "0.1.0",
+      "title": "Open hallway",
+      "description": "A straight, empty hallway 1.50 m wide between the walls and 6.00 m long, with 2.50 m-high walls. Nothing else is in it: the test is whether the robot can hold a straight line.",
+      "dimensions": {
+        "clear_width": {
+          "value": 1.5,
+          "unit": "m"
+        },
+        "length": {
+          "value": 6.0,
+          "unit": "m"
+        },
+        "wall_height": {
+          "value": 2.5,
+          "unit": "m"
+        },
+        "wall_thickness": {
+          "value": 0.15,
+          "unit": "m"
+        }
+      }
+    },
+    "parameters": {
+      "route_length": {
+        "value": 5.5,
+        "unit": "m"
+      },
+      "command_speed": {
+        "value": 0.5,
+        "unit": "m/s"
+      },
+      "time_limit": {
+        "value": 27,
+        "unit": "s",
+        "formula": "2 \u00d7 route_length \u00f7 command_speed + 5 s"
+      },
+      "trials": {
+        "count": 20,
+        "seeds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        "retries": false
+      },
+      "required_passes": 18,
+      "wall_clearance": {
+        "humanoid": {
+          "value": 0.05,
+          "unit": "m"
+        },
+        "quadruped": {
+          "value": 0.1,
+          "unit": "m"
+        }
+      }
+    },
+    "limits": {
+      "lateral_limit": {
+        "unit": "m",
+        "formula": "clear_width \u00f7 2 \u2212 robot_width \u00f7 2",
+        "inputs": {
+          "clear_width": "world clear width",
+          "robot_width": "robot profile dimensions.width"
+        },
+        "text": "How far the robot's centre may drift from the centreline before its side would reach a wall: half the clear width minus half the robot's width.",
+        "sentence": "{robot} may drift up to {value} m either side of the centreline: half the {clear_width} m hallway, minus half its {robot_width} m width."
+      },
+      "exit_segment": {
+        "unit": "m",
+        "formula": "|y| \u2264 clear_width \u00f7 2",
+        "inputs": {
+          "clear_width": "world clear width"
+        },
+        "text": "The exit counts only when the robot's base crosses it between the walls, within half the clear width of the centreline."
+      },
+      "fall_height": {
+        "unit": "m",
+        "formula": "locomotion.fall_base_height",
+        "inputs": {
+          "fall_base_height": "configuration profile locomotion.fall_base_height"
+        },
+        "text": "The lowest base height that still counts as upright, declared by the selected configuration."
+      },
+      "fits_width": {
+        "unit": "m",
+        "formula": "robot_width + 2 \u00d7 wall_clearance \u2264 clear_width",
+        "inputs": {
+          "robot_width": "robot profile dimensions.width",
+          "wall_clearance": "parameters.wall_clearance for the robot class",
+          "clear_width": "world clear width"
+        },
+        "text": "Checked before any trial: the robot fits when its width plus the wall clearance on each side (0.05 m for a humanoid, 0.10 m for a quadruped) is at most the clear width. A robot that does not fit is UNSUPPORTED, not run.",
+        "sentence": "{robot} fits: {robot_width} m + 2 \u00d7 {wall_clearance} m \u2264 {clear_width} m."
+      }
+    }
+  }
+}

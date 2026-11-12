@@ -4,7 +4,11 @@ version = "0.0.0"
 description = "Fixture reference verifier; not robot safety certification"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
-dependencies = ["pyyaml>=6.0"]
+dependencies = [
+    "pyyaml>=6.0",
+    # Released livingproof-evaluator-scenario.
+    "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git@v1.0.0",
+]
 
 [project.entry-points."livingproof.capability.commands"]
 verify = "capability_verifier.plugin:verify"
@@ -16,6 +20,8 @@ dev = [
     "pytest-bdd==8.1.0",
     "ruff==0.14.2",
     "zensical==0.0.73",
+    "livingproof-capability-report @ https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.5.0/livingproof_capability_report-3.5.0-py3-none-any.whl",
+    "livingproof-common @ https://github.com/Living-Proof-Labs/livingproof-common/releases/download/v1.0.0/livingproof_common-1.0.0-py3-none-any.whl",
 ]
 
 [tool.pytest.ini_options]
