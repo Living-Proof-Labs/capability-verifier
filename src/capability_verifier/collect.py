@@ -17,7 +17,12 @@ RESULT_FORMAT = re.compile(r"^livingproof-evaluator-result/1\.\d+\.\d+$")
 
 
 def collect(bundle: dict, directory: Path) -> dict:
-    """Append every result document under ``directory``. ``bundle`` is updated."""
+    """Append this bundle's result documents. ``bundle`` is updated.
+
+    A document whose ``scenario.trial_id`` is not one of this bundle's results
+    belongs to another configuration. It is left untouched. Documents that do
+    match are appended whole and are not merged with each other.
+    """
     if not isinstance(bundle, dict) or not isinstance(bundle.get("results"), list):
         raise ValueError("bundle is missing results")
     directory = Path(directory)
@@ -39,7 +44,7 @@ def collect(bundle: dict, directory: Path) -> dict:
         trial_id = scenario.get("trial_id") if isinstance(scenario, dict) else None
         result = by_id.get(trial_id)
         if result is None:
-            raise ValueError(f"evaluator result trial_id {trial_id!r} is not a bundle result")
+            continue
         entries = result.get("evaluator_results")
         if entries is None:
             entries = []

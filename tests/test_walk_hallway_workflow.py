@@ -69,9 +69,11 @@ def test_scenario_evaluator_is_a_parallel_job_and_the_report_collects_by_pattern
     assert "tools/run_scenario_evaluator.py" in scenario
     assert "evaluator-results-livingproof-scenario-" in scenario
     assert "needs.scenario-evaluator.result == 'success'" in STEPS
-    pattern = "pattern: ${{ inputs.artifact-prefix }}evaluator-results-*"
+    pattern = (
+        "pattern: ${{ inputs.artifact-prefix }}evaluator-results-*-${{ matrix.configuration }}"
+    )
     assert pattern in STEPS
-    # The download names the prefix, not an evaluator. A second job is another upload.
+    # The download names the configuration, not an evaluator. A second job is another upload.
     after = STEPS[STEPS.index(pattern) :]
     assert "livingproof-scenario" not in after[:240]
     start = WORKFLOW.index("<<'COLLECT'\n") + len("<<'COLLECT'\n")
@@ -83,6 +85,31 @@ def test_scenario_evaluator_is_a_parallel_job_and_the_report_collects_by_pattern
     )
     source = (Path(__file__).parents[1] / "src/capability_verifier/collect.py").read_text()
     assert extracted + "\n" == source
+
+
+def test_report_collects_with_media_on_and_with_media_off():
+    """The collector is in report, so a skipped media job still stores evaluator entries."""
+    media = WORKFLOW.split("\n  media:\n", 1)[1].split("\n  report:\n", 1)[0]
+    report = WORKFLOW.split("\n  report:\n", 1)[1].split("\n  comment:\n", 1)[0]
+    media_head = media.split("    steps:\n", 1)[0]
+    report_head = report.split("    steps:\n", 1)[0]
+    assert "needs: [plan, verify]\n" in media_head
+    assert "scenario-evaluator" not in media_head
+    assert "if: inputs.media &&" in media_head
+    assert "COLLECT" not in media
+    assert "evaluator-results" not in media
+    assert "needs: [plan, verify, scenario-evaluator, media]" in report_head
+    assert "needs.media.result" not in report_head
+    assert "needs.scenario-evaluator.result == 'success'" in report_head
+    pattern = "evaluator-results-*-${{ matrix.configuration }}"
+    assert pattern in report
+    assert report.index("<<'COLLECT'") < report.index("livingproof-capability-report render")
+    # Links stay optional when media is off. Collection does not.
+    assert "if: needs.media.result == 'success'" in report
+    collect_step = report[
+        report.index("- name: Append each evaluator") : report.index("<<'COLLECT'")
+    ]
+    assert "if:" not in collect_step
 
 
 def test_comment_runs_whatever_media_did():

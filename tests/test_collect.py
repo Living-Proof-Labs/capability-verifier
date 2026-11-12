@@ -9,6 +9,8 @@ import json
 import shutil
 from pathlib import Path
 
+import importlib.metadata
+
 from livingproof_capability_report.assessed import report_from_bundle
 from livingproof_capability_report.core import load_bundle, render
 from livingproof_evaluator_scenario.result import trial_result
@@ -16,6 +18,7 @@ from livingproof_evaluator_scenario.result import trial_result
 from capability_verifier.collect import collect
 
 BUNDLE = Path(__file__).parent / "fixtures" / "g1-playground-bundle"
+STOCK = Path(__file__).parent / "fixtures" / "g1-stock-bundle"
 WHEN = "2026-11-12T05:11:41Z"
 ICON = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">'
@@ -163,3 +166,87 @@ def test_a_second_evaluator_artifact_adds_a_mark_without_a_collector_change(tmp_
     assert "Camera node crashed." in two
     assert "3 successes, 100%" in two
     assert _ring(two) == ring
+
+
+def test_scenario_package_pin_is_release_v1_0_0():
+    text = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    assert (
+        "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/"
+        "livingproof-evaluator-scenario.git@v1.0.0"
+    ) in text
+    assert "9c82a0b" not in text
+    assert importlib.metadata.version("livingproof-evaluator-scenario") == "1.0.0"
+
+
+def test_two_configurations_keep_their_own_entries_and_grades(tmp_path):
+    """A download that holds both configurations does not cross their trials."""
+    play_root = tmp_path / "play"
+    play_root.mkdir()
+    playground = _bundle(play_root)
+    stock = tmp_path / "stock"
+    shutil.copytree(STOCK, stock)
+    play_docs = _scenario_documents(playground)
+    stock_docs = _scenario_documents(stock)
+    assert play_docs[0]["evaluator"]["version"] == "1.0.0"
+    assert stock_docs[0]["evaluator"]["version"] == "1.0.0"
+    downloads = tmp_path / "downloads"
+    _write(
+        downloads,
+        "evaluator-results-livingproof-scenario-playground",
+        "livingproof-scenario",
+        play_docs,
+    )
+    _write(
+        downloads,
+        "evaluator-results-livingproof-scenario-stock",
+        "livingproof-scenario",
+        stock_docs,
+    )
+    _write(
+        downloads,
+        "evaluator-results-example-health-playground",
+        "example-health",
+        [_health("playground-seed-01")],
+    )
+    _write(
+        downloads,
+        "evaluator-results-example-health-stock",
+        "example-health",
+        [_health("stock-seed-01")],
+    )
+
+    def apply(bundle_dir):
+        bundle = json.loads((bundle_dir / "manifest.json").read_text(encoding="utf-8"))
+        before = json.dumps(bundle["assessment"])
+        collect(bundle, downloads)
+        assert json.dumps(bundle["assessment"]) == before
+        run = bundle["assessment"]["runs"][0]
+        rows = []
+        for result in bundle["results"]:
+            for document in result.get("evaluator_results") or []:
+                rows.append(
+                    (result["id"], document["evaluator"]["id"], document["scenario"]["trial_id"])
+                )
+                assert document["scenario"]["trial_id"] == result["id"]
+        (bundle_dir / "manifest.json").write_text(json.dumps(bundle), encoding="utf-8")
+        return run["grade"], run["k"], run["n"], rows, _html(bundle_dir)
+
+    grade, k, n, rows, page = apply(playground)
+    assert (grade, k, n) == ("PASS", 3, 3)
+    assert "<p class='count'>3 successes, 100%</p>" in page
+    assert {trial for trial, _, _ in rows} == {
+        "playground-seed-01",
+        "playground-seed-02",
+        "playground-seed-03",
+    }
+    assert sum(evaluator == "livingproof-scenario" for _, evaluator, _ in rows) == 3
+    assert sum(evaluator == "example-health" for _, evaluator, _ in rows) == 1
+    assert "stock-seed-" not in page
+
+    grade, k, n, rows, page = apply(stock)
+    assert (grade, k, n) == ("FAIL", 0, 3)
+    assert "<p class='count'>0 successes, 0%</p>" in page
+    assert "<p class='count'>3 successes, 100%</p>" not in page
+    assert {trial for trial, _, _ in rows} == {"stock-seed-01", "stock-seed-02", "stock-seed-03"}
+    assert sum(evaluator == "livingproof-scenario" for _, evaluator, _ in rows) == 3
+    assert sum(evaluator == "example-health" for _, evaluator, _ in rows) == 1
