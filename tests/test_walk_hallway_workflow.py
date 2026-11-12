@@ -58,8 +58,31 @@ def test_media_links_are_named_artifacts_handed_to_the_reporter():
         assert step in STEPS, step
     assert "--evidence-links links/evidence-links.json" in STEPS
     # the report never waits on media succeeding, and links are rendered only by the reporter
-    assert "needs: [plan, verify, media]" in STEPS
+    assert "needs: [plan, verify, scenario-evaluator, media]" in STEPS
     assert "needs.verify.result == 'success'" in STEPS
+
+
+def test_scenario_evaluator_is_a_parallel_job_and_the_report_collects_by_pattern():
+    scenario = STEPS[STEPS.index("\n  scenario-evaluator:") : STEPS.index("\n  media:")]
+    assert "needs: [plan, evidence]" in scenario
+    assert "needs: [plan, verify]" not in scenario
+    assert "tools/run_scenario_evaluator.py" in scenario
+    assert "evaluator-results-livingproof-scenario-" in scenario
+    assert "needs.scenario-evaluator.result == 'success'" in STEPS
+    pattern = "pattern: ${{ inputs.artifact-prefix }}evaluator-results-*"
+    assert pattern in STEPS
+    # The download names the prefix, not an evaluator. A second job is another upload.
+    after = STEPS[STEPS.index(pattern) :]
+    assert "livingproof-scenario" not in after[:240]
+    start = WORKFLOW.index("<<'COLLECT'\n") + len("<<'COLLECT'\n")
+    end = WORKFLOW.index("\n          COLLECT\n", start)
+    indent = "          "
+    extracted = "\n".join(
+        line[len(indent) :] if line.startswith(indent) else line
+        for line in WORKFLOW[start:end].splitlines()
+    )
+    source = (Path(__file__).parents[1] / "src/capability_verifier/collect.py").read_text()
+    assert extracted + "\n" == source
 
 
 def test_comment_runs_whatever_media_did():
@@ -272,13 +295,13 @@ def test_capability_installs_pinned_packaging_before_the_gate():
 def test_evidence_verify_and_media_run_in_the_locked_hallway_image():
     assert ".releases.verifier | if .image then .image" in STEPS
     assert "ghcr.io/living-proof-labs/capability-verifier-hallway" not in STEPS  # lock only
-    for job in ("evidence", "verify", "media"):
+    for job in ("evidence", "verify", "scenario-evaluator", "media"):
         body = WORKFLOW.split(f"\n  {job}:\n", 1)[1].split("\n  report:\n", 1)[0]
         head = body.split("    steps:\n", 1)[0]
         assert "image: ${{ needs.plan.outputs.verifier-image }}" in head, job
         assert "options: --user root" in head, job
     # without an image in the lock the jobs still provision the runner themselves
-    assert STEPS.count("if: needs.plan.outputs.verifier-image == ''") == 5
+    assert STEPS.count("if: needs.plan.outputs.verifier-image == ''") == 6
 
 
 # Reporter 3.4.0 release assets. Duration cells are filled only when render's input is the
