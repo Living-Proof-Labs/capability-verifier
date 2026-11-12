@@ -9,14 +9,20 @@
 #   image renders the bundle 1.1.0 decisions;
 #   it never grades; with the run and artifact links) ->
 #   comment (reporter image `comment`).
-# Every ref comes from the robot repository's verification.lock.json; nothing is pinned here.
+# Every ref comes from verification.lock.json. When the robot commit has that file, it is
+# the only source and the steps below are the ones the four current pins run. When it does
+# not, the caller passes verification-lock (a livingproof-verification-lock/0.2.0 path in
+# the caller repository). This workflow then writes the document livingproof-sim-mujoco
+# v2.0.3 evidence.py reads and points repin.py --check at the caller lock. Nothing is
+# pinned in this file.
 # A capability FAIL is the result, not a CI failure. One call = one robot lock, so a
 # cross-robot compare.yml fans out by calling this workflow once per robot repository and
 # merging the verified-* bundles it uploads.
 #
-# Robot repository contract: verification.lock.json, pins.json, tests/, and a pyproject.toml
-# with the runner source and `[tool.livingproof] adapter = "<module>:<object>"` (a
-# livingproof_sim_mujoco.evidence Robot adapter). CI needs no robot Taskfile targets.
+# Robot repository contract: pins.json, tests/, and a pyproject.toml with the runner source
+# and `[tool.livingproof] adapter = "<module>:<object>"` (a livingproof_sim_mujoco.evidence
+# Robot adapter). verification.lock.json stays on commits that still publish it. CI needs
+# no robot Taskfile targets.
 #
 #   jobs:
 #     walk-hallway:
@@ -36,6 +42,15 @@ on:
         default: ''
       configurations:
         description: JSON list of configuration names to run (default every one in the lock)
+        type: string
+        default: ''
+      verification-lock:
+        description: >-
+          Path in the caller repository of a livingproof-verification-lock/0.2.0.
+          Read only when the robot commit has no verification.lock.json; that file
+          otherwise stays the only source. The workflow writes the document
+          livingproof-sim-mujoco v2.0.3 evidence.py reads, and points repin --check
+          at this lock. PENDING_RELEASE in it still fails.
         type: string
         default: ''
       artifact-prefix:
@@ -132,6 +147,40 @@ jobs:
           ref: ${{ inputs.ref }}
           path: robot
           persist-credentials: false
+      - name: Robot verification lock
+        id: robot-lock
+        run: |
+          if [ -f robot/verification.lock.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "source=robot" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Workflow source
+        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: workflow-src
+          persist-credentials: false
+      - name: Caller repository
+        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
+          persist-credentials: false
+      - name: Write evidence inputs for livingproof-sim-mujoco v2.0.3
+        id: evidence-inputs
+        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        env:
+          VERIFICATION_LOCK: ${{ inputs.verification-lock }}
+          COPY_CALLER_LOCK: "1"
+        run: |
+          sh workflow-src/.github/scripts/write_evidence_inputs.sh robot caller "$VERIFICATION_LOCK" workflow-src >> "$GITHUB_OUTPUT"
+          rm -rf caller workflow-src
       - name: Refs from verification.lock.json
         id: lock
         working-directory: robot
@@ -205,7 +254,14 @@ jobs:
           path: verifier
           persist-credentials: false
       - name: Every ref is a released tag
-        run: python3 verifier/src/capability_verifier/repin.py --root robot --check
+        env:
+          EVIDENCE_SOURCE: ${{ steps.evidence-inputs.outputs.source || steps.robot-lock.outputs.source }}
+        run: |
+          if [ "$EVIDENCE_SOURCE" = "caller" ]; then
+            python3 verifier/src/capability_verifier/repin.py --root robot --lock caller-verification.lock.json --check
+          else
+            python3 verifier/src/capability_verifier/repin.py --root robot --check
+          fi
   evidence:
     needs: plan
     runs-on: ubuntu-24.04
@@ -231,6 +287,38 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           persist-credentials: false
+      - name: Robot verification lock
+        id: robot-lock
+        run: |
+          if [ -f verification.lock.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "source=robot" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Workflow source
+        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: workflow-src
+          persist-credentials: false
+      - name: Caller repository
+        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
+          persist-credentials: false
+      - name: Write evidence inputs for livingproof-sim-mujoco v2.0.3
+        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        env:
+          VERIFICATION_LOCK: ${{ inputs.verification-lock }}
+        run: |
+          sh workflow-src/.github/scripts/write_evidence_inputs.sh . caller "$VERIFICATION_LOCK" workflow-src >> "$GITHUB_OUTPUT"
+          rm -rf caller workflow-src
       - if: needs.plan.outputs.verifier-image == ''
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
       - if: needs.plan.outputs.verifier-image == ''
@@ -365,6 +453,38 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref }}
           persist-credentials: false
+      - name: Robot verification lock
+        id: robot-lock
+        run: |
+          if [ -f verification.lock.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "source=robot" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Workflow source
+        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: workflow-src
+          persist-credentials: false
+      - name: Caller repository
+        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
+          persist-credentials: false
+      - name: Write evidence inputs for livingproof-sim-mujoco v2.0.3
+        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        env:
+          VERIFICATION_LOCK: ${{ inputs.verification-lock }}
+        run: |
+          sh workflow-src/.github/scripts/write_evidence_inputs.sh . caller "$VERIFICATION_LOCK" workflow-src >> "$GITHUB_OUTPUT"
+          rm -rf caller workflow-src
       - if: needs.plan.outputs.verifier-image == ''
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
       - if: needs.plan.outputs.verifier-image == ''
