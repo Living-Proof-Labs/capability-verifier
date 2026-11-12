@@ -196,22 +196,31 @@ def test_the_report_job_never_calls_grade():
 
 def test_reporter_2_renders_bundle_1_1_0_and_never_grades(tmp_path):
     report = "verified/bundle/manifest.json"
+    linked = f"render {report} --evidence-links links/evidence-links.json"
+    plain = f"render {report}"
     assert _report_calls(tmp_path / "links", "1.1.0", True) == [
-        f"render {report} --evidence-links links/evidence-links.json --format json "
-        "-o reports/report.json"
+        f"{linked} --format json -o reports/report.json",
+        f"{linked} --format markdown -o reports/report.md",
+        f"{linked} --format html -o reports/report.html",
     ]
     assert _report_calls(tmp_path / "bare", "1.1.0", False) == [
-        f"render {report} --format json -o reports/report.json"
+        f"{plain} --format json -o reports/report.json",
+        f"{plain} --format markdown -o reports/report.md",
+        f"{plain} --format html -o reports/report.html",
     ]
 
 
-def test_markdown_html_and_text_still_render_from_report_json(tmp_path):
+def test_html_and_markdown_render_from_the_bundle_text_from_report_json(tmp_path):
     tmp_path = tmp_path / "r"
     tmp_path.mkdir()
     calls = _run(tmp_path, _step("Validate, then render"), "livingproof-capability-report", "1.1.0")
+    manifest = "verified/bundle/manifest.json"
     assert "validate verified/bundle/manifest.json" in calls
-    assert "render reports/report.json --format markdown -o reports/report.md" in calls
-    assert "render reports/report.json --format html -o reports/report.html" in calls
+    assert f"render {manifest} --format markdown -o reports/report.md" in calls
+    assert f"render {manifest} --format html -o reports/report.html" in calls
+    assert "render reports/report.json --format markdown -o reports/report.md" not in calls
+    assert "render reports/report.json --format html -o reports/report.html" not in calls
+    assert calls.count("render reports/report.json") == 1
 
 
 def test_pre_and_dev_releases_fail_closed_and_never_count_as_the_release(tmp_path):
@@ -270,3 +279,152 @@ def test_evidence_verify_and_media_run_in_the_locked_hallway_image():
         assert "options: --user root" in head, job
     # without an image in the lock the jobs still provision the runner themselves
     assert STEPS.count("if: needs.plan.outputs.verifier-image == ''") == 5
+
+
+# Reporter 3.4.0 release assets. Duration cells are filled only when render's input is the
+# bundle manifest, so this pins that release rather than whatever reporter happens to be installed.
+_REPORTER_RELEASE = (
+    "https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.4.0"
+)
+_REPORTER_WHEELS = {
+    "livingproof_common-1.0.0-py3-none-any.whl": (
+        "8b7795748b54eeb89610f3716245f45db48ac0474465a5abbf974e7075c1476c"
+    ),
+    "livingproof_capability_report-3.4.0-py3-none-any.whl": (
+        "d688aa86dd4e5fd603587e41e1f494358e58117e311bf1b2ee17b6e55095c496"
+    ),
+}
+# Three trials, four scenario steps. Distinct values so a shared placeholder cannot pass.
+_VARIED_DURATION_S = {1: 11.5, 2: 13.25, 3: 8.75}
+_DURATION_CELLS = ["11.50 s", "13.25 s", "8.75 s"] * 4
+
+
+def _download_wheel(dest, name):
+    import hashlib
+    import urllib.request
+
+    target = dest / name
+    url = f"{_REPORTER_RELEASE}/{name}"
+    with urllib.request.urlopen(url, timeout=60) as response:
+        target.write_bytes(response.read())
+    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    assert digest == _REPORTER_WHEELS[name], name
+    return target
+
+
+def _reporter_3_4_0(tmp_path):
+    """Install the pinned reporter 3.4.0 wheels and return the directory that holds the CLI."""
+    import shutil
+    import subprocess
+    import sys
+
+    venv = tmp_path / "reporter-venv"
+    uv = shutil.which("uv")
+    if uv:
+        subprocess.run([uv, "venv", str(venv)], check=True)
+        pip = [uv, "pip", "install", "--python", str(venv / "bin" / "python")]
+    else:
+        subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
+        pip = [str(venv / "bin" / "python"), "-m", "pip", "install"]
+    wheels = [_download_wheel(tmp_path, name) for name in _REPORTER_WHEELS]
+    subprocess.run([*pip, *(str(wheel) for wheel in wheels)], check=True)
+    return venv / "bin"
+
+
+def _bundle_with_varied_durations(tmp_path, monkeypatch):
+    """Evidence 2.0.0 fixture, each trial given its own duration_s, exported as bundle 1.1.0."""
+    import hashlib
+    import importlib.util
+    import json
+    import shutil
+
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.16.1")
+    monkeypatch.setenv("SOURCE_COMMIT", "a" * 40)
+    evidence = tmp_path / "evidence"
+    shutil.copytree(Path(__file__).parent / "fixtures" / "hallway" / "evidence-2.0.0", evidence)
+    manifest = json.loads((evidence / "manifest.json").read_text())
+    for trial in manifest["trials"]["results"]:
+        path = evidence / trial["path"]
+        observation = json.loads(path.read_text())
+        observation["duration_s"] = _VARIED_DURATION_S[trial["index"]]
+        body = (json.dumps(observation, separators=(",", ":")) + "\n").encode()
+        path.write_bytes(body)
+        trial["sha256"] = hashlib.sha256(body).hexdigest()
+    (evidence / "manifest.json").write_text(json.dumps(manifest) + "\n")
+    spec = importlib.util.spec_from_file_location(
+        "verify_hallway_duration", Path(__file__).parents[1] / "tools" / "verify_hallway.py"
+    )
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    tool.export(evidence / "manifest.json", tmp_path / "verified", bundle_version="1.1.0")
+    bundle = tmp_path / "verified" / "bundle"
+    found = {}
+    for trial in manifest["trials"]["results"]:
+        copied = json.loads((bundle / "evidence" / Path(trial["path"]).name).read_text())
+        found[trial["index"]] = copied["duration_s"]
+    assert found == _VARIED_DURATION_S
+    return bundle
+
+
+def test_rendered_html_shows_each_trial_duration(tmp_path, monkeypatch):
+    """Duration cells follow observation duration_s. An em dash here means the HTML was
+    rendered away from the bundle, which is the v1.16.1 walk-hallway failure."""
+    import json
+    import os
+    import re
+    import subprocess
+
+    bundle = _bundle_with_varied_durations(tmp_path, monkeypatch)
+    job = tmp_path / "job"
+    (job / "verified").mkdir(parents=True)
+    bundle.rename(job / "verified" / "bundle")
+    (job / "links").mkdir()
+    (job / "links" / "evidence-links.json").write_text(
+        json.dumps(
+            {
+                "run": "https://example.invalid/run/1",
+                "links": [
+                    {
+                        "label": "MCAP, all 3 trials",
+                        "url": "https://example.invalid/mcap",
+                        "kind": "mcap",
+                    },
+                    {
+                        "label": "video",
+                        "url": "https://example.invalid/pass",
+                        "kind": "video",
+                        "seed": 1,
+                        "status": "PASS",
+                    },
+                ],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    env = dict(os.environ)
+    env["PATH"] = f"{_reporter_3_4_0(tmp_path)}{os.pathsep}{env['PATH']}"
+    subprocess.run(
+        ["bash", "-e", "-c", _step("Validate, then render")], cwd=job, env=env, check=True
+    )
+    html = (job / "reports" / "report.html").read_text()
+    cells = re.findall(r"<td data-label='Duration'><span class='cell-value'>([^<]*)</span>", html)
+    assert cells == _DURATION_CELLS
+    assert "—" not in cells
+    subprocess.run(
+        [
+            "livingproof-capability-report",
+            "render",
+            "reports/report.json",
+            "--format",
+            "markdown",
+            "-o",
+            "reports/from-report-json.md",
+        ],
+        cwd=job,
+        env=env,
+        check=True,
+    )
+    assert (job / "reports" / "from-report-json.md").read_text() == (
+        job / "reports" / "report.md"
+    ).read_text()
