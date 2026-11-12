@@ -33,7 +33,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "livingproof-evaluator-scenario", git = "https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git?rev=9c82a0b414e9e1fb32bee57ffbe15e95d82ee4c7" },
+    { name = "livingproof-evaluator-scenario", git = "https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git?rev=v1.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
 
@@ -191,8 +191,8 @@ wheels = [
 
 [[package]]
 name = "livingproof-evaluator-scenario"
-version = "0.0.0"
-source = { git = "https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git?rev=9c82a0b414e9e1fb32bee57ffbe15e95d82ee4c7#9c82a0b414e9e1fb32bee57ffbe15e95d82ee4c7" }
+version = "1.0.0"
+source = { git = "https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git?rev=v1.0.0#752a6f0a9f9d448c950e56a8e345a69a6693a907" }
 
 [[package]]
 name = "mako"

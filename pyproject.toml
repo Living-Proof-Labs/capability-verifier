@@ -6,9 +6,8 @@ requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
 dependencies = [
     "pyyaml>=6.0",
-    # Pull-request commit of livingproof-evaluator-scenario, not a release.
-    # Repin this to the release tag before merge.
-    "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git@9c82a0b414e9e1fb32bee57ffbe15e95d82ee4c7",
+    # Released livingproof-evaluator-scenario.
+    "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git@v1.0.0",
 ]
 
 [project.entry-points."livingproof.capability.commands"]
