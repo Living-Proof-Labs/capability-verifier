@@ -471,9 +471,15 @@ jobs:
           mkdir reports
           set --
           if [ -f links/evidence-links.json ]; then set -- --evidence-links links/evidence-links.json; fi
+          # Markdown and HTML are rendered from the bundle manifest, with the same
+          # evidence-link args as the JSON report. Reporter >= 3.4.0 reads duration_s
+          # from each trial observation next to that manifest (its parent directory).
+          # report.json lives outside the bundle, so rendering HTML from it leaves
+          # every Duration cell as an em dash. The terminal text stays a render of
+          # the saved JSON report; it has no per-trial duration column.
           livingproof-capability-report render verified/bundle/manifest.json "$@" --format json -o reports/report.json
-          livingproof-capability-report render reports/report.json --format markdown -o reports/report.md
-          livingproof-capability-report render reports/report.json --format html -o reports/report.html
+          livingproof-capability-report render verified/bundle/manifest.json "$@" --format markdown -o reports/report.md
+          livingproof-capability-report render verified/bundle/manifest.json "$@" --format html -o reports/report.html
           livingproof-capability-report render reports/report.json > reports/report.txt
           (cd reports && sha256sum report.* > SHA256SUMS)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
