@@ -45,14 +45,14 @@ def accepted_reference(spec: dict) -> bool:
 def reported_contract(spec: dict) -> bool:
     """True when a k-of-n result is still one run.
 
-    A released tag is reported, and so is the v0.0.0 placeholder, including
-    when the repository is not this one. Pause results name this repository
-    too; their tag is neither, so they are not a k-of-n run.
+    Every contract result except pause is one run, whatever its tag or
+    repository, so a rejected one (unknown tag, the v0.0.0 placeholder or
+    another repository) is reported as INCOMPATIBLE rather than left out.
+    Pause results are not a k-of-n run.
     """
     if not isinstance(spec, dict):
         return False
-    tag = spec.get("tag")
-    return isinstance(tag, str) and (tag in ACCEPTED_TAGS or tag == PLACEHOLDER_TAG)
+    return spec.get("capability") != "pause"
 
 
 def catalog_reference_ok(

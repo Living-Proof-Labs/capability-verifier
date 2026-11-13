@@ -684,10 +684,6 @@ def test_pause_results_without_compared_repeats_are_not_runs():
     assert assessment["runs"] == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="7235785 groups k-of-n results by tag, so an unknown tag gets no run",
-)
 @pytest.mark.parametrize("plan", [PLAN, {"trials": {"count": 1}}])
 def test_an_unknown_tag_is_an_incompatible_run(plan):
     """A walk-hallway result with an unreleased tag is reported as INCOMPATIBLE, not left out."""
