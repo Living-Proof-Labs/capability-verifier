@@ -2,15 +2,17 @@
 """Scenario-neutral verifier: tag pin, wrapper, frozen formats, stored-run replay."""
 
 import hashlib
+import importlib.util
 import json
 import re
+import shutil
 from pathlib import Path
 
 import pytest
 import yaml
 
 from capability_verifier import definition as d
-from capability_verifier import hallway
+from capability_verifier import evaluate, hallway
 from capability_verifier.specs_ref import SPECS_TAG, catalog_reference_ok
 
 ROOT = Path(__file__).parents[1]
@@ -237,3 +239,43 @@ def test_wrapper_self_reference_names_a_callable_workflow_in_this_repository():
     assert target.is_file()
     assert "workflow_call" in _workflow(target.name)[True]
     assert d.called_workflow(target.read_text()) is None
+
+
+def _stored_run_bundle(tmp_path, monkeypatch, definition):
+    """The bundle this commit exports from a stored run 43402628666 evidence copy."""
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.18.5")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    spec = importlib.util.spec_from_file_location(
+        f"verify_hallway_stored_{definition}", ROOT / "tools" / "verify_hallway.py"
+    )
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    evidence = tmp_path / "evidence"
+    shutil.copytree(FIXTURES / definition / "evidence", evidence)
+    tool.export(evidence / "manifest.json", tmp_path / "verified", bundle_version="1.1.0")
+    bundle = json.loads((tmp_path / "verified" / "bundle" / "manifest.json").read_text())
+    return bundle
+
+
+@pytest.mark.parametrize(
+    "change, grade",
+    [
+        ({}, "FAIL"),
+        ({"commit": "f" * 40}, "FAIL"),
+        ({"revision": "9.9.9"}, "FAIL"),
+        ({"repository": "https://github.com/example/specs"}, "INCOMPATIBLE"),
+        ({"tag": "v0.0.0"}, "INCOMPATIBLE"),
+        ({"tag": "v9.9.9"}, "INCOMPATIBLE"),
+    ],
+)
+def test_stored_compared_repeats_stay_one_run_for_any_contract(
+    tmp_path, monkeypatch, change, grade
+):
+    """Stored G1 stock repeats are one run. The tag decides the grade, not the commit."""
+    bundle = _stored_run_bundle(tmp_path, monkeypatch, "unitree-g1-stock")
+    results = bundle["results"]
+    for row in results:
+        row["spec"].update(change)
+    [run] = evaluate.assess_bundle(results, {row["id"]: True for row in results})["runs"]
+    assert run["grade"] == grade
+    assert run["rationale"] == "3 of 3 repeats agree"
