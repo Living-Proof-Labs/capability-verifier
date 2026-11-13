@@ -3,7 +3,8 @@
 
 from pathlib import Path
 
-WORKFLOW = (Path(__file__).parents[1] / ".github/workflows/walk-hallway.yml").read_text()
+WORKFLOW = (Path(__file__).parents[1] / ".github/workflows/scenario.yml").read_text()
+WRAPPER = (Path(__file__).parents[1] / ".github/workflows/walk-hallway.yml").read_text()
 STEPS = "\n".join(line for line in WORKFLOW.splitlines() if not line.lstrip().startswith("#"))
 
 
@@ -756,6 +757,16 @@ def _bundle_with_varied_durations(tmp_path, monkeypatch):
     evidence = tmp_path / "evidence"
     shutil.copytree(Path(__file__).parent / "fixtures" / "hallway" / "evidence-2.0.0", evidence)
     manifest = json.loads((evidence / "manifest.json").read_text())
+    # The committed trace steps farther from the route than its stored maximum.
+    # This render only needs a gradable trial, so the copy's trace stays inside that maximum.
+    for trial in manifest["trials"]["results"]:
+        path = evidence / trial["path"]
+        observation = json.loads(path.read_text())
+        for sample in observation["trace"]["samples"]:
+            sample[2] = 0.0
+        body = (json.dumps(observation) + "\n").encode()
+        path.write_bytes(body)
+        trial["sha256"] = hashlib.sha256(body).hexdigest()
     for trial in manifest["trials"]["results"]:
         path = evidence / trial["path"]
         observation = json.loads(path.read_text())

@@ -1,0 +1,179 @@
+{
+  "run_id": 43402628666,
+  "repository": "Living-Proof-Labs/livingproof-verification",
+  "url": "https://github.com/Living-Proof-Labs/livingproof-verification/actions/runs/43402628666",
+  "head_sha": "2bcdb51415a9394dec322b1e531cb8780b9d72e4",
+  "head_branch": "main",
+  "verifier": "v1.18.5",
+  "source": "Copied byte-for-byte from the stored artifacts of this run. sha256 values are the MANIFEST.json entries for those paths. Files were not edited.",
+  "definitions": [
+    {
+      "id": "unitree-g1-playground",
+      "grade": "PASS",
+      "files": [
+        {
+          "store_path": "unitree-g1-playground-mujoco-hallway-evidence-playground/manifest.json",
+          "fixture_path": "unitree-g1-playground/evidence/manifest.json",
+          "sha256": "da25994390c86b0bea7b208d2722b5e1fb36bbdcf380971406dca1a0fbd89930",
+          "size_bytes": 20672
+        },
+        {
+          "store_path": "unitree-g1-playground-mujoco-hallway-evidence-playground/run-manifest.json",
+          "fixture_path": "unitree-g1-playground/evidence/run-manifest.json",
+          "sha256": "d94526783a7d053f8ce56ed49358a3936b32da707060fced4d27831b0879b2b7",
+          "size_bytes": 1261
+        },
+        {
+          "store_path": "unitree-g1-playground-mujoco-hallway-evidence-playground/trials/trial-01.json",
+          "fixture_path": "unitree-g1-playground/evidence/trials/trial-01.json",
+          "sha256": "48b6078f3deb763cd1595d727bff52baac95b335de96e57db1402ee6ece9840b",
+          "size_bytes": 21890
+        },
+        {
+          "store_path": "unitree-g1-playground-mujoco-hallway-evidence-playground/trials/trial-02.json",
+          "fixture_path": "unitree-g1-playground/evidence/trials/trial-02.json",
+          "sha256": "48b6078f3deb763cd1595d727bff52baac95b335de96e57db1402ee6ece9840b",
+          "size_bytes": 21890
+        },
+        {
+          "store_path": "unitree-g1-playground-mujoco-hallway-evidence-playground/trials/trial-03.json",
+          "fixture_path": "unitree-g1-playground/evidence/trials/trial-03.json",
+          "sha256": "48b6078f3deb763cd1595d727bff52baac95b335de96e57db1402ee6ece9840b",
+          "size_bytes": 21890
+        },
+        {
+          "store_path": "unitree-g1-playground-mujoco-hallway-verified-playground/verification.json",
+          "fixture_path": "unitree-g1-playground/verification.json",
+          "sha256": "57b3c95541c7083bbb23a6c57e46adcfb95b1800e664a0760289da5f3716e599",
+          "size_bytes": 10720
+        }
+      ]
+    },
+    {
+      "id": "unitree-g1-stock",
+      "grade": "FAIL",
+      "files": [
+        {
+          "store_path": "unitree-g1-stock-mujoco-hallway-evidence-stock/manifest.json",
+          "fixture_path": "unitree-g1-stock/evidence/manifest.json",
+          "sha256": "dcc6bcfe030e6ffd26c1f83b9e244a4a7c2f7a56a711734102fa98657d7c58d6",
+          "size_bytes": 17302
+        },
+        {
+          "store_path": "unitree-g1-stock-mujoco-hallway-evidence-stock/run-manifest.json",
+          "fixture_path": "unitree-g1-stock/evidence/run-manifest.json",
+          "sha256": "388e78b4bc3fead7a9dd165d810a69204dc05566a7f12311eae710e8d91c4589",
+          "size_bytes": 1251
+        },
+        {
+          "store_path": "unitree-g1-stock-mujoco-hallway-evidence-stock/trials/trial-01.json",
+          "fixture_path": "unitree-g1-stock/evidence/trials/trial-01.json",
+          "sha256": "16223272b2ddd3e13b4053e2b756a61b251c1c2ff2d858a6936efbefa4120a46",
+          "size_bytes": 25775
+        },
+        {
+          "store_path": "unitree-g1-stock-mujoco-hallway-evidence-stock/trials/trial-02.json",
+          "fixture_path": "unitree-g1-stock/evidence/trials/trial-02.json",
+          "sha256": "16223272b2ddd3e13b4053e2b756a61b251c1c2ff2d858a6936efbefa4120a46",
+          "size_bytes": 25775
+        },
+        {
+          "store_path": "unitree-g1-stock-mujoco-hallway-evidence-stock/trials/trial-03.json",
+          "fixture_path": "unitree-g1-stock/evidence/trials/trial-03.json",
+          "sha256": "16223272b2ddd3e13b4053e2b756a61b251c1c2ff2d858a6936efbefa4120a46",
+          "size_bytes": 25775
+        },
+        {
+          "store_path": "unitree-g1-stock-mujoco-hallway-verified-stock/verification.json",
+          "fixture_path": "unitree-g1-stock/verification.json",
+          "sha256": "7618deb21534aa5e101c37535bb7d50b5538dba2286659d0b693b592a7bacb36",
+          "size_bytes": 14523
+        }
+      ]
+    },
+    {
+      "id": "unitree-go1-playground",
+      "grade": "PASS",
+      "files": [
+        {
+          "store_path": "unitree-go1-playground-mujoco-hallway-evidence-playground/manifest.json",
+          "fixture_path": "unitree-go1-playground/evidence/manifest.json",
+          "sha256": "45e3f2279e41d175ad2b5aa2a86649e9f89917bed1817e482253cd737fa552c7",
+          "size_bytes": 14754
+        },
+        {
+          "store_path": "unitree-go1-playground-mujoco-hallway-evidence-playground/run-manifest.json",
+          "fixture_path": "unitree-go1-playground/evidence/run-manifest.json",
+          "sha256": "571fa24c31de754a73fd10debc44271ed5cda1edfe73c088e8fffcf934527096",
+          "size_bytes": 1265
+        },
+        {
+          "store_path": "unitree-go1-playground-mujoco-hallway-evidence-playground/trials/trial-01.json",
+          "fixture_path": "unitree-go1-playground/evidence/trials/trial-01.json",
+          "sha256": "b4bb652ea8e3e177160edbca3b8872c21c9b97421558f288d6d660adb4662628",
+          "size_bytes": 24005
+        },
+        {
+          "store_path": "unitree-go1-playground-mujoco-hallway-evidence-playground/trials/trial-02.json",
+          "fixture_path": "unitree-go1-playground/evidence/trials/trial-02.json",
+          "sha256": "b4bb652ea8e3e177160edbca3b8872c21c9b97421558f288d6d660adb4662628",
+          "size_bytes": 24005
+        },
+        {
+          "store_path": "unitree-go1-playground-mujoco-hallway-evidence-playground/trials/trial-03.json",
+          "fixture_path": "unitree-go1-playground/evidence/trials/trial-03.json",
+          "sha256": "b4bb652ea8e3e177160edbca3b8872c21c9b97421558f288d6d660adb4662628",
+          "size_bytes": 24005
+        },
+        {
+          "store_path": "unitree-go1-playground-mujoco-hallway-verified-playground/verification.json",
+          "fixture_path": "unitree-go1-playground/verification.json",
+          "sha256": "1b2c41eb0b8379735292ba2187f8edf7a309329f3f7b76922ff63e4d9e2fdad8",
+          "size_bytes": 10768
+        }
+      ]
+    },
+    {
+      "id": "booster-t1-stock",
+      "grade": "FAIL",
+      "files": [
+        {
+          "store_path": "booster-t1-stock-mujoco-hallway-evidence-stock/manifest.json",
+          "fixture_path": "booster-t1-stock/evidence/manifest.json",
+          "sha256": "505c5a7857d54ca3c51a6903061e1f3d3b476b5a285761e15772a6dc7998557f",
+          "size_bytes": 12832
+        },
+        {
+          "store_path": "booster-t1-stock-mujoco-hallway-evidence-stock/run-manifest.json",
+          "fixture_path": "booster-t1-stock/evidence/run-manifest.json",
+          "sha256": "07a74559965ddbf10c9bed6d70ef26ab1d57f3dc2916c983917042b4e29e127c",
+          "size_bytes": 1254
+        },
+        {
+          "store_path": "booster-t1-stock-mujoco-hallway-evidence-stock/trials/trial-01.json",
+          "fixture_path": "booster-t1-stock/evidence/trials/trial-01.json",
+          "sha256": "885bffa4f214a5afe5b1e8822158723536ead5fb5dac6a1ce7659f401e8f0daa",
+          "size_bytes": 19546
+        },
+        {
+          "store_path": "booster-t1-stock-mujoco-hallway-evidence-stock/trials/trial-02.json",
+          "fixture_path": "booster-t1-stock/evidence/trials/trial-02.json",
+          "sha256": "885bffa4f214a5afe5b1e8822158723536ead5fb5dac6a1ce7659f401e8f0daa",
+          "size_bytes": 19546
+        },
+        {
+          "store_path": "booster-t1-stock-mujoco-hallway-evidence-stock/trials/trial-03.json",
+          "fixture_path": "booster-t1-stock/evidence/trials/trial-03.json",
+          "sha256": "885bffa4f214a5afe5b1e8822158723536ead5fb5dac6a1ce7659f401e8f0daa",
+          "size_bytes": 19546
+        },
+        {
+          "store_path": "booster-t1-stock-mujoco-hallway-verified-stock/verification.json",
+          "fixture_path": "booster-t1-stock/verification.json",
+          "sha256": "73d7bc3d9b59f9e4ceada532872c9548ac07bb30200b2fdb7982aab020f7cfa5",
+          "size_bytes": 16509
+        }
+      ]
+    }
+  ]
+}

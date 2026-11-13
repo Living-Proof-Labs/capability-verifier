@@ -6,8 +6,11 @@ requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
 dependencies = [
     "pyyaml>=6.0",
-    # Released livingproof-evaluator-scenario.
-    "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git@v1.1.2",
+    # Released tags only. robot-capability-specs v2.2.0, livingproof-worlds v1.2.0
+    # (worlds.lock.json), livingproof-sim-mujoco v2.1.1, livingproof-evaluator-scenario v1.2.0.
+    "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git@v1.2.0",
+    "livingproof-scenario-parameters @ git+https://github.com/Living-Proof-Labs/robot-capability-specs@v2.2.0#subdirectory=python",
+    "livingproof-sim-mujoco @ git+https://github.com/Living-Proof-Labs/livingproof-sim-mujoco.git@v2.1.1",
 ]
 
 [project.entry-points."livingproof.capability.commands"]

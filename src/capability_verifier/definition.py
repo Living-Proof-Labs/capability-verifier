@@ -569,6 +569,62 @@ def check(definition: Path, work: Path, workflow: Path | None = None) -> dict:
     return lock
 
 
+def called_workflow(text: str) -> str | None:
+    """Relative path when ``text`` is a one-job wrapper around a same-repository workflow.
+
+    ``./`` is the caller's repository. ``$/`` is the repository and revision of the
+    workflow that contains the call, which is what a caller in another repository
+    resolves. A ``@ref`` is not allowed on ``$/``. Both forms name a file in this
+    checkout.
+    """
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    jobs = doc.get("jobs")
+    if not isinstance(jobs, dict) or len(jobs) != 1:
+        return None
+    job = next(iter(jobs.values()))
+    if not isinstance(job, dict) or job.get("steps"):
+        return None
+    uses = job.get("uses")
+    if isinstance(uses, str) and uses.startswith("$/"):
+        path = uses[2:]
+        if "@" in path:
+            return None
+        return path
+    if isinstance(uses, str) and uses.startswith("./"):
+        return uses[2:]
+    return None
+
+
+def procedure_text(root: Path, procedure: str) -> str:
+    """Run scripts for ``procedure``, following one local wrapper."""
+    path = root / PROCEDURES[procedure]
+    text = path.read_text()
+    called = called_workflow(text)
+    if called is None:
+        return text
+    return (root / called).read_text()
+
+
+def first_step(workflow: str, names: tuple[str, ...]) -> str:
+    """The first of ``names`` that has a run script.
+
+    A lock can check out an older workflow whose catalog step is still named
+    ``Walk-hallway catalog``. The current workflow names it ``Scenario catalog``.
+    """
+    missing = None
+    for name in names:
+        try:
+            return step(workflow, name)
+        except DefinitionError as exc:
+            missing = exc
+    raise missing
+
+
 def step(workflow: str, name: str) -> str:
     """The ``run: |`` script of the first step whose name starts with ``name``."""
     lines = workflow.splitlines()
@@ -590,7 +646,7 @@ def step(workflow: str, name: str) -> str:
                 if body.startswith("run: "):
                     return body[5:] + "\n"
             break
-    raise DefinitionError(f"walk-hallway.yml has no step {name!r} with a run script")
+    raise DefinitionError(f"workflow has no step {name!r} with a run script")
 
 
 def sh(script: str, cwd: Path, env: dict, outputs: Path | None = None) -> dict:
@@ -726,7 +782,7 @@ def run(definition: Path, out: Path, *, reporter: str = "docker") -> dict:
     v = lock["releases"]["verifier"]
     robot, verifier = work / "robot", work / "verifier"
     checkout(v["repository"], v["commit"], verifier)
-    wf = (verifier / PROCEDURES[lock["procedure"]]).read_text()
+    wf = procedure_text(verifier, lock["procedure"])
     gh = {"MUJOCO_GL": "osmesa", "PYOPENGL_PLATFORM": "osmesa"}
     # plan job: the configurations must be in the lock, every ref a released tag.
     evidence_env = prepare_evidence_inputs(lock, robot, lock_path(definition))
@@ -745,7 +801,7 @@ def run(definition: Path, out: Path, *, reporter: str = "docker") -> dict:
     adapter = sh(step(wf, "Robot adapter from pyproject.toml"), robot, gh, work / "a.out")["ref"]
     sh(step(wf, "Robot and configuration profiles valid"), robot, {**gh, "ADAPTER": adapter})
     subprocess.run(["uv", "sync", "--locked", "-q"], cwd=verifier, check=True)
-    sh(step(wf, "Walk-hallway catalog"), verifier, gh)
+    sh(first_step(wf, ("Scenario catalog", "Walk-hallway catalog")), verifier, gh)
     bindir = reporter_shim(lock, reporter, work)
     summary = {"definition": definition.name, "bundle-version": bundle, "configurations": {}}
     for conf in lock["robot"]["configurations"]:

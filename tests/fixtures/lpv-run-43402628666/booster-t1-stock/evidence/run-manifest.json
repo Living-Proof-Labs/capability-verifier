@@ -1,0 +1,44 @@
+{
+  "format": "livingproof-run-manifest/0.1",
+  "run_id": "walk-hallway-booster-t1-stock-20261113T093742Z",
+  "specification": {
+    "tag": "v2.0.2",
+    "commit": "16524cbfeef18ff0454ebf125668b010d38a3993"
+  },
+  "scenario": "walk-hallway@0.1.0",
+  "world": {
+    "id": "hallway-open",
+    "version": "0.1.0",
+    "sha256": "d60bb8aa6a72c8403fb6674cc9d803962c1484bc3e163527988e8c57ccec775c"
+  },
+  "simulator": {
+    "engine": "mujoco",
+    "version": "3.17.0",
+    "adapter": "livingproof-sim-mujoco",
+    "adapter_commit": "292589ad15582c26cff2bffcc851e3abaf4ea708"
+  },
+  "robot": {
+    "id": "booster-t1",
+    "repo": "https://github.com/Living-Proof-Labs/livingproof-booster-t1",
+    "commit": "61b2559ebb401973ec7733b4c886753e6d2b704c",
+    "profile_sha256": "159a1270d5050fd91bf53c2fabec67f4b04899fb5bcc4c6af05551e86404dead"
+  },
+  "configuration": {
+    "name": "stock",
+    "version": "1.0.0",
+    "sha256": "e1626385968e82997bebce743fab19fb2f2661da3def41de2a594051911c324a"
+  },
+  "parameters": {
+    "command_speed": 0.5,
+    "route_length": 5.5,
+    "time_limit": 27.0,
+    "fall_height": 0.44,
+    "wall_clearance": 0.05,
+    "lateral_limit": 0.4795,
+    "exit_x": 3.0,
+    "spawn": "spawn-entrance"
+  },
+  "trials": {
+    "count": 3
+  }
+}

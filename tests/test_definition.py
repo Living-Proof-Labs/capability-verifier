@@ -13,6 +13,7 @@ from capability_verifier import definition as d
 
 ROOT = Path(__file__).parents[1]
 WORKFLOW = (ROOT / ".github/workflows/walk-hallway.yml").read_text()
+IMPLEMENTATION = (ROOT / ".github/workflows/scenario.yml").read_text()
 RELEASES = {
     "verifier": {
         "repository": "Living-Proof-Labs/capability-verifier",
@@ -347,21 +348,31 @@ def test_definition_is_validated(tmp_path, text, message):
         ("Setup (locked environment", "uv sync --locked"),
         ("Robot adapter from pyproject.toml", '["tool"]["livingproof"]["adapter"]'),
         ("Evidence (observations only", "livingproof_sim_mujoco.evidence"),
-        ("Walk-hallway catalog", "fetch_hallway_specs.py"),
+        ("Scenario catalog", "fetch_hallway_specs.py"),
         ("Assess every trial", "verify_hallway.py"),
         ("Validate, then render", "livingproof-capability-report render"),
     ],
 )
 def test_run_executes_the_reusable_workflow_steps_not_a_copy(name, needle):
     # Every step run() uses exists in this commit's walk-hallway.yml, with its script.
-    script = d.step(WORKFLOW, name)
+    script = d.step(IMPLEMENTATION, name)
     assert needle in script
     assert "${{" not in script  # inputs reach the scripts through env, as in CI
 
 
 def test_missing_step_is_an_error():
     with pytest.raises(SystemExit, match="no step"):
-        d.step(WORKFLOW, "Nonexistent step")
+        d.step(IMPLEMENTATION, "Nonexistent step")
+
+
+def test_an_older_catalog_step_name_still_runs():
+    """Locks that check out an older workflow still name the catalog step Walk-hallway."""
+    old = IMPLEMENTATION.replace(
+        "Scenario catalog from the verifier's own lock",
+        "Walk-hallway catalog from the verifier's own lock",
+    )
+    script = d.first_step(old, ("Scenario catalog", "Walk-hallway catalog"))
+    assert "fetch_hallway_specs.py" in script
 
 
 def test_livingproof_plugin_entry_point():

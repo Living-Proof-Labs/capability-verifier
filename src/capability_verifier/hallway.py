@@ -25,19 +25,38 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 from livingproof_evaluator_scenario.checks import (
     EVALUATE,
     _seed,
     assessment,
-    exit_reached,
     failure,
-    fall,
-    lateral_limit,
-    wall_contact,
 )
+from livingproof_scenario_parameters import ScenarioParameterError, quantize_half_up_decimal_text
+
+from .scenario_parameters import acceptance, clearance_table, evaluator_thresholds
+
+
+def exit_reached(observation, thresholds, evidence_id, seed=None):
+    """Frozen check name, delegated to the scenario evaluator."""
+    return EVALUATE["hallway-exit-reached"](observation, thresholds, evidence_id, seed)
+
+
+def lateral_limit(observation, thresholds, evidence_id, seed=None):
+    """Frozen check name, delegated to the scenario evaluator."""
+    return EVALUATE["hallway-lateral-limit"](observation, thresholds, evidence_id, seed)
+
+
+def wall_contact(observation, thresholds, evidence_id, seed=None):
+    """Frozen check name, delegated to the scenario evaluator."""
+    return EVALUATE["hallway-wall-contact"](observation, thresholds, evidence_id, seed)
+
+
+def fall(observation, thresholds, evidence_id, seed=None):
+    """Frozen check name, delegated to the scenario evaluator."""
+    return EVALUATE["hallway-fall"](observation, thresholds, evidence_id, seed)
+
 
 # Re-exported so existing callers keep `hallway.exit_reached` and the other checks.
 __all__ = [
@@ -78,7 +97,6 @@ SPEC_PRECONDITIONS = (
     "velocity_interface",
     "simulator_declared",
 )
-WALL_CLEARANCE = {"humanoid": 0.05, "quadruped": 0.10}
 # The newest runner observation format, and every format the evaluators read. 2.0.0
 # (livingproof-sim-mujoco, capability-verifier#37) adds the left_hallway end, measures a
 # contact's depth as intrusion past the wall's inner face and ends crossed_exit only within
@@ -324,29 +342,39 @@ def media_trial_key(document) -> str:
     raise ManifestError(f"media field 'format' {fmt!r} is not one of {accepted}")
 
 
+def _parameters(fn, *args, **kwargs):
+    """A scenario or world mismatch is the parameter message, not a traceback."""
+    try:
+        return fn(*args, **kwargs)
+    except ScenarioParameterError as exc:
+        raise ManifestError(str(exc)) from None
+
+
 def millimetres(metres: float) -> int:
-    """Metres to integer millimetres, rounding half up from the decimal text of the value."""
-    return int((Decimal(str(metres)) * 1000).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+    """Metres to integer millimetres, half up from the decimal text of the value."""
+    return quantize_half_up_decimal_text(metres, 3)
 
 
 def fits_width(manifest: dict) -> dict:
     """fits_width recomputed from the manifest's robot and world, never taken from its ``met``.
 
-    Rule (walk-hallway README): robot width + 2 x wall clearance <= clear width, with each
-    quantity converted to whole millimetres (round half up) before comparing.
+    Robot width + 2 x wall clearance <= clear width, with each quantity converted to whole
+    millimetres (half up from the decimal text) before comparing. Clearance comes from the
+    scenario parameter file.
     """
     profile = manifest["robot"]["profile"]
+    table = _parameters(clearance_table, manifest)
     cls = profile.get("class")
-    if cls not in WALL_CLEARANCE:
+    if cls not in table:
         raise ManifestError(
-            f"manifest field 'robot.profile.class' must be one of {sorted(WALL_CLEARANCE)} "
+            f"manifest field 'robot.profile.class' must be one of {sorted(table)} "
             "to check fits_width"
         )
     width = profile["dimensions"]["width"]
     width = width["value"] if isinstance(width, dict) else width
     if not _num(width):
         raise ManifestError("manifest field 'robot.profile.dimensions.width' is not a number")
-    clear, clearance = manifest["world"]["clear_width"], WALL_CLEARANCE[cls]
+    clear, clearance = manifest["world"]["clear_width"], table[cls]
     need = millimetres(width) + 2 * millimetres(clearance)
     met = need <= millimetres(clear)
     return {
@@ -399,20 +427,8 @@ def unmet_precondition(manifest: dict) -> dict | None:
 
 
 def thresholds(manifest: dict) -> dict:
-    """Acceptance from the specification, filled from profiles, world and plan."""
-    robot = manifest["robot"]["profile"]
-    conf = manifest["configuration"]["profile"]
-    world = manifest["world"]
-    plan = manifest["plan"]
-    width = robot["dimensions"]["width"]
-    width = width["value"] if isinstance(width, dict) else width
-    fall = conf["locomotion"]["fall_base_height"]
-    return {
-        "time_limit": round(2 * world["route_length"] / plan["command_speed"] + 5, 4),
-        "lateral_limit": round(world["clear_width"] / 2 - width / 2, 4),
-        "half_width": round(world["clear_width"] / 2, 4),  # the exit segment is |y| <= this
-        "fall_height": fall["value"] if isinstance(fall, dict) else fall,
-    }
+    """Spec-rounded limits from the parameter file, passed to the evaluator as-is."""
+    return evaluator_thresholds(_parameters(acceptance, manifest))
 
 
 LATERAL_FORMULA = "clear_width / 2 - robot_width / 2"
@@ -424,17 +440,21 @@ FITS_WIDTH_FORMULA = "robot_width + 2 * wall_clearance <= clear_width"
 def limits(manifest: dict) -> dict:
     """Each limit with the inputs it was resolved from and its formula (specs #30).
 
-    The values are exactly the ones ``thresholds`` grades against (never re-rounded for
-    display), so a report can render the width used, the formula and the limit without
-    computing anything. Additive: no grading decision reads this.
+    The values are the spec-rounded limits ``thresholds`` passes to the evaluator
+    (never re-rounded for display). The formula strings and input keys stay the
+    recorded bundle shape. Additive: no grading decision reads this.
     """
-    th = thresholds(manifest)
+    resolved = _parameters(acceptance, manifest)
+    th = evaluator_thresholds(resolved)
     robot = manifest["robot"]["profile"]
     world, plan = manifest["world"], manifest["plan"]
     width = robot["dimensions"]["width"]
     width = width["value"] if isinstance(width, dict) else width
     cls = robot.get("class")
     fit = fits_width(manifest)
+    if fit["met"] != resolved["preconditions"]["fits_width"]:
+        raise ManifestError("fits_width does not match the parameter file's precondition")
+    clearance = _parameters(clearance_table, manifest)[cls]
     return {
         "lateral_limit": {
             "value": th["lateral_limit"],
@@ -474,7 +494,7 @@ def limits(manifest: dict) -> dict:
             "inputs": {
                 "robot_width": width,
                 "robot_class": cls,
-                "wall_clearance": WALL_CLEARANCE[cls],
+                "wall_clearance": clearance,
                 "clear_width": world["clear_width"],
             },
             "detail": fit["detail"],

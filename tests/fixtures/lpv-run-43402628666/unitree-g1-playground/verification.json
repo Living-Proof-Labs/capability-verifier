@@ -1,0 +1,389 @@
+{
+  "plan": {
+    "command_speed": 0.5,
+    "trials": {
+      "count": 3
+    }
+  },
+  "thresholds": {
+    "time_limit": 27.0,
+    "lateral_limit": 0.49,
+    "half_width": 0.75,
+    "fall_height": 0.5
+  },
+  "limits": {
+    "lateral_limit": {
+      "value": 0.49,
+      "unit": "m",
+      "formula": "clear_width / 2 - robot_width / 2",
+      "inputs": {
+        "clear_width": 1.5,
+        "robot_width": 0.52,
+        "robot_width_source": "robot.profile.dimensions.width"
+      }
+    },
+    "exit_segment": {
+      "value": 0.75,
+      "unit": "m",
+      "formula": "|y| <= clear_width / 2",
+      "inputs": {
+        "clear_width": 1.5
+      }
+    },
+    "time_limit": {
+      "value": 27.0,
+      "unit": "s",
+      "formula": "2 * route_length / command_speed + 5 s",
+      "inputs": {
+        "route_length": 5.5,
+        "command_speed": 0.5
+      }
+    },
+    "fall_height": {
+      "value": 0.5,
+      "unit": "m",
+      "formula": "configuration.profile.locomotion.fall_base_height",
+      "inputs": {}
+    },
+    "fits_width": {
+      "met": true,
+      "unit": "m",
+      "formula": "robot_width + 2 * wall_clearance <= clear_width",
+      "inputs": {
+        "robot_width": 0.52,
+        "robot_class": "humanoid",
+        "wall_clearance": 0.05,
+        "clear_width": 1.5
+      },
+      "detail": "0.52 + 2 x 0.05 = 0.620 m <= 1.5 m (recomputed by the verifier)"
+    }
+  },
+  "policy": {
+    "id": "all-required-v1",
+    "version": "1.0.0"
+  },
+  "trials": [
+    {
+      "id": "playground-seed-01",
+      "evidence": {
+        "id": "playground-seed-01",
+        "path": "trials/trial-01.json",
+        "sha256": "48b6078f3deb763cd1595d727bff52baac95b335de96e57db1402ee6ece9840b"
+      },
+      "status": "PASS",
+      "assessments": [
+        {
+          "id": "playground-seed-01/hallway-exit-reached",
+          "evaluator": "hallway-exit-reached",
+          "version": "1.0.0",
+          "assessor": {
+            "type": "deterministic",
+            "id": "hallway-exit-reached",
+            "version": "1.0.0"
+          },
+          "status": "PASS",
+          "rationale": "exit at 9.60 s <= 27.00 s (17.40 s spare) (trial 1)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-01"
+          ],
+          "details": {
+            "observed": 9.6,
+            "threshold": 27.0,
+            "time": 9.6,
+            "margin": 17.4
+          }
+        },
+        {
+          "id": "playground-seed-01/hallway-lateral-limit",
+          "evaluator": "hallway-lateral-limit",
+          "version": "1.0.0",
+          "assessor": {
+            "type": "deterministic",
+            "id": "hallway-lateral-limit",
+            "version": "1.0.0"
+          },
+          "status": "PASS",
+          "rationale": "lateral 0.09 m <= 0.49 m, largest at 5.24 s (trial 1)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-01"
+          ],
+          "details": {
+            "observed": 0.0903,
+            "threshold": 0.49,
+            "time": 5.24,
+            "peak_time": 5.24,
+            "margin": 0.3997
+          }
+        },
+        {
+          "id": "playground-seed-01/hallway-wall-contact",
+          "evaluator": "hallway-wall-contact",
+          "version": "1.0.0",
+          "assessor": {
+            "type": "deterministic",
+            "id": "hallway-wall-contact",
+            "version": "1.0.0"
+          },
+          "status": "PASS",
+          "rationale": "no wall contact; closest 0.250 m at 0.00 s (trial 1)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-01"
+          ],
+          "details": {
+            "observed": 0,
+            "threshold": 0,
+            "time": 0.0,
+            "margin": 0.25
+          }
+        },
+        {
+          "id": "playground-seed-01/hallway-fall",
+          "evaluator": "hallway-fall",
+          "version": "1.0.0",
+          "assessor": {
+            "type": "deterministic",
+            "id": "hallway-fall",
+            "version": "1.0.0"
+          },
+          "status": "PASS",
+          "rationale": "base height 0.71 m >= 0.50 m, lowest at 2.90 s (trial 1)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-01"
+          ],
+          "details": {
+            "observed": 0.7065,
+            "threshold": 0.5,
+            "time": 2.9,
+            "margin": 0.2065
+          }
+        }
+      ],
+      "failures": [],
+      "index": 1
+    },
+    {
+      "id": "playground-seed-02",
+      "evidence": {
+        "id": "playground-seed-02",
+        "path": "trials/trial-02.json",
+        "sha256": "48b6078f3deb763cd1595d727bff52baac95b335de96e57db1402ee6ece9840b"
+      },
+      "status": "PASS",
+      "assessments": [
+        {
+          "id": "playground-seed-02/hallway-exit-reached",
+          "evaluator": "hallway-exit-reached",
+          "version": "1.0.0",
+          "assessor": {
+            "type": "deterministic",
+            "id": "hallway-exit-reached",
+            "version": "1.0.0"
+          },
+          "status": "PASS",
+          "rationale": "exit at 9.60 s <= 27.00 s (17.40 s spare) (trial 2)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-02"
+          ],
+          "details": {
+            "observed": 9.6,
+            "threshold": 27.0,
+            "time": 9.6,
+            "margin": 17.4
+          }
+        },
+        {
+          "id": "playground-seed-02/hallway-lateral-limit",
+          "evaluator": "hallway-lateral-limit",
+          "version": "1.0.0",
+          "assessor": {
+            "type": "deterministic",
+            "id": "hallway-lateral-limit",
+            "version": "1.0.0"
+          },
+          "status": "PASS",
+          "rationale": "lateral 0.09 m <= 0.49 m, largest at 5.24 s (trial 2)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-02"
+          ],
+          "details": {
+            "observed": 0.0903,
+            "threshold": 0.49,
+            "time": 5.24,
+            "peak_time": 5.24,
+            "margin": 0.3997
+          }
+        },
+        {
+          "id": "playground-seed-02/hallway-wall-contact",
+          "evaluator": "hallway-wall-contact",
+          "version": "1.0.0",
+          "assessor": {
+            "type": "deterministic",
+            "id": "hallway-wall-contact",
+            "version": "1.0.0"
+          },
+          "status": "PASS",
+          "rationale": "no wall contact; closest 0.250 m at 0.00 s (trial 2)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-02"
+          ],
+          "details": {
+            "observed": 0,
+            "threshold": 0,
+            "time": 0.0,
+            "margin": 0.25
+          }
+        },
+        {
+          "id": "playground-seed-02/hallway-fall",
+          "evaluator": "hallway-fall",
+          "version": "1.0.0",
+          "assessor": {
+            "type": "deterministic",
+            "id": "hallway-fall",
+            "version": "1.0.0"
+          },
+          "status": "PASS",
+          "rationale": "base height 0.71 m >= 0.50 m, lowest at 2.90 s (trial 2)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-02"
+          ],
+          "details": {
+            "observed": 0.7065,
+            "threshold": 0.5,
+            "time": 2.9,
+            "margin": 0.2065
+          }
+        }
+      ],
+      "failures": [],
+      "index": 2
+    },
+    {
+      "id": "playground-seed-03",
+      "evidence": {
+        "id": "playground-seed-03",
+        "path": "trials/trial-03.json",
+        "sha256": "48b6078f3deb763cd1595d727bff52baac95b335de96e57db1402ee6ece9840b"
+      },
+      "status": "PASS",
+      "assessments": [
+        {
+          "id": "playground-seed-03/hallway-exit-reached",
+          "evaluator": "hallway-exit-reached",
+          "version": "1.0.0",
+          "assessor": {
+            "type": "deterministic",
+            "id": "hallway-exit-reached",
+            "version": "1.0.0"
+          },
+          "status": "PASS",
+          "rationale": "exit at 9.60 s <= 27.00 s (17.40 s spare) (trial 3)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-03"
+          ],
+          "details": {
+            "observed": 9.6,
+            "threshold": 27.0,
+            "time": 9.6,
+            "margin": 17.4
+          }
+        },
+        {
+          "id": "playground-seed-03/hallway-lateral-limit",
+          "evaluator": "hallway-lateral-limit",
+          "version": "1.0.0",
+          "assessor": {
+            "type": "deterministic",
+            "id": "hallway-lateral-limit",
+            "version": "1.0.0"
+          },
+          "status": "PASS",
+          "rationale": "lateral 0.09 m <= 0.49 m, largest at 5.24 s (trial 3)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-03"
+          ],
+          "details": {
+            "observed": 0.0903,
+            "threshold": 0.49,
+            "time": 5.24,
+            "peak_time": 5.24,
+            "margin": 0.3997
+          }
+        },
+        {
+          "id": "playground-seed-03/hallway-wall-contact",
+          "evaluator": "hallway-wall-contact",
+          "version": "1.0.0",
+          "assessor": {
+            "type": "deterministic",
+            "id": "hallway-wall-contact",
+            "version": "1.0.0"
+          },
+          "status": "PASS",
+          "rationale": "no wall contact; closest 0.250 m at 0.00 s (trial 3)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-03"
+          ],
+          "details": {
+            "observed": 0,
+            "threshold": 0,
+            "time": 0.0,
+            "margin": 0.25
+          }
+        },
+        {
+          "id": "playground-seed-03/hallway-fall",
+          "evaluator": "hallway-fall",
+          "version": "1.0.0",
+          "assessor": {
+            "type": "deterministic",
+            "id": "hallway-fall",
+            "version": "1.0.0"
+          },
+          "status": "PASS",
+          "rationale": "base height 0.71 m >= 0.50 m, lowest at 2.90 s (trial 3)",
+          "mandatory": true,
+          "evidence_ids": [
+            "playground-seed-03"
+          ],
+          "details": {
+            "observed": 0.7065,
+            "threshold": 0.5,
+            "time": 2.9,
+            "margin": 0.2065
+          }
+        }
+      ],
+      "failures": [],
+      "index": 3
+    }
+  ],
+  "summary": {
+    "k": 3,
+    "n": 3,
+    "required_passes": 3,
+    "wilson95": [
+      0.4385,
+      1.0
+    ],
+    "grade": "PASS",
+    "aggregation": {
+      "id": "k-of-n-wilson95",
+      "version": "1.0.0"
+    }
+  },
+  "failures": [],
+  "findings": []
+}

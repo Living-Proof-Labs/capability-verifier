@@ -47,7 +47,7 @@ def observation(**changes):
             "samples": [
                 [0.0, -2.5, 0.0, 0.75, 0.3],
                 [9.8, 1.0, 0.21, 0.74, 0.041],
-                [10.1, 1.2, 0.62, 0.73, 0.05],
+                [10.1, 1.2, 0.21, 0.73, 0.05],
                 [12.0, 3.0, 0.1, 0.74, 0.2],
             ],
         },
@@ -57,7 +57,15 @@ def observation(**changes):
 
 
 FAILING = {
-    "exit_time": observation(exit_time=None, end="time_limit", duration_s=27.0),
+    "exit_time": observation(
+        exit_time=None,
+        end="time_limit",
+        duration_s=27.0,
+        trace={
+            "columns": ["t", "x", "y", "z", "wall_distance"],
+            "samples": [[0.0, -2.5, 0.0, 0.75, 0.3], [27.0, 1.2, 0.1, 0.74, 0.2]],
+        },
+    ),
     "max_abs_lateral": observation(max_abs_lateral={"value": 0.62, "time": 10.1}),
     "wall_contacts": observation(
         wall_contacts=[{"wall": "wall-left", "start": 10.5, "end": 10.7, "depth": 0.032}]
@@ -76,7 +84,7 @@ def test_policy():
     pass
 
 
-@scenario(str(FEATURE), "Trials are aggregated as k of N with a Wilson interval")
+@scenario(str(FEATURE), "A grading policy turns trial outcomes into the run grade")
 def test_aggregation():
     pass
 
@@ -94,7 +102,7 @@ def one_trial(ctx):
 @given("thresholds resolved from the robot profile and the selected configuration profile")
 def resolved(ctx):
     manifest = {
-        "robot": {"profile": {"dimensions": {"width": 0.42}}},
+        "robot": {"profile": {"class": "humanoid", "dimensions": {"width": 0.42}}},
         "configuration": {"profile": {"locomotion": {"fall_base_height": 0.5}}},
         "world": {"clear_width": 1.4, "route_length": 11.0},
         "plan": PLAN,
@@ -127,7 +135,7 @@ def is_fail(ctx):
     assert ctx["fail"]["assessor"]["type"] == "deterministic"
 
 
-@then("a missing or malformed observation gives INSUFFICIENT_EVIDENCE")
+@then("a missing or malformed observation is a test-system ERROR on the trial")
 def missing(ctx):
     for bad in (None, "nan", float("nan"), {"value": "x"}):
         o = observation()
@@ -182,45 +190,71 @@ def apply_policy(ctx):
     ctx["missing"] = hallway.assess_trial(observation(min_base_height=None), TH, "t")
 
 
-@then("any FAIL makes the trial FAIL")
+@then("any FAIL makes the trial FAIL even when another observation is missing")
 def any_fail(ctx):
     assert ctx["pass"]["status"] == hallway.PASS
     assert len(ctx["pass"]["assessments"]) == 4
     assert ctx["fail"]["status"] == ctx["fail_and_missing"]["status"] == hallway.FAIL
 
 
-@then("any INSUFFICIENT_EVIDENCE without a FAIL makes the trial INSUFFICIENT_EVIDENCE")
+@then("the missing observation is still reported as a test-system ERROR on the trial")
 def any_missing(ctx):
+    statuses = [item["status"] for item in ctx["fail_and_missing"]["assessments"]]
+    assert hallway.INSUFFICIENT in statuses
     assert ctx["missing"]["status"] == hallway.INSUFFICIENT
 
 
+@given(parsers.parse("a walk-hallway run of {trials:d} identical trials at the nominal start"))
+def run_of(ctx, trials):
+    ctx["run"] = {"trials": trials}
+
+
 @given(
-    parsers.parse("{trials:d} trial results of one configuration, of which {passed:d} pass"),
-    target_fixture="trial_set",
+    parsers.parse("{passed:d} of those trials have outcome PASS and {failed:d} have outcome FAIL")
 )
-def results(trials, passed):
-    return [{"status": hallway.PASS}] * passed + [{"status": hallway.FAIL}] * (trials - passed)
+def outcomes(ctx, passed, failed):
+    ctx["run"]["passed"] = passed
+    ctx["run"]["failed"] = failed
 
 
-@when("the trial results are aggregated", target_fixture="agg")
-def aggregated(trial_set):
-    return hallway.aggregate(trial_set, PLAN)
+@given(parsers.parse("{errors:d} trials are test-system ERROR and did not complete"))
+def trial_errors(ctx, errors):
+    ctx["run"]["errors"] = errors
 
 
-@then(
-    parsers.parse(
-        "the result reports {passed:d} of {trials:d} with Wilson 95% interval {low:f} to {high:f}"
+@when("the grading policy is applied to the completed trials")
+def grade_policy(ctx):
+    run = ctx["run"]
+    statuses = (
+        [hallway.PASS] * run["passed"]
+        + [hallway.FAIL] * run["failed"]
+        + [hallway.INSUFFICIENT] * run["errors"]
     )
-)
-def wilson(agg, passed, trials, low, high):
-    assert (agg["k"], agg["n"]) == (passed, trials)
-    assert agg["wilson95"] == [low, high]
+    plan = {
+        **PLAN,
+        "trials": run["trials"],
+        "seeds": list(range(1, run["trials"] + 1)),
+        "required_passes": run["trials"],
+    }
+    ctx["agg"] = hallway.aggregate([{"status": status} for status in statuses], plan)
 
 
-@then(parsers.parse("the grade is {grade} because at least {required_passes:d} trials must pass"))
-def grade(agg, grade, required_passes):
-    assert PLAN["required_passes"] == required_passes
-    assert agg["grade"] == grade
+@then(parsers.parse("the run grade is {grade}"))
+def run_grade(ctx, grade):
+    assert ctx["agg"]["grade"] == grade
+
+
+@then("each ERROR is reported on the job and on the trial and is never a robot grade")
+def error_is_not_a_robot_grade(ctx):
+    if ctx["run"]["errors"] and ctx["run"]["failed"] == 0:
+        assert ctx["agg"]["grade"] != hallway.FAIL
+
+
+@then("if no trial completes the run is not evaluated and the grade is INSUFFICIENT_EVIDENCE")
+def none_completed(ctx):
+    run = ctx["run"]
+    if run["passed"] == 0 and run["failed"] == 0:
+        assert ctx["agg"]["grade"] == hallway.INSUFFICIENT
 
 
 def test_insufficient_evidence_blocks_a_pass_it_could_change():
@@ -306,7 +340,7 @@ def test_recorded_human_assessment_is_judged_by_the_same_policy():
 def test_lengths_never_read_as_equal():
     o = observation(max_abs_lateral={"value": 0.4904, "time": 9.2})
     a = hallway.lateral_limit(o, TH, "t", 17)
-    assert a["rationale"] == "lateral 0.4904 m > 0.4900 m at 10.10 s (seed 17)"
+    assert a["rationale"] == "lateral 0.4904 m > 0.4900 m at 9.20 s (seed 17)"
     assert a["details"]["failures"][0]["observed"] == 0.4904
 
 
@@ -518,6 +552,44 @@ def test_bad_evidence_is_a_manifest_error_with_no_traceback(tmp_path, break_it, 
     assert not out.exists() and not list(tmp_path.glob(".out.*"))
 
 
+def _one_trial(plan):
+    return dict(plan, trials=1, seeds=[1], required_passes=1)
+
+
+def _other_scenario(document):
+    document["plan"]["scenario"] = "walk-hallway@9.9.9"
+
+
+def _other_world(document):
+    document["world"]["id"] = "other-hall"
+
+
+@pytest.mark.parametrize(
+    "mutate, message",
+    [
+        (_other_scenario, "parameter file names walk-hallway@0.1.0, not walk-hallway@9.9.9"),
+        (_other_world, "parameter file is for hallway-open 0.1.0, not other-hall 0.1.0"),
+    ],
+)
+def test_world_or_scenario_mismatch_ends_on_one_line(tmp_path, mutate, message):
+    """A world or scenario that is not the parameter file's exits with that one line."""
+    src = tmp_path / "evidence"
+    src.mkdir()
+    manifest = _manifest(src, plan=_one_trial(PLAN))
+    document = json.loads(manifest.read_text())
+    mutate(document)
+    manifest.write_text(json.dumps(document))
+    with pytest.raises(hallway.ManifestError, match=re.escape(message)):
+        hallway.verify(manifest)
+    out = tmp_path / "out"
+    completed = _cli(tmp_path, manifest, out, "1.4.2")
+    assert completed.returncode != 0
+    assert "Traceback" not in completed.stderr
+    assert "ScenarioParameterError" not in completed.stderr
+    assert completed.stderr.splitlines() == [f"invalid evidence manifest {manifest}: {message}"]
+    assert not out.exists() and not list(tmp_path.glob(".out.*"))
+
+
 def test_sigterm_removes_the_staging_folder(tmp_path, monkeypatch):
     tool = _tool()
     monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
@@ -566,7 +638,10 @@ def _hallway_manifest(tmp_path, width, met, detail):
     m["preconditions"] = [{"name": "fits_width", "met": met, "detail": detail}]
     for t in m["trials"]:  # Keel's observations: 0.01 m lateral, inside even a 0.05 m limit.
         trial = tmp_path / t["path"]
-        trial.write_text(json.dumps(observation(max_abs_lateral={"value": 0.01, "time": 7.3})))
+        obs = observation(max_abs_lateral={"value": 0.01, "time": 7.3})
+        for sample in obs["trace"]["samples"]:
+            sample[2] = 0.0
+        trial.write_text(json.dumps(obs))
         t["sha256"] = hashlib.sha256(trial.read_bytes()).hexdigest()
     path.write_text(json.dumps(m))
     return path
@@ -683,7 +758,7 @@ def test_fits_width_compares_whole_millimetres(width, cls, clear, met):
 def test_fits_width_one_centimetre_grid_matches_integer_rule():
     from decimal import Decimal
 
-    for cls, clearance in hallway.WALL_CLEARANCE.items():
+    for cls, clearance in hallway.clearance_table().items():
         for w in range(30, 150):
             for c in range(w - 5, w + 30):
                 m = {"robot": {"profile": {"class": cls, "dimensions": {"width": w / 100}}}}
