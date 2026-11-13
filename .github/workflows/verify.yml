@@ -89,8 +89,11 @@ jobs:
       - name: Fixture capability verdicts (not robot certification)
         if: ${{ !cancelled() }}
         run: python tools/report_summary.py >> "$GITHUB_STEP_SUMMARY"
+      # Summary mode lists cases and does not create a check run. continue-on-error
+      # keeps a reporter API failure off the job result; the next step is the gate.
       - name: Test results in run summary
         if: ${{ !cancelled() }}
+        continue-on-error: true
         uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3.2.0
         with:
           name: Verification expectation tests
@@ -101,18 +104,16 @@ jobs:
           collapsed: never
           fail-on-error: 'true'
           fail-on-empty: 'true'
-      - name: Test results check and failure annotations
-        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3.2.0
-        with:
-          name: Verification expectation tests
-          path: artifacts/results.xml,artifacts/archives.xml
-          reporter: python-xunit
-          report-title: Verification tests — passing expectations are not capability certification
-          use-actions-summary: 'false'
-          collapsed: never
-          fail-on-error: 'true'
-          fail-on-empty: 'true'
+      - name: JUnit gate and completed check run
+        if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          REPORT_NAME: Verification expectation tests
+          REPORT_PATH: artifacts/results.xml,artifacts/archives.xml
+          PUBLISH_CHECK: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: python tools/test_results.py --name "$REPORT_NAME" --path "$REPORT_PATH" --publish-check "$PUBLISH_CHECK"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -228,7 +229,11 @@ jobs:
         with:
           pattern: archive-tests-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: native-results
+      # Summary mode does not create a check run. A reporter API failure must not fail
+      # this job; the gate fails only for a failed, missing, or unreadable report.
       - name: Native archive test results
+        if: ${{ !cancelled() }}
+        continue-on-error: true
         uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3.2.0
         with:
           name: Native archive consumption
@@ -238,6 +243,16 @@ jobs:
           collapsed: never
           fail-on-error: 'true'
           fail-on-empty: 'true'
+      - name: JUnit gate and completed check run
+        if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          REPORT_NAME: Native archive consumption
+          REPORT_PATH: native-results/**/archives.xml
+          PUBLISH_CHECK: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: python tools/test_results.py --name "$REPORT_NAME" --path "$REPORT_PATH" --publish-check "$PUBLISH_CHECK"
   release:
     needs: [verify, report, report-results, documentation]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -589,8 +604,11 @@ jobs:
         if: ${{ !cancelled() && hashFiles('artifacts/results.xml') != '' }}
       - run: task test:docs
         if: ${{ !cancelled() && hashFiles('artifacts/docs/html/build.json') != '' }}
+      # Summary mode does not create a check run. continue-on-error keeps a reporter
+      # API failure off the job result; the next step is the gate.
       - name: Visible documentation and fixture results
         if: ${{ !cancelled() }}
+        continue-on-error: true
         uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a
         with:
           name: Documentation and fixture verification
@@ -600,6 +618,16 @@ jobs:
           collapsed: never
           fail-on-error: 'true'
           fail-on-empty: 'true'
+      - name: JUnit gate and completed check run
+        if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          REPORT_NAME: Documentation and fixture verification
+          REPORT_PATH: artifacts/results.xml,artifacts/docs-tests.xml
+          PUBLISH_CHECK: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: python tools/test_results.py --name "$REPORT_NAME" --path "$REPORT_PATH" --publish-check "$PUBLISH_CHECK"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         id: preview
         if: ${{ !cancelled() }}
