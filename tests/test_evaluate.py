@@ -589,10 +589,6 @@ def test_every_released_tag_grades_with_its_own_commit(tag, commit):
     assert evaluate.AllRequiredV1().decide(r, True).status == P
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a0171a6 drops a run whose contract is rejected; v1.19.0 reported it INCOMPATIBLE",
-)
 @pytest.mark.parametrize(
     "change",
     [{"commit": "f" * 40}, {"revision": "9.9.9"}, {"tag": "v0.0.0"}],
