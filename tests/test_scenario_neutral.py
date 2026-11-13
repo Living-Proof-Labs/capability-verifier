@@ -211,6 +211,12 @@ def test_called_workflow_accepts_the_same_repository_form():
     assert d.called_workflow(remote) is None
 
 
+def test_called_workflow_rejects_a_ref_on_the_same_repository_form():
+    """$/ names a path. A ref is not part of that form."""
+    pinned = "jobs:\n  scenario:\n    uses: $/x.yml@ref\n"
+    assert d.called_workflow(pinned) is None
+
+
 def test_catalog_step_accepts_the_new_name_and_the_old_name():
     scenario = (ROOT / ".github" / "workflows" / "scenario.yml").read_text()
     names = ("Scenario catalog", "Walk-hallway catalog")

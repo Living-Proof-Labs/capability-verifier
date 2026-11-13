@@ -574,7 +574,8 @@ def called_workflow(text: str) -> str | None:
 
     ``./`` is the caller's repository. ``$/`` is the repository and revision of the
     workflow that contains the call, which is what a caller in another repository
-    resolves. Both forms name a file in this checkout.
+    resolves. A ``@ref`` is not allowed on ``$/``. Both forms name a file in this
+    checkout.
     """
     try:
         doc = yaml.safe_load(text)
@@ -589,7 +590,12 @@ def called_workflow(text: str) -> str | None:
     if not isinstance(job, dict) or job.get("steps"):
         return None
     uses = job.get("uses")
-    if isinstance(uses, str) and (uses.startswith("./") or uses.startswith("$/")):
+    if isinstance(uses, str) and uses.startswith("$/"):
+        path = uses[2:]
+        if "@" in path:
+            return None
+        return path
+    if isinstance(uses, str) and uses.startswith("./"):
         return uses[2:]
     return None
 
