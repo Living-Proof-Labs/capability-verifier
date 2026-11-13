@@ -6,8 +6,9 @@ exactly which rule produced it:
 
 * ``TrialEvaluator`` turns one observation into deterministic assessments.
 * ``Policy.decide`` turns the retained assessments of one result into a status and reason.
-* ``Aggregator.aggregate`` turns the decisions of one run into k of N, a Wilson interval
-  and a grade.
+* ``Aggregator.aggregate`` turns the decisions of one run into a grade. A seeded run is
+  k of N with a Wilson interval. A run whose evidence compared identical repeats is one
+  outcome plus a reproducibility statement, with no k-of-N rate and no Wilson interval.
 
 Decisions and run assessments are computed from reporter-bundle results (the shape in
 ``bundle/manifest.json``), so they match what livingproof-capability-report v1.10.0
@@ -23,6 +24,7 @@ run again, producing a new bundle that names its parent.
 
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import dataclass, field
 from typing import Iterable, Protocol
@@ -272,6 +274,128 @@ def wilson(k, n):
     return hallway.wilson(k, n)
 
 
+# Compared repeats are one outcome, not independent samples. Seeded runs stay k-of-n-wilson95.
+REPEAT_AGGREGATION = {"id": "repeated-outcome", "version": "1.0.0"}
+
+
+def absent_rate() -> dict:
+    """Rate keys the reporter requires, with no count and no numeric Wilson bound.
+
+    livingproof-capability-report v3.4.0 through v3.6.0, and current main, raise in
+    ``assessed._summary`` when ``k``, ``n``, ``required_passes`` or ``interval`` is
+    missing. ``None`` is not a sample count and not a Wilson bound. The display
+    helpers skip a non-number, so they show no rate and no range.
+    """
+    return {
+        "k": None,
+        "n": None,
+        "required_passes": None,
+        "interval": {"method": "wilson", "level": 0.95, "lower": None, "upper": None},
+    }
+
+
+_REPEAT_KEYS = ("index", "sha256", "trajectory_sha256", "outcome")
+
+
+def _evidence_count(repeats):
+    """The evidence trial count, or None when it is not an integer >= 1."""
+    if isinstance(repeats, bool) or type(repeats) is not int or repeats < 1:
+        return None
+    return repeats
+
+
+def _differing(records) -> list:
+    """Identity fields copied from the evidence repeat records. No field is added."""
+    if not isinstance(records, list):
+        return []
+    rows = []
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        row = {key: rec[key] for key in _REPEAT_KEYS if key in rec}
+        if row:
+            rows.append(row)
+    return rows
+
+
+def repeat_assessment(record, repeats, statuses, repeat_records=None):
+    """One outcome for compared repeats, or None when the evidence did not compare them.
+
+    ``record`` is the evidence reproducibility object (``compared``, ``identical``,
+    ``finding``). ``repeats`` is the evidence trial count. ``statuses`` are the recorded
+    result statuses in evidence order. ``repeat_records`` are the evidence trial records.
+    Every number in the result is copied from those inputs. Nothing here is specific to
+    a scenario or a robot.
+    """
+    if not isinstance(record, dict) or record.get("compared") is not True:
+        return None
+    count = _evidence_count(repeats)
+    if count is None:
+        return None
+    identical = record.get("identical")
+    if identical is not True and identical is not False:
+        return None
+    if isinstance(statuses, str) or not isinstance(statuses, (list, tuple)):
+        statuses = []
+    else:
+        statuses = list(statuses)
+    finding = record.get("finding")
+    block = {"compared": True, "identical": identical, "repeats": count}
+    if "finding" in record:
+        block["finding"] = copy.deepcopy(finding)
+    agreed = (
+        identical is True
+        and finding is None
+        and len(statuses) == count
+        and all(status == statuses[0] for status in statuses)
+    )
+    if agreed:
+        statement = f"{count} of {count} repeats agree"
+        block["agreeing"] = count
+        block["statement"] = statement
+        return {
+            "grade": statuses[0],
+            "rationale": statement,
+            "reproducibility": block,
+            "aggregation": dict(REPEAT_AGGREGATION),
+        }
+    if identical is False and FAIL in statuses:
+        grade = FAIL
+    else:
+        grade = INSUFFICIENT
+    if identical is True:
+        rationale = "recorded results do not match the evidence comparison"
+    else:
+        detail = finding.get("detail") if isinstance(finding, dict) else None
+        rationale = detail if isinstance(detail, str) and detail else "repeats differ"
+        differing = _differing(repeat_records)
+        if differing:
+            block["differing"] = differing
+    return {
+        "grade": grade,
+        "rationale": rationale,
+        "reproducibility": block,
+        "aggregation": dict(REPEAT_AGGREGATION),
+    }
+
+
+def _repeat_block(members: list, statuses: list):
+    """The compared-repeat assessment when every member carries the same evidence record."""
+    provenances = [m.get("provenance") or {} for m in members]
+    records = [p.get("reproducibility") for p in provenances]
+    if any(record != records[0] for record in records):
+        return None
+    plans = [p.get("plan") for p in provenances]
+    if any(plan != plans[0] for plan in plans):
+        return None
+    plan = plans[0] if isinstance(plans[0], dict) else {}
+    trials = plan.get("trials") if isinstance(plan, dict) else None
+    repeats = trials.get("count") if isinstance(trials, dict) else None
+    stored = [p.get("repeat_records") for p in provenances]
+    repeat_records = stored[0] if all(item == stored[0] for item in stored) else None
+    return repeat_assessment(records[0], repeats, statuses, repeat_records)
+
+
 def run_key(result: dict) -> tuple:
     return (
         result["spec"]["commit"],
@@ -284,10 +408,16 @@ def run_key(result: dict) -> tuple:
 
 
 class Aggregator:
-    """k-of-n-wilson95: k PASS of planned N, needing ``required_passes``; Wilson 95%.
+    """Per-run grade.
 
-    Evidence 2.0.0 has no ``required_passes``. ``hallway.planned_counts`` supplies N
-    as the threshold. That is the same rule, not a new aggregation.
+    A seeded plan is k-of-n-wilson95: k PASS of planned N, needing ``required_passes``,
+    with a Wilson 95% interval. Evidence 2.0.0 has no ``required_passes``.
+    ``hallway.planned_counts`` supplies N as the threshold for that seeded rule.
+
+    When the evidence reproducibility record says the repeats were compared, the run
+    is one outcome plus that record. Identical repeats say ``N of N repeats agree``
+    and carry no k, n, or Wilson interval. Repeats that disagree are a reproducibility
+    finding, not a success rate, and the run is not graded PASS on that basis.
     """
 
     id, version = hallway.AGGREGATION["id"], hallway.AGGREGATION["version"]
@@ -319,11 +449,19 @@ class Aggregator:
         by_id = {d.result_id: d for d in decisions}
         groups: dict = {}
         for r in results:
-            if r["spec"]["capability"] == CAPABILITY:
+            record = (r.get("provenance") or {}).get("reproducibility")
+            compared = isinstance(record, dict) and record.get("compared") is True
+            if r["spec"]["capability"] == CAPABILITY or compared:
                 groups.setdefault(run_key(r), []).append(r)
         runs = []
         for key, members in groups.items():
             statuses = [by_id[r["id"]].status for r in members]
+            block = _repeat_block(members, statuses)
+            if block is not None:
+                runs.append(self._repeated(key, members, by_id, block))
+                continue
+            if members[0]["spec"]["capability"] != CAPABILITY:
+                continue
             plan = members[0]["provenance"].get("plan") or {}
             grade, planned, rationale = self.grade(statuses, plan)
             k = statuses.count(PASS)
@@ -351,6 +489,29 @@ class Aggregator:
                 }
             )
         return runs
+
+    @staticmethod
+    def _repeated(key, members, by_id, block) -> dict:
+        """One outcome plus the reproducibility block. No k, n, or Wilson interval."""
+        run = {
+            "capability": members[0]["spec"]["capability"],
+            "spec": dict(members[0]["spec"]),
+            "system": dict(members[0]["system"]),
+            "environment": dict(members[0]["environment"]),
+            "run_id": key[-1],
+            **absent_rate(),
+            "grade": block["grade"],
+            "rationale": block["rationale"],
+            "reproducibility": block["reproducibility"],
+            "result_ids": [r["id"] for r in members],
+            "failures": [dict(f) for r in members for f in by_id[r["id"]].failures],
+            "prototype": members[0]["provenance"].get("prototype"),
+        }
+        if members[0]["spec"]["capability"] == CAPABILITY:
+            # Stored trial detail from the hallway checks. Not a success rate.
+            run["failure_summary"] = failure_summary(members, by_id)
+            run["worst"] = worst_observed(members)
+        return run
 
 
 def _seed_of(result: dict):
@@ -465,17 +626,44 @@ def assess_bundle(
     policy = policy or AllRequiredV1()
     aggregator = aggregator or Aggregator()
     decisions = [policy.decide(r, complete[r["id"]]) for r in results]
+    runs = aggregator.aggregate(results, decisions)
+    aggregation = aggregator.ref
+    if runs and all(
+        isinstance(run.get("reproducibility"), dict)
+        and run["reproducibility"].get("compared") is True
+        for run in runs
+    ):
+        aggregation = dict(REPEAT_AGGREGATION)
     return {
         "format": FORMAT,
         "policy": policy.ref,
-        "aggregation": aggregator.ref,
+        "aggregation": aggregation,
         "decisions": [d.to_json() for d in decisions],
-        "runs": aggregator.aggregate(results, decisions),
+        "runs": runs,
     }
 
 
 def as_reporter_summary(run: dict) -> dict:
-    """A run in the reporter's report.json ``summaries`` shape (``wilson95`` pair)."""
+    """A run in the reporter's report.json ``summaries`` shape.
+
+    A seeded run keeps the ``wilson95`` pair. A compared-repeat run has no interval
+    and no k or n; ``reproducibility`` is the statement.
+    """
+    if "interval" not in run:
+        order = (
+            "capability",
+            "spec",
+            "system",
+            "environment",
+            "run_id",
+            "grade",
+            "rationale",
+            "reproducibility",
+            "result_ids",
+            "failures",
+            "prototype",
+        )
+        return {k: run[k] for k in order if k in run}
     out = {k: v for k, v in run.items() if k not in ("interval", "rationale")}
     out["wilson95"] = [run["interval"]["lower"], run["interval"]["upper"]]
     order = (
