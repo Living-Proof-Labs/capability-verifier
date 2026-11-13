@@ -22,7 +22,7 @@ on:
           Path in the caller repository of a livingproof-verification-lock/0.2.0.
           When set, this lock is the only source for the run, even if the robot
           commit has verification.lock.json. The workflow writes the document
-          livingproof-sim-mujoco v2.0.3 evidence.py reads, points repin --check
+          livingproof-sim-mujoco v2.1.1 evidence.py reads, points repin --check
           at this lock, and records the replaced robot lock's sha256. Empty
           leaves a robot verification.lock.json as the only source.
           PENDING_RELEASE in a caller lock still fails.

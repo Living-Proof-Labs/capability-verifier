@@ -189,6 +189,16 @@ def test_runner_follows_the_wrapper_to_the_scenario_workflow():
     assert d.procedure_text(ROOT, "walk-hallway") == scenario
 
 
+def test_scenario_workflow_names_sim_v2_1_1():
+    """The workflow text names the pinned simulator, v2.1.1."""
+    scenario = (ROOT / ".github" / "workflows" / "scenario.yml").read_text()
+    wrapper = (ROOT / ".github" / "workflows" / "walk-hallway.yml").read_text()
+    assert "v2.0.3" not in scenario
+    assert "v2.0.3" not in wrapper
+    assert scenario.count("livingproof-sim-mujoco v2.1.1") == 4
+    assert wrapper.count("livingproof-sim-mujoco v2.1.1") == 1
+
+
 def test_called_workflow_accepts_the_same_repository_form():
     """$/ is this workflow's repository and revision. ./ is the caller's repository."""
     same = "jobs:\n  scenario:\n    uses: $/.github/workflows/scenario.yml\n"
