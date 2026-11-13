@@ -147,7 +147,20 @@ def test_policy_incompatible_cases():
     retagged = result()
     retagged["spec"]["tag"] = "v2.2.0"
     retagged["spec"]["commit"] = "f" * 40
-    assert policy.decide(retagged, True).status == P
+    forged = policy.decide(retagged, True)
+    assert forged.status == X
+    assert forged.reason == (
+        "v2.2.0 resolves to 23bec516bda29be7b26555286cbf2e8217ac5c81, not " + "f" * 40
+    )
+    matched = result()
+    matched["spec"]["tag"] = "v2.2.0"
+    matched["spec"]["commit"] = "23bec516bda29be7b26555286cbf2e8217ac5c81"
+    assert policy.decide(matched, True).status == P
+    matched["spec"]["revision"] = "9.9.9"
+    assert policy.decide(matched, True).status == X
+    assert policy.decide(matched, True).reason == "v2.2.0 is revision 0.1.0, not 9.9.9"
+    del matched["spec"]["revision"]
+    assert policy.decide(matched, True).status == P
     version = result()
     version["assessments"][0]["version"] = "9.9.9"
     assert policy.decide(version, True).status == X
@@ -155,6 +168,23 @@ def test_policy_incompatible_cases():
     impostor["assessments"][0]["kind"] = "human"
     impostor["assessments"][0]["provenance"]["assessor"] = {"type": "human"}
     assert policy.decide(impostor, True).status == X
+
+
+@pytest.mark.parametrize(
+    "commit",
+    [
+        "b4ba31eb2c7eaca2721d68d5d375260e2a114449",  # pre-merge candidate
+        "a378e92216fd9498984f290e677b9f4e7a33232c",  # specs #25 candidate
+    ],
+)
+def test_placeholder_v0_0_0_is_incompatible_and_says_why(commit):
+    """An unreleased catalog writes tag v0.0.0. The grade stays INCOMPATIBLE, and the reason says so."""
+    prototype = result()
+    prototype["spec"]["tag"] = "v0.0.0"
+    prototype["spec"]["commit"] = commit
+    decision = evaluate.AllRequiredV1().decide(prototype, True)
+    assert decision.status == X
+    assert decision.reason == "tag v0.0.0 is a placeholder, not a release"
 
 
 def test_policy_missing_member_is_insufficient():

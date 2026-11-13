@@ -31,7 +31,7 @@ from typing import Iterable, Protocol
 
 from . import hallway
 from .specs_ref import SPECS as SPECS  # noqa: F401  re-exported for result specs
-from .specs_ref import accepted_reference
+from .specs_ref import accepted_reference, contract_problem
 
 PASS, FAIL, INSUFFICIENT = hallway.PASS, hallway.FAIL, hallway.INSUFFICIENT
 INCOMPATIBLE = "INCOMPATIBLE"
@@ -209,8 +209,11 @@ class AllRequiredV1(Policy):
         if compatibility is not None:
             return Decision(rid, INCOMPATIBLE, compatibility["reason"])
         spec = result["spec"]
+        problem = contract_problem(spec)
+        if problem is not None:
+            return Decision(rid, INCOMPATIBLE, problem)
         capability = spec.get("capability")
-        if not isinstance(capability, str) or not capability or not accepted_reference(spec):
+        if not isinstance(capability, str) or not capability:
             return Decision(rid, INCOMPATIBLE, "Unsupported scenario contract")
         if not self.members_supported(assessments):
             return Decision(rid, INCOMPATIBLE, "Unsupported evaluator, version or assessor kind")
