@@ -31,7 +31,7 @@ from typing import Iterable, Protocol
 
 from . import hallway
 from .specs_ref import SPECS as SPECS  # noqa: F401  re-exported for result specs
-from .specs_ref import accepted_reference, contract_problem
+from .specs_ref import accepted_reference, contract_problem, reported_contract
 
 PASS, FAIL, INSUFFICIENT = hallway.PASS, hallway.FAIL, hallway.INSUFFICIENT
 INCOMPATIBLE = "INCOMPATIBLE"
@@ -398,6 +398,15 @@ def run_key(result: dict) -> tuple:
     )
 
 
+def _compared_repeats(members: list) -> bool:
+    """True when a member records that its repeats were compared."""
+    for member in members:
+        record = (member.get("provenance") or {}).get("reproducibility")
+        if isinstance(record, dict) and record.get("compared") is True:
+            return True
+    return False
+
+
 class Aggregator:
     """Per-run grade.
 
@@ -442,7 +451,10 @@ class Aggregator:
         for r in results:
             record = (r.get("provenance") or {}).get("reproducibility")
             compared = isinstance(record, dict) and record.get("compared") is True
-            if accepted_reference(r["spec"]) or compared:
+            # A released tag or v0.0.0 is one run even when the commit or revision
+            # is rejected. Pause results name the specs repository and are grouped
+            # only when their repeats were compared.
+            if reported_contract(r["spec"]) or compared:
                 groups.setdefault(run_key(r), []).append(r)
         runs = []
         for key, members in groups.items():
@@ -451,34 +463,39 @@ class Aggregator:
             if block is not None:
                 runs.append(self._repeated(key, members, by_id, block))
                 continue
-            if not accepted_reference(members[0]["spec"]):
+            spec = members[0]["spec"]
+            # A compared record that did not become one outcome stays out of k-of-n
+            # when the contract is rejected. Valid compared repeats already returned.
+            if not reported_contract(spec) or (
+                _compared_repeats(members) and not accepted_reference(spec)
+            ):
                 continue
             plan = members[0]["provenance"].get("plan") or {}
             grade, planned, rationale = self.grade(statuses, plan)
             k = statuses.count(PASS)
             lower, upper = wilson(k, planned)
             _n, need = hallway.planned_counts(plan)
-            runs.append(
-                {
-                    "capability": members[0]["spec"]["capability"],
-                    "spec": dict(members[0]["spec"]),
-                    "system": dict(members[0]["system"]),
-                    "environment": dict(members[0]["environment"]),
-                    "run_id": key[-1],
-                    "k": k,
-                    "n": planned,
-                    "required_passes": need,
-                    "interval": {"method": "wilson", "level": 0.95, "lower": lower, "upper": upper},
-                    "grade": grade,
-                    "rationale": rationale,
-                    "result_ids": [r["id"] for r in members],
-                    "failures": [dict(f) for r in members for f in by_id[r["id"]].failures],
-                    "prototype": members[0]["provenance"].get("prototype"),
-                    # Additive (cv #36); not in the reporter's summary shape.
-                    "failure_summary": failure_summary(members, by_id),
-                    "worst": worst_observed(members),
-                }
-            )
+            run = {
+                "capability": members[0]["spec"]["capability"],
+                "spec": dict(spec),
+                "system": dict(members[0]["system"]),
+                "environment": dict(members[0]["environment"]),
+                "run_id": key[-1],
+                "k": k,
+                "n": planned,
+                "required_passes": need,
+                "interval": {"method": "wilson", "level": 0.95, "lower": lower, "upper": upper},
+                "grade": grade,
+                "rationale": rationale,
+                "result_ids": [r["id"] for r in members],
+                "failures": [dict(f) for r in members for f in by_id[r["id"]].failures],
+                "prototype": members[0]["provenance"].get("prototype"),
+            }
+            if accepted_reference(spec):
+                # Additive (cv #36); not in the reporter's summary shape.
+                run["failure_summary"] = failure_summary(members, by_id)
+                run["worst"] = worst_observed(members)
+            runs.append(run)
         return runs
 
     @staticmethod

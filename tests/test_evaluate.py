@@ -605,3 +605,39 @@ def test_a_rejected_contract_is_still_an_incompatible_run(change):
     a = evaluate.assess_bundle(results, {"r1": True, "r2": True})
     assert {d["status"] for d in a["decisions"]} == {X}
     assert [run["grade"] for run in a["runs"]] == [X]
+
+
+def test_rejected_contract_run_counts_incompatible_results():
+    """v1.19.0 reported the run as N result(s) INCOMPATIBLE, without trial detail."""
+    results = [result("r1"), result("r2")]
+    for row in results:
+        row["spec"]["commit"] = "f" * 40
+    [run] = evaluate.assess_bundle(results, {"r1": True, "r2": True})["runs"]
+    assert run["grade"] == X
+    assert run["rationale"] == "2 result(s) INCOMPATIBLE"
+    assert "failure_summary" not in run
+    assert "worst" not in run
+
+
+def test_one_uncompared_trial_with_a_rejected_contract_is_an_incompatible_run():
+    """The one-trial default is k of N. A rejected contract is still that run."""
+    trial = result("r1", plan={"trials": {"count": 1}})
+    trial["spec"]["commit"] = "f" * 40
+    trial["provenance"]["reproducibility"] = {
+        "compared": False,
+        "identical": None,
+        "finding": None,
+    }
+    [run] = evaluate.assess_bundle([trial], {"r1": True})["runs"]
+    assert run["grade"] == X
+    assert run["rationale"] == "1 result(s) INCOMPATIBLE"
+    assert "reproducibility" not in run
+
+
+def test_pause_results_without_compared_repeats_are_not_runs():
+    """Pause names the specs repository. It is a run only when repeats were compared."""
+    pause = json.loads((ROOT / "examples/execution-matrix/manifest.json").read_text())
+    results = [item for item in pause["results"] if item["spec"]["capability"] == "pause"]
+    assert results
+    assessment = evaluate.assess_bundle(results, {item["id"]: True for item in results})
+    assert assessment["runs"] == []

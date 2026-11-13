@@ -53,6 +53,19 @@ def accepted_reference(spec: dict) -> bool:
     return contract_problem(spec) is None
 
 
+def reported_contract(spec: dict) -> bool:
+    """True when a k-of-n result is still one run.
+
+    A released tag and the v0.0.0 placeholder are reported even when the commit
+    or revision does not match. Pause results name this repository too; their
+    tag is neither, so they are not a k-of-n run.
+    """
+    if not isinstance(spec, dict):
+        return False
+    tag = spec.get("tag")
+    return isinstance(tag, str) and (tag in RELEASED or tag == PLACEHOLDER_TAG)
+
+
 def catalog_reference_ok(
     checked_out_tag: str, locked_tag: str, head: str, locked_commit: str
 ) -> bool:
