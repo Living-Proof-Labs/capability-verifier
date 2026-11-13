@@ -527,3 +527,63 @@ def test_a_mixed_bundle_keeps_seeded_k_of_n_beside_compared_repeats():
     assert pause_run["interval"]["lower"] is None and pause_run["interval"]["upper"] is None
     assert pause_run["rationale"] == statement
     assert pause_run["reproducibility"]["statement"] == statement
+
+
+@pytest.mark.parametrize(
+    "change, reason",
+    [
+        (
+            {"commit": None},
+            "v1.6.1 resolves to 0bdf1db3f975b044692c0b8f1ec37737ad8b889f, not None",
+        ),
+        (
+            {"commit": "0bdf1db"},
+            "v1.6.1 resolves to 0bdf1db3f975b044692c0b8f1ec37737ad8b889f, not 0bdf1db",
+        ),
+        (
+            {"commit": "0BDF1DB3F975B044692C0B8F1EC37737AD8B889F"},
+            "v1.6.1 resolves to 0bdf1db3f975b044692c0b8f1ec37737ad8b889f, "
+            "not 0BDF1DB3F975B044692C0B8F1EC37737AD8B889F",
+        ),
+        ({"revision": None}, "v1.6.1 is revision 0.1.0, not None"),
+        ({"tag": "v9.9.9"}, "Unsupported scenario contract"),
+        ({"tag": None}, "Unsupported scenario contract"),
+        ({"repository": "https://github.com/example/specs"}, "Unsupported scenario contract"),
+    ],
+)
+def test_contract_identity_edge_cases_are_incompatible(change, reason):
+    """Only the full lowercase commit a released tag resolves to is graded."""
+    r = result()
+    r["spec"].update(change)
+    decision = evaluate.AllRequiredV1().decide(r, True)
+    assert decision.status == X
+    assert decision.reason == reason
+
+
+def test_contract_commit_missing_entirely_is_incompatible():
+    r = result()
+    del r["spec"]["commit"]
+    decision = evaluate.AllRequiredV1().decide(r, True)
+    assert decision.status == X
+    assert decision.reason.startswith("v1.6.1 resolves to 0bdf1db")
+
+
+def test_contract_revision_absent_with_matching_commit_is_graded():
+    r = result()
+    del r["spec"]["revision"]
+    assert evaluate.AllRequiredV1().decide(r, True).status == P
+
+
+@pytest.mark.parametrize(
+    "tag, commit",
+    [
+        ("v1.6.0", "34681d20bf13ba0a836e03ac09869c7fb13665f1"),
+        ("v1.6.1", "0bdf1db3f975b044692c0b8f1ec37737ad8b889f"),
+        ("v1.9.0", "d677bd9770e60a6d42ea597966799e119dc7dd18"),
+        ("v2.2.0", "23bec516bda29be7b26555286cbf2e8217ac5c81"),
+    ],
+)
+def test_every_released_tag_grades_with_its_own_commit(tag, commit):
+    r = result()
+    r["spec"]["tag"], r["spec"]["commit"] = tag, commit
+    assert evaluate.AllRequiredV1().decide(r, True).status == P
