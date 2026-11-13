@@ -219,6 +219,63 @@ def test_malformed_report_fails_without_creating_a_check(tmp_path, monkeypatch, 
     assert "could not be read" in summary
 
 
+def test_create_502_warns_and_creates_no_check(tmp_path, monkeypatch, capsys):
+    write_junit(tmp_path / "artifacts/tests.xml", [("test_ok", "pass", "")])
+    api = FakeChecks(create_status=502)
+    code, printed, output, _summary = run_cli(tmp_path, monkeypatch, capsys, api)
+    assert code == 0
+    assert "::warning::" in printed
+    assert "502" in printed
+    assert "create" in printed
+    assert api.runs == []
+    assert api.updates == []
+    assert "url_html=\n" in output
+
+
+def test_both_updates_404_warns_and_leaves_the_check_in_progress(tmp_path, monkeypatch, capsys):
+    write_junit(tmp_path / "artifacts/tests.xml", [("test_ok", "pass", "")])
+    api = FakeChecks(response_status="in_progress", update_statuses=[404, 404])
+    code, printed, output, _summary = run_cli(tmp_path, monkeypatch, capsys, api)
+    assert code == 0
+    assert "::warning::" in printed
+    assert "404" in printed
+    assert "finish" in printed
+    assert api.created_body["status"] == "completed"
+    assert "output" in api.updates[0]["body"]
+    assert "output" not in api.updates[1]["body"]
+    assert api.runs[0]["status"] == "in_progress"
+    assert api.runs[0]["conclusion"] is None
+    assert "url_html=\n" in output
+
+
+def test_failed_junit_still_fails_when_both_updates_404(tmp_path, monkeypatch, capsys):
+    write_junit(
+        tmp_path / "artifacts/tests.xml",
+        [("test_explicit_plugin_management", "failure", "AssertionError: assert 1 == 0")],
+    )
+    api = FakeChecks(response_status="in_progress", update_statuses=[404, 404])
+    code, printed, output, _summary = run_cli(tmp_path, monkeypatch, capsys, api)
+    assert code == 1
+    assert "failed=1" in output
+    assert "::warning::" in printed
+    assert "404" in printed
+    assert api.created_body["conclusion"] == "failure"
+    assert api.runs[0]["status"] == "in_progress"
+    assert api.runs[0]["conclusion"] is None
+
+
+def test_empty_report_fails_without_creating_a_check(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "artifacts/tests.xml"
+    path.parent.mkdir()
+    path.write_text("<testsuite></testsuite>")
+    api = FakeChecks()
+    code, printed, _output, summary = run_cli(tmp_path, monkeypatch, capsys, api)
+    assert code == 1
+    assert printed == ""
+    assert api.runs == []
+    assert "no test cases were found" in summary
+
+
 def test_completed_create_does_not_update_or_warn(tmp_path, monkeypatch, capsys):
     write_junit(tmp_path / "artifacts/tests.xml", [("test_ok", "pass", "")])
     api = FakeChecks()
