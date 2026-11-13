@@ -18,7 +18,7 @@ dev = [
     "playwright==1.64.1",
     "pytest==8.4.2",
     "pytest-bdd==8.1.0",
-    "ruff==0.14.2",
+    "ruff==0.17.5",
     "zensical==0.0.73",
     "livingproof-capability-report @ https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.5.0/livingproof_capability_report-3.5.0-py3-none-any.whl",
     "livingproof-common @ https://github.com/Living-Proof-Labs/livingproof-common/releases/download/v1.0.0/livingproof_common-1.0.0-py3-none-any.whl",
