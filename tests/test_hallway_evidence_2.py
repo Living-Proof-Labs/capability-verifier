@@ -83,14 +83,51 @@ def test_evidence_2_0_0_grades_every_identical_trial(tmp_path):
     assert "seed" not in result["trials"][0]
     assert all(t["status"] == hallway.PASS for t in result["trials"])
     summary = result["summary"]
-    assert (summary["k"], summary["n"], summary["required_passes"], summary["grade"]) == (
-        3,
-        3,
-        3,
-        hallway.PASS,
-    )
+    count = _load()["trials"]["count"]
+    statement = f"{count} of {count} repeats agree"
+    assert summary["grade"] == hallway.PASS
+    assert summary["rationale"] == statement
+    assert summary["reproducibility"] == {
+        "compared": True,
+        "identical": True,
+        "repeats": count,
+        "agreeing": count,
+        "statement": statement,
+        "finding": None,
+    }
+    assert summary["k"] is None and summary["n"] is None
+    assert summary["required_passes"] is None and summary["wilson95"] == [None, None]
+    assert summary["aggregation"]["id"] == "repeated-outcome"
+    assert hallway.summary_lines(result) == [f"{statement}: {hallway.PASS}"]
     assert result["findings"] == []
     assert "findings" not in summary
+
+
+def test_identical_repeats_are_one_bundle_outcome(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.15.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    spec = importlib.util.spec_from_file_location(
+        "verify_hallway_tool_identical", Path(__file__).parents[1] / "tools" / "verify_hallway.py"
+    )
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    tool.export(_copy(tmp_path), tmp_path / "verified", prototype=True, bundle_version="1.1.0")
+    bundle = json.loads((tmp_path / "verified" / "bundle" / "manifest.json").read_text())
+    report = json.loads((tmp_path / "verified" / "verification.json").read_text())
+    run = bundle["assessment"]["runs"][0]
+    count = _load()["trials"]["count"]
+    assert run["grade"] == report["summary"]["grade"] == hallway.PASS
+    assert run["reproducibility"] == report["summary"]["reproducibility"]
+    assert run["reproducibility"]["statement"] == f"{count} of {count} repeats agree"
+    assert len(run["result_ids"]) == count
+    assert run["k"] is None and run["n"] is None and run["required_passes"] is None
+    assert run["interval"] == {
+        "method": "wilson",
+        "level": 0.95,
+        "lower": None,
+        "upper": None,
+    }
+    assert bundle["assessment"]["aggregation"] == {"id": "repeated-outcome", "version": "1.0.0"}
 
 
 def test_a_reproducibility_finding_is_not_a_robot_fail(tmp_path):
@@ -109,12 +146,26 @@ def test_a_reproducibility_finding_is_not_a_robot_fail(tmp_path):
     }
     (dest / "manifest.json").write_text(json.dumps(manifest) + "\n")
     result = hallway.verify(dest / "manifest.json")
-    assert result["summary"]["grade"] == hallway.PASS
+    summary = result["summary"]
+    assert summary["grade"] != hallway.PASS
+    assert summary["grade"] == hallway.INSUFFICIENT
+    assert summary["k"] is None and summary["n"] is None
+    assert summary["required_passes"] is None and summary["wilson95"] == [None, None]
+    assert summary["reproducibility"]["compared"] is True
+    assert summary["reproducibility"]["identical"] is False
+    assert summary["reproducibility"]["finding"] == FINDING
+    assert summary["reproducibility"]["repeats"] == manifest["trials"]["count"]
+    assert "agreeing" not in summary["reproducibility"]
+    assert "statement" not in summary["reproducibility"]
+    assert [row["index"] for row in summary["reproducibility"]["differing"]] == [
+        trial["index"] for trial in manifest["trials"]["results"]
+    ]
+    assert summary["reproducibility"]["differing"][1]["sha256"] == digest
+    text = "\n".join(hallway.summary_lines(result))
+    assert "Wilson" not in text and "/" not in text.splitlines()[0]
+    assert any(line.startswith("test-system reproducibility:") for line in text.splitlines())
     assert result["findings"] == [FINDING]
-    assert result["summary"]["findings"] == [FINDING]
-    assert any(
-        line.startswith("test-system reproducibility:") for line in hallway.summary_lines(result)
-    )
+    assert summary["findings"] == [FINDING]
 
 
 def test_a_robot_fail_stays_a_robot_fail_beside_the_finding(tmp_path):
@@ -134,6 +185,8 @@ def test_a_robot_fail_stays_a_robot_fail_beside_the_finding(tmp_path):
     (dest / "manifest.json").write_text(json.dumps(manifest) + "\n")
     result = hallway.verify(dest / "manifest.json")
     assert result["summary"]["grade"] == hallway.FAIL
+    assert result["summary"]["k"] is None and result["summary"]["wilson95"] == [None, None]
+    assert result["summary"]["reproducibility"]["finding"]["kind"] == "test-system"
     assert result["findings"][0]["kind"] == "test-system"
     failed = result["trials"][1]
     assert failed["index"] == 2 and failed["status"] == hallway.FAIL
@@ -179,16 +232,27 @@ def test_evidence_2_0_0_exports_the_finding_without_changing_the_grade(tmp_path,
     )
     report = json.loads((tmp_path / "verified" / "verification.json").read_text())
     bundle = json.loads((tmp_path / "verified" / "bundle" / "manifest.json").read_text())
-    assert report["summary"]["grade"] == hallway.PASS
+    assert report["summary"]["grade"] == hallway.INSUFFICIENT
+    assert report["summary"]["k"] is None and report["summary"]["wilson95"] == [None, None]
     assert report["findings"] == [FINDING]
     assert bundle["results"][0]["provenance"]["findings"] == [FINDING]
+    assert bundle["results"][0]["provenance"]["reproducibility"]["identical"] is False
     assert bundle["results"][0]["original_result"] == {
         "status": hallway.PASS,
         "index": 1,
         "seed": 1,
     }
-    assert bundle["assessment"]["runs"][0]["grade"] == hallway.PASS
-    assert bundle["assessment"]["runs"][0]["required_passes"] == 3
+    run = bundle["assessment"]["runs"][0]
+    assert run["grade"] == hallway.INSUFFICIENT
+    assert run["k"] is None and run["n"] is None and run["required_passes"] is None
+    assert run["interval"] == {
+        "method": "wilson",
+        "level": 0.95,
+        "lower": None,
+        "upper": None,
+    }
+    assert run["reproducibility"]["finding"] == FINDING
+    assert bundle["assessment"]["aggregation"]["id"] == "repeated-outcome"
 
 
 @pytest.mark.parametrize(
@@ -256,6 +320,8 @@ def test_one_trial_is_not_a_comparison(tmp_path):
         1,
         1,
     )
+    assert result["summary"]["wilson95"] == hallway.wilson(1, 1)
+    assert "reproducibility" not in result["summary"]
     assert result["findings"] == []
 
 

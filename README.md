@@ -285,8 +285,8 @@ must be new; move prior artifacts aside before repeating a local export.
 
 `capability_verifier.hallway` assesses each `livingproof-hallway-observation/1.0.0` or `/2.0.0` trial with
 four deterministic evaluators: `hallway-exit-reached`, `hallway-lateral-limit`,
-`hallway-wall-contact` and `hallway-fall`. It judges each trial with `all-required-v1`, then
-aggregates k of N with a Wilson 95% interval. Each rationale names the check, the time and the
+`hallway-wall-contact` and `hallway-fall`. It judges each trial with `all-required-v1`. Seeded trials then aggregate k of N with a
+Wilson 95% interval. Compared repeats are one outcome; see Accepted hallway evidence. Each rationale names the check, the time and the
 limit, and the time (2 decimals). Evidence 1.0.0 also names the seed, for example
 `lateral 0.62 m > 0.49 m at 10.26 s (seed 7)` or `wall contact depth 0.03 m at 4.50 s (seed 2)`.
 Evidence 2.0.0 names the trial index in that sentence, for example `(trial 2)`. Lengths gain
@@ -312,17 +312,44 @@ it is not a `KeyError`.
   (1 through N). `trials.reproducibility` is `compared`, `identical` and `finding`. When the
   identical trials disagree, `finding` is `{kind: "test-system", name: "reproducibility", ...}`.
 
-The same k-of-N aggregator grades both. Format 2.0.0 has no required-pass count, and the
-trials are identical repeats of the nominal pose, so the threshold used for that format is
-N: every trial has to pass. That is the existing aggregator with one input filled in, not a
-new grading policy. The per-trial evaluators are unchanged. A reproducibility finding is
-copied onto the verification result (`findings`) and into each bundle result's provenance.
-It is a test-system finding. It is not a robot FAIL, and it does not change the grade. A
-missing or unreadable observation is still `INSUFFICIENT_EVIDENCE` for that trial. If none
-of the planned trials complete, k-of-N with threshold N grades the run
-`INSUFFICIENT_EVIDENCE`. Reclassifying those trials as a test-system `ERROR` status, and
-dropping them from N, belongs to the later grading-policy change. The reporter bundle schema
-only allows `PASS`, `FAIL` and `INSUFFICIENT_EVIDENCE` as assessment statuses.
+Format 1.0.0, and a 2.0.0 record with `compared: false` (a single trial, or a run that was
+not a comparison), keep the k-of-N grade and the Wilson 95% interval. `trials.count` is
+unchanged. The per-trial evaluators are unchanged.
+
+When `trials.reproducibility.compared` is true, those repeats are not graded as independent
+samples. `k`, `n`, `required_passes` and the Wilson bounds are null: not a success rate and
+not a numeric interval. The keys stay, because livingproof-capability-report v3.4.0 through
+v3.6.0 (and current main) raise if they are missing. The aggregation id for that assessment
+is `repeated-outcome` 1.0.0. Seeded runs stay `k-of-n-wilson95` 1.0.0 with real counts.
+`result_ids` still names every repeat.
+
+Identical repeats (`identical: true` and `finding: null`), with every recorded result
+sharing one status and with that many results as `trials.count`, are that one status plus:
+
+```json
+"reproducibility": {
+  "compared": true,
+  "identical": true,
+  "repeats": "<trials.count>",
+  "agreeing": "<trials.count>",
+  "statement": "<trials.count> of <trials.count> repeats agree",
+  "finding": null
+}
+```
+
+`repeats` and `agreeing` are the evidence `trials.count`. The rationale is the statement.
+No number is added.
+
+Repeats that disagree (`identical: false`) are a reproducibility finding, not a success
+rate, and the run is not graded PASS on that basis. The grade is FAIL when a recorded
+result is FAIL, and `INSUFFICIENT_EVIDENCE` otherwise. `reproducibility.finding` is the
+evidence finding, copied. `reproducibility.differing` lists each evidence repeat's
+`index`, `sha256`, `trajectory_sha256` and `outcome` where the evidence stored that field,
+so the repeats that differ can be seen. The finding is also copied onto the verification
+result (`findings`) and into each bundle result's provenance. It is a test-system finding.
+It is not a robot FAIL. A missing or unreadable observation is still
+`INSUFFICIENT_EVIDENCE` for that trial. The reporter bundle schema only allows `PASS`,
+`FAIL` and `INSUFFICIENT_EVIDENCE` as assessment statuses.
 
 Result ids stay `{configuration}-seed-NN`. For format 2.0.0, NN is the trial index. The
 pinned reporter matches a video link by a result id ending in `-seed-NN` and rejects any
@@ -356,13 +383,23 @@ changes only the `"tag"` line (and `"commit"` if the release commit differs).
 `--bundle-version 1.1.0` adds the verifier's own grading to the bundle
 (`capability_verifier.evaluate`): each result carries a `decision` (status, reason,
 structured failures, assessor types, policy) and the bundle carries an `assessment`
-in the `livingproof-run-assessment/0.1` format from robot-capability-specs, with every
-decision and, per run, k of N, the Wilson 95% interval, the grade and its rationale.
-The rules are the ones capability report v1.10.0 applies: INCOMPATIBLE results make the
-run INCOMPATIBLE, and without a usable plan N is the recorded count and the grade is
-INSUFFICIENT_EVIDENCE. The default stays 1.0.0 because capability report 1.x accepts
-only that version. `tools/compare_assessment.py <bundle> <report.json>` checks a 1.1.0
-bundle against a report computed from the same evidence.
+in the `livingproof-run-assessment/0.1` format from robot-capability-specs. A seeded run
+carries k of N, the Wilson 95% interval, the grade and its rationale. A compared-repeat
+run carries the one grade, its rationale and the `reproducibility` block above. Its `k`,
+`n`, `required_passes` and Wilson bounds are null. For a seeded run the rules are the ones
+capability report v1.10.0 applies: INCOMPATIBLE results make the run INCOMPATIBLE, and
+without a usable plan N is the recorded count and the grade is INSUFFICIENT_EVIDENCE.
+The default stays 1.0.0 because capability report 1.x accepts only that version.
+`tools/compare_assessment.py <bundle> <report.json>` checks a 1.1.0 bundle against a
+report computed from the same evidence.
+
+livingproof-capability-report v3.6.0 is the same as current main on this read, and the
+same check is in v3.4.0, which this repository's duration render uses. `assessed.py`
+requires `k`, `n`, `required_passes` and `interval` and raises when a key is absent.
+Null values pass that check. `steps.py` `success_count` and `_confidence` then skip a
+non-number, so the rendered page has no success count and no 95% range. None of those
+versions reads `reproducibility`, so the page does not yet say that the repeats agree.
+That reporter change is separate from this verifier.
 
 Each 1.1.0 `decision` also names one `primary_failure` (a copy of one entry of `failures`, or
 `null` when nothing failed) and keeps every other failure in `secondary_failures`, so a reader

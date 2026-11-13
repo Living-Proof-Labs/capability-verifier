@@ -521,13 +521,12 @@ def wilson(k, n, z=1.959963984540054):
 
 
 def planned_counts(plan: dict) -> tuple:
-    """``(n, required_passes)`` for the existing k-of-N grade.
+    """``(n, required_passes)`` for a run that is still graded k of N.
 
     Evidence 1.0.0 stores an integer ``plan.trials`` and ``plan.required_passes``.
-    Evidence 2.0.0 stores ``plan.trials.count`` and no ``required_passes``. Those trials
-    are identical nominal repeats, so this keeps the same aggregator and sets the
-    threshold to N: every trial has to pass. A count that is not an integer >= 1 is
-    not a usable plan (``(None, None)``).
+    Evidence 2.0.0 stores ``plan.trials.count`` and no ``required_passes``. A count
+    that is not an integer >= 1 is not a usable plan (``(None, None)``). Compared
+    repeats do not use this threshold: ``aggregate`` reports one outcome instead.
     """
     trials = plan.get("trials") if isinstance(plan, dict) else None
     if isinstance(trials, dict):
@@ -540,9 +539,36 @@ def planned_counts(plan: dict) -> tuple:
     return None, None
 
 
-def aggregate(trials, plan):
-    """k of the planned N. Wilson uses the planned N; a missing trial counts as not passed
-    and makes the grade INSUFFICIENT_EVIDENCE (same rule as the capability report)."""
+def aggregate(trials, plan, reproducibility=None, repeat_records=None):
+    """k of the planned N, unless the evidence compared the repeats.
+
+    Wilson uses the planned N; a missing trial counts as not passed and makes the
+    grade INSUFFICIENT_EVIDENCE (same rule as the capability report). When
+    ``reproducibility.compared`` is true, the summary is one outcome plus that
+    record: no k, no n, and no Wilson interval.
+    """
+    repeats = None
+    if isinstance(plan, dict) and isinstance(plan.get("trials"), dict):
+        repeats = plan["trials"].get("count")
+    # Imported here: evaluate imports this module, and this call happens after both load.
+    from .evaluate import repeat_assessment
+
+    block = repeat_assessment(
+        reproducibility, repeats, [t["status"] for t in trials], repeat_records
+    )
+    if block is not None:
+        # k, n and the interval are present and empty. The reporter requires the keys
+        # and raises when they are missing; None is not a rate and not a numeric bound.
+        return {
+            "k": None,
+            "n": None,
+            "required_passes": None,
+            "wilson95": [None, None],
+            "grade": block["grade"],
+            "rationale": block["rationale"],
+            "reproducibility": block["reproducibility"],
+            "aggregation": block["aggregation"],
+        }
     k = sum(t["status"] == PASS for t in trials)
     unsure = sum(t["status"] == INSUFFICIENT for t in trials)
     n, need = planned_counts(plan)
@@ -590,7 +616,11 @@ def _with_findings(result: dict, findings: list | None) -> dict:
 
 
 def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
-    """Assess every trial named by the evidence manifest; return per-trial and k/N results."""
+    """Assess every trial named by the evidence manifest.
+
+    Seeded evidence keeps a k-of-N summary. Compared repeats are one outcome plus
+    the evidence reproducibility record.
+    """
     manifest_path = Path(manifest_path)
     try:
         manifest = json.loads(manifest_path.read_text())
@@ -695,17 +725,48 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
             "limits": limits(manifest),
             "policy": POLICY,
             "trials": trials,
-            "summary": aggregate(trials, plan),
+            "summary": aggregate(
+                trials,
+                plan,
+                manifest["trials"]["reproducibility"] if v2 else None,
+                manifest["trials"]["results"] if v2 else None,
+            ),
             "failures": [f for t in trials for f in t["failures"]],
         },
         reproducibility_findings(manifest),
     )
 
 
+def _repeat_line(rec: dict) -> str:
+    """One evidence repeat, using only fields the evidence stored."""
+    bits = []
+    if "index" in rec:
+        bits.append(f"index {rec['index']}")
+    if "outcome" in rec:
+        bits.append(f"outcome {rec['outcome']}")
+    if "trajectory_sha256" in rec:
+        bits.append(f"trajectory_sha256 {rec['trajectory_sha256']}")
+    if "sha256" in rec:
+        bits.append(f"sha256 {rec['sha256']}")
+    return "  " + ", ".join(bits)
+
+
 def summary_lines(result: dict) -> list[str]:
     s = result["summary"]
     if s["grade"] == UNSUPPORTED:
         lines = [f"{UNSUPPORTED}: {s['reason']} (no trials assessed)"]
+    elif (
+        isinstance(s.get("reproducibility"), dict) and s["reproducibility"].get("compared") is True
+    ):
+        lines = [f"{s['rationale']}: {s['grade']}"]
+        for t in result["trials"]:
+            if t["status"] != PASS:
+                why = "; ".join(a["rationale"] for a in t["assessments"] if a["status"] != PASS)
+                where = f"trial {t['index']:2d}" if "index" in t else f"seed {t['seed']:2d}"
+                lines.append(f"  {where} {t['status']}: {why}")
+        for rec in s["reproducibility"].get("differing") or []:
+            if isinstance(rec, dict):
+                lines.append(_repeat_line(rec))
     else:
         lines = [
             f"{s['k']}/{s['n']} trials PASS (needs {s['required_passes']}), "

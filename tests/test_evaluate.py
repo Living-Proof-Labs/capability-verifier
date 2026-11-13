@@ -368,3 +368,92 @@ def test_run_summary_with_no_failures_or_contacts():
     assert run["failure_summary"] == {"failed_trials": 0, "by_primary": []}
     contact = next(w for w in run["worst"] if w["check"] == "hallway-wall-contact")
     assert contact["observed"] is None and contact["seed"] is None
+
+
+def _pause_and_evidence():
+    """A real pause result and the real compared-repeat record. No hallway inputs."""
+    pause = json.loads((ROOT / "examples/execution-matrix/manifest.json").read_text())
+    evidence = json.loads(
+        (ROOT / "tests/fixtures/hallway/evidence-2.0.0/manifest.json").read_text()
+    )
+    base = next(
+        item
+        for item in pause["results"]
+        if item["spec"]["capability"] == "pause" and item["original_result"]["status"] == P
+    )
+    return base, evidence
+
+
+def _pause_results(base, evidence, record):
+    results = []
+    for trial in evidence["trials"]["results"]:
+        provenance = dict(base["provenance"])
+        provenance["plan"] = evidence["plan"]
+        provenance["reproducibility"] = record
+        provenance["repeat_records"] = evidence["trials"]["results"]
+        results.append(
+            {
+                "id": f"{base['id']}-{trial['index']}",
+                "spec": base["spec"],
+                "system": base["system"],
+                "environment": base["environment"],
+                "assessments": base["assessments"],
+                "provenance": provenance,
+            }
+        )
+    return results
+
+
+def test_compared_repeats_aggregate_for_a_pause_capability():
+    """The repeat rule uses the evidence record, not a hallway or robot input."""
+    base, evidence = _pause_and_evidence()
+    count = evidence["trials"]["count"]
+    record = evidence["trials"]["reproducibility"]
+    results = _pause_results(base, evidence, record)
+    status = base["original_result"]["status"]
+    decisions = [evaluate.Decision(item["id"], status, status) for item in results]
+    [run] = evaluate.Aggregator().aggregate(results, decisions)
+    statement = f"{count} of {count} repeats agree"
+    assert run["capability"] == "pause"
+    assert run["grade"] == status
+    assert run["rationale"] == statement
+    assert run["reproducibility"]["repeats"] == count
+    assert run["reproducibility"]["agreeing"] == count
+    assert run["reproducibility"]["statement"] == statement
+    assert run["result_ids"] == [item["id"] for item in results]
+    assert run["k"] is None and run["n"] is None and run["required_passes"] is None
+    assert run["interval"]["lower"] is None and run["interval"]["upper"] is None
+    assert "hallway" not in json.dumps(run["reproducibility"])
+    assert "failure_summary" not in run and "worst" not in run
+    summary = evaluate.as_reporter_summary(run)
+    assert summary["k"] is None and summary["wilson95"] == [None, None]
+    assert run["reproducibility"]["statement"] == statement
+
+    disagree = {
+        "compared": True,
+        "identical": False,
+        "finding": {
+            "kind": "test-system",
+            "name": "reproducibility",
+            "detail": (
+                "Identical trials disagreed on trajectory hash or outcome. "
+                "This is a test-system reproducibility finding, not a robot FAIL."
+            ),
+            "trajectory_sha256": [
+                trial["trajectory_sha256"] for trial in evidence["trials"]["results"]
+            ],
+            "outcomes": [trial["outcome"] for trial in evidence["trials"]["results"]],
+        },
+    }
+    disagreed = _pause_results(base, evidence, disagree)
+    decisions = [evaluate.Decision(item["id"], status, status) for item in disagreed]
+    [run] = evaluate.Aggregator().aggregate(disagreed, decisions)
+    assert run["grade"] != P
+    assert run["grade"] == U
+    assert run["reproducibility"]["finding"] == disagree["finding"]
+    assert [row["index"] for row in run["reproducibility"]["differing"]] == [
+        trial["index"] for trial in evidence["trials"]["results"]
+    ]
+    assert run["k"] is None and run["n"] is None
+    assert run["interval"]["lower"] is None and run["interval"]["upper"] is None
+    assert "agreeing" not in run["reproducibility"]

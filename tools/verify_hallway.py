@@ -3,7 +3,7 @@
 
     python tools/verify_hallway.py <evidence>/manifest.json <out> [--prototype]
 
-Writes ``<out>/verification.json`` (per-trial assessments and the k/N summary) and
+Writes ``<out>/verification.json`` (per-trial assessments and the run summary) and
 ``<out>/bundle/`` (``manifest.json`` plus ``evidence/``) for
 livingproof-capability-report. The bundle schema accepts only released catalog tags;
 with an UNRELEASED hallway lock the export refuses unless ``--prototype`` is given,
@@ -242,6 +242,10 @@ def _export(
             "simulator": evidence.get("environment"),
             "summary": result["summary"],
         }
+        if evidence.get("format") == hallway.EVIDENCE_V2:
+            # The evidence record, copied. The run assessment reads it and does not recompute it.
+            provenance["reproducibility"] = evidence["trials"]["reproducibility"]
+            provenance["repeat_records"] = evidence["trials"]["results"]
         if missing:
             provenance["missing_evidence"] = missing
         if result.get("findings"):

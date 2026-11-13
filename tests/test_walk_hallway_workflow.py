@@ -693,17 +693,18 @@ def test_evidence_verify_and_media_run_in_the_locked_hallway_image():
     assert STEPS.count("if: needs.plan.outputs.verifier-image == ''") == 6
 
 
-# Reporter 3.4.0 release assets. Duration cells are filled only when render's input is the
-# bundle manifest, so this pins that release rather than whatever reporter happens to be installed.
+# Reporter 3.6.0, the release livingproof-verification pins. Duration cells are filled
+# only when render's input is the bundle manifest. 3.4.0's markdown multiplies the
+# stored Wilson bounds, so it cannot render a compared-repeat run whose bounds are null.
 _REPORTER_RELEASE = (
-    "https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.4.0"
+    "https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.6.0"
 )
 _REPORTER_WHEELS = {
     "livingproof_common-1.0.0-py3-none-any.whl": (
         "8b7795748b54eeb89610f3716245f45db48ac0474465a5abbf974e7075c1476c"
     ),
-    "livingproof_capability_report-3.4.0-py3-none-any.whl": (
-        "d688aa86dd4e5fd603587e41e1f494358e58117e311bf1b2ee17b6e55095c496"
+    "livingproof_capability_report-3.6.0-py3-none-any.whl": (
+        "c600c502f6e8722c358264cf9f104bba759188334e6329821b463fbaab862824"
     ),
 }
 # Three trials, four scenario steps. Distinct values so a shared placeholder cannot pass.
@@ -724,8 +725,8 @@ def _download_wheel(dest, name):
     return target
 
 
-def _reporter_3_4_0(tmp_path):
-    """Install the pinned reporter 3.4.0 wheels and return the directory that holds the CLI."""
+def _reporter_3_6_0(tmp_path):
+    """Install the pinned reporter 3.6.0 wheels and return the directory that holds the CLI."""
     import shutil
     import subprocess
     import sys
@@ -815,7 +816,7 @@ def test_rendered_html_shows_each_trial_duration(tmp_path, monkeypatch):
         + "\n"
     )
     env = dict(os.environ)
-    env["PATH"] = f"{_reporter_3_4_0(tmp_path)}{os.pathsep}{env['PATH']}"
+    env["PATH"] = f"{_reporter_3_6_0(tmp_path)}{os.pathsep}{env['PATH']}"
     subprocess.run(
         ["bash", "-e", "-c", _step("Validate, then render")], cwd=job, env=env, check=True
     )
@@ -823,6 +824,9 @@ def test_rendered_html_shows_each_trial_duration(tmp_path, monkeypatch):
     cells = re.findall(r"<td data-label='Duration'><span class='cell-value'>([^<]*)</span>", html)
     assert cells == _DURATION_CELLS
     assert "—" not in cells
+    # The run interval is null, so v3.6.0 draws no confidence range. Step rings still
+    # count the stored trials; that count is the reporter follow-up, not this render.
+    assert "95% confidence range" not in html
     subprocess.run(
         [
             "livingproof-capability-report",
