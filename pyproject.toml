@@ -7,7 +7,7 @@ license = "Apache-2.0"
 dependencies = [
     "pyyaml>=6.0",
     # Released livingproof-evaluator-scenario.
-    "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git@v1.0.0",
+    "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git@v1.1.2",
 ]
 
 [project.entry-points."livingproof.capability.commands"]

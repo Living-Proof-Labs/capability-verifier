@@ -6,6 +6,7 @@ reporter are unchanged between the one-evaluator and two-evaluator renders.
 """
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -133,7 +134,7 @@ def test_a_second_evaluator_artifact_adds_a_mark_without_a_collector_change(tmp_
     collect(bundle, downloads)
     (bundle_dir / "manifest.json").write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
     one = _html(bundle_dir)
-    assert "eval-name-full'>Scenario evaluator</span>" in one
+    assert "eval-name-full'>Scenario</span>" in one
     assert "eval-name-full'>Robot health</span>" not in one
     assert "3 successes, 100%" in one
     assert "M6.5 7L10.5 11L17.5 4" in one
@@ -161,21 +162,27 @@ def test_a_second_evaluator_artifact_adds_a_mark_without_a_collector_change(tmp_
     assert first[1]["descriptor"]["findings"] == []
     (both_dir / "manifest.json").write_text(json.dumps(both, indent=2) + "\n", encoding="utf-8")
     two = _html(both_dir)
-    assert "eval-name-full'>Scenario evaluator</span>" in two
+    assert "eval-name-full'>Scenario</span>" in two
     assert "eval-name-full'>Robot health</span>" in two
     assert "Camera node crashed." in two
     assert "3 successes, 100%" in two
     assert _ring(two) == ring
 
 
-def test_scenario_package_pin_is_release_v1_0_0():
+EVALUATOR_PIN = re.compile(
+    r"livingproof-evaluator-scenario @ git\+https://github\.com/Living-Proof-Labs/"
+    r"livingproof-evaluator-scenario\.git@(?P<tag>v\d+\.\d+\.\d+)\""
+)
+
+
+def test_scenario_package_pin_is_a_released_tag():
+    """The declared pin is a full released vX.Y.Z tag, not a commit or branch."""
     text = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
-    assert (
-        "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/"
-        "livingproof-evaluator-scenario.git@v1.0.0"
-    ) in text
+    match = EVALUATOR_PIN.search(text)
+    assert match, "declared evaluator pin must be a full released vX.Y.Z tag"
+    assert match.group("tag") == "v1.1.2"
     assert "9c82a0b" not in text
-    assert importlib.metadata.version("livingproof-evaluator-scenario") == "1.0.0"
+    assert importlib.metadata.version("livingproof-evaluator-scenario") == "1.1.2"
 
 
 def test_two_configurations_keep_their_own_entries_and_grades(tmp_path):
@@ -187,8 +194,11 @@ def test_two_configurations_keep_their_own_entries_and_grades(tmp_path):
     shutil.copytree(STOCK, stock)
     play_docs = _scenario_documents(playground)
     stock_docs = _scenario_documents(stock)
-    assert play_docs[0]["evaluator"]["version"] == "1.0.0"
-    assert stock_docs[0]["evaluator"]["version"] == "1.0.0"
+    assert play_docs[0]["evaluator"]["version"] == "1.1.2"
+    assert stock_docs[0]["evaluator"]["version"] == "1.1.2"
+    assert play_docs[0]["evaluator"]["display_name"] == "Scenario"
+    assert play_docs[0]["descriptor"]["title"] == "Scenario"
+    assert play_docs[0]["descriptor"]["short_title"] == "Scenario"
     downloads = tmp_path / "downloads"
     _write(
         downloads,
