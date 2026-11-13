@@ -220,3 +220,14 @@ def test_catalog_step_accepts_the_new_name_and_the_old_name():
     assert "fetch_hallway_specs.py" in new
     with pytest.raises(d.DefinitionError, match="no step"):
         d.first_step(scenario.replace("Scenario catalog", "Other catalog"), names)
+
+
+def test_wrapper_self_reference_names_a_callable_workflow_in_this_repository():
+    """$/ takes no @ref, names a file under .github/workflows, and that file is callable."""
+    uses = _workflow("walk-hallway.yml")["jobs"]["scenario"]["uses"]
+    assert uses.startswith("$/") and "@" not in uses
+    target = ROOT / uses[2:]
+    assert target.parent == ROOT / ".github" / "workflows"
+    assert target.is_file()
+    assert "workflow_call" in _workflow(target.name)[True]
+    assert d.called_workflow(target.read_text()) is None
