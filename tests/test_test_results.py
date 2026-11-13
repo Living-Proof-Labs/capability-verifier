@@ -25,6 +25,24 @@ PUBLISH_CHECK = (
     "github.event.pull_request.head.repo.full_name == github.repository }}"
 )
 HEAD_SHA = "${{ github.event.pull_request.head.sha || github.sha }}"
+PUBLISH_CHECK_OFF = "false"
+JOBS_WITHOUT_A_CHECK = ("documentation", "report-results")
+# Permissions blocks as they stand on main. documentation and report-results
+# inherit the workflow contents: read and have no checks: write.
+JOB_PERMISSIONS = {
+    "verify": {"contents": "read", "checks": "write"},
+    "report": None,
+    "report-results": None,
+    "release": {"contents": "write"},
+    "release-reports": {"contents": "write"},
+    "hallway-image-tag": {"packages": "read"},
+    "hallway-image-build": {"contents": "read", "packages": "write"},
+    "hallway-image-merge": {"contents": "write", "packages": "write"},
+    "hallway-image-verify": {"contents": "read"},
+    "hallway-image-pr": {"contents": "read"},
+    "documentation": None,
+    "documentation-deploy": {"pages": "write", "id-token": "write"},
+}
 
 
 class FakeChecks:
@@ -368,8 +386,38 @@ def test_workflows_reference_no_new_secrets():
     for _path, job_name, _job, _step, gate_step in reporter_steps():
         assert gate_step["env"]["GITHUB_TOKEN"] == "${{ github.token }}", job_name
         assert gate_step["env"]["HEAD_SHA"] == HEAD_SHA
-        assert gate_step["env"]["PUBLISH_CHECK"] == PUBLISH_CHECK
+        expected = PUBLISH_CHECK_OFF if job_name in JOBS_WITHOUT_A_CHECK else PUBLISH_CHECK
+        assert gate_step["env"]["PUBLISH_CHECK"] == expected, job_name
         assert "secrets." not in gate_step["run"]
+
+
+def test_documentation_and_report_results_pass_publish_check_false():
+    """Those jobs have no checks: write, so the gate must not try to create a check."""
+    gates = {job_name: gate_step for _path, job_name, _job, _step, gate_step in reporter_steps()}
+    assert set(JOBS_WITHOUT_A_CHECK) <= set(gates)
+    for job_name in JOBS_WITHOUT_A_CHECK:
+        gate_step = gates[job_name]
+        assert gate_step["env"]["PUBLISH_CHECK"] == PUBLISH_CHECK_OFF
+        assert '--publish-check "$PUBLISH_CHECK"' in gate_step["run"]
+
+
+def test_verify_gate_still_publishes_for_same_repo_events():
+    """Non-pull-request events and same-repository pull requests still publish."""
+    gates = {job_name: gate_step for _path, job_name, _job, _step, gate_step in reporter_steps()}
+    gate_step = gates["verify"]
+    assert gate_step["env"]["PUBLISH_CHECK"] == PUBLISH_CHECK
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in PUBLISH_CHECK
+    assert '--publish-check "$PUBLISH_CHECK"' in gate_step["run"]
+
+
+def test_job_permissions_are_unchanged():
+    document = yaml.safe_load((ROOT / ".github/workflows/verify.yml").read_text())
+    assert document["permissions"] == {"contents": "read"}
+    assert set(document["jobs"]) == set(JOB_PERMISSIONS)
+    for job_name, permissions in JOB_PERMISSIONS.items():
+        assert document["jobs"][job_name].get("permissions") == permissions, job_name
+    for job_name in JOBS_WITHOUT_A_CHECK:
+        assert "checks" not in (document["jobs"][job_name].get("permissions") or {})
 
 
 def test_report_results_reporter_failure_does_not_replace_the_junit_gate():

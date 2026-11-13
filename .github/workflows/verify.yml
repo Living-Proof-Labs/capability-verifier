@@ -229,8 +229,10 @@ jobs:
         with:
           pattern: archive-tests-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: native-results
-      # Summary mode does not create a check run. A reporter API failure must not fail
-      # this job; the gate fails only for a failed, missing, or unreadable report.
+      # Summary mode does not create a check run. This job has contents: read only,
+      # so the gate runs with publish-check false and does not call the Checks API.
+      # A reporter API failure must not fail this job; the gate fails only for a
+      # failed, missing, or unreadable report.
       - name: Native archive test results
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -251,7 +253,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           REPORT_NAME: Native archive consumption
           REPORT_PATH: native-results/**/archives.xml
-          PUBLISH_CHECK: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          PUBLISH_CHECK: 'false'
         run: python tools/test_results.py --name "$REPORT_NAME" --path "$REPORT_PATH" --publish-check "$PUBLISH_CHECK"
   release:
     needs: [verify, report, report-results, documentation]
@@ -604,8 +606,10 @@ jobs:
         if: ${{ !cancelled() && hashFiles('artifacts/results.xml') != '' }}
       - run: task test:docs
         if: ${{ !cancelled() && hashFiles('artifacts/docs/html/build.json') != '' }}
-      # Summary mode does not create a check run. continue-on-error keeps a reporter
-      # API failure off the job result; the next step is the gate.
+      # Summary mode does not create a check run. This job has contents: read only,
+      # so the gate runs with publish-check false and does not call the Checks API.
+      # continue-on-error keeps a reporter API failure off the job result; the next
+      # step is the gate.
       - name: Visible documentation and fixture results
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -626,7 +630,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           REPORT_NAME: Documentation and fixture verification
           REPORT_PATH: artifacts/results.xml,artifacts/docs-tests.xml
-          PUBLISH_CHECK: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          PUBLISH_CHECK: 'false'
         run: python tools/test_results.py --name "$REPORT_NAME" --path "$REPORT_PATH" --publish-check "$PUBLISH_CHECK"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         id: preview
