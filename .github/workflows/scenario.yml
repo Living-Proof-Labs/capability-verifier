@@ -1,0 +1,798 @@
+# SPDX-License-Identifier: Apache-2.0
+# Reusable scenario verification for one robot repository.
+# walk-hallway.yml is the wrapper existing callers use; this file is the run.
+#   check (lint, profiles, robot tests) | plan (lock -> matrix, repin --check) -> evidence
+#   (livingproof_sim_mujoco.evidence on the robot's adapter) ->
+#   verify (this verifier at the lock's commit; grades and writes the bundle) and, in parallel,
+#   scenario-evaluator (its own result files, one artifact) ->
+#   media (MCAP for every trial, video for the first PASS and FAIL trial, named artifacts and
+#   their URLs) -> report (collects this configuration's evaluator-results onto the bundle, then the reporter
+#   image renders the bundle 1.1.0 decisions;
+#   it never grades; with the run and artifact links) ->
+#   comment (reporter image `comment`).
+# Every ref comes from one verification lock, including the scenario and the world.
+# When the caller passes verification-lock (a livingproof-verification-lock/0.2.0 path in the
+# caller repository), that lock is the only source even if the robot commit also has
+# verification.lock.json: the verifier checkout, verifier image and digest, scenario-evaluator
+# pin, reporter, plan, world, configuration and evidence. The job logs EVIDENCE_SOURCE: caller
+# and the sha256 of the robot file it replaced, or that the robot commit has no lock. When the
+# input is empty and the robot commit has verification.lock.json, that file stays the only
+# source (the v1.18.0 path). Nothing is pinned in this file.
+# A capability FAIL is the result, not a CI failure. One call = one robot lock, so a
+# cross-robot compare fans out by calling walk-hallway.yml once per robot repository and
+# merging the verified-* bundles it uploads.
+#
+# Robot repository contract: pins.json, tests/, and a pyproject.toml with the runner source
+# and `[tool.livingproof] adapter = "<module>:<object>"` (a livingproof_sim_mujoco.evidence
+# Robot adapter). verification.lock.json stays on commits that still publish it. CI needs
+# no robot Taskfile targets.
+#
+#   jobs:
+#     verify:
+#       uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@<commit>
+#       permissions: {contents: read, pull-requests: write}
+name: scenario
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: Robot repository to verify (default the caller)
+        type: string
+        default: ''
+      ref:
+        description: Robot repository ref (default the caller's ref)
+        type: string
+        default: ''
+      configurations:
+        description: JSON list of configuration names to run (default every one in the lock)
+        type: string
+        default: ''
+      verification-lock:
+        description: >-
+          Path in the caller repository of a livingproof-verification-lock/0.2.0.
+          When set, this lock is the only source for the run, even if the robot
+          commit has verification.lock.json. The workflow writes the document
+          livingproof-sim-mujoco v2.0.3 evidence.py reads, points repin --check
+          at this lock, and records the replaced robot lock's sha256. Empty
+          leaves a robot verification.lock.json as the only source.
+          PENDING_RELEASE in a caller lock still fails.
+        type: string
+        default: ''
+      artifact-prefix:
+        description: Prefix for artifact names, unique per call when fanning out
+        type: string
+        default: ''
+      comment:
+        description: Post or update the PR comment (same-repository pull requests only)
+        type: boolean
+        default: true
+      check:
+        description: Run lint, profile validation and the robot repository's tests
+        type: boolean
+        default: true
+      media:
+        description: >-
+          Record MCAP for every trial and video for the first PASS and FAIL trial
+          (livingproof_sim_mujoco.media, runner >= 1.6.0 with the `media` extra; reporter >= 1.11.0).
+          Media 1.0.0 names that trial by seed; media 2.0.0 names it by index.
+        type: boolean
+        default: true
+    outputs:
+      configurations:
+        description: JSON list of the configurations that ran
+        value: ${{ jobs.plan.outputs.configurations }}
+      report-artifacts:
+        description: Download pattern for the per-configuration capability reports
+        value: ${{ inputs.artifact-prefix }}capability-report-*
+permissions:
+  contents: read
+jobs:
+  check:
+    if: inputs.check
+    runs-on: ubuntu-24.04
+    env:
+      MUJOCO_GL: osmesa
+      PYOPENGL_PLATFORM: osmesa
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
+      - run: python3 -m pip install --user uv==0.13.6
+      - name: Setup (locked environment, pinned upstream files)
+        run: |
+          uv sync --locked
+          uv run --no-sync python -c "from pathlib import Path; from livingproof_sim_mujoco import pins; print(len(pins.fetch(Path('.'))), 'pinned files verified')"
+      - name: Robot adapter from pyproject.toml
+        id: adapter
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+          print("ref=" + tomllib.load(open("pyproject.toml", "rb"))["tool"]["livingproof"]["adapter"])
+          PY
+      - run: uv run --no-sync ruff check .
+      - run: uv run --no-sync ruff format --check .
+      - name: Robot and configuration profiles valid
+        env:
+          ADAPTER: ${{ steps.adapter.outputs.ref }}
+        run: |
+          uv run --no-sync python - <<'PY'
+          import importlib, os
+          module, name = os.environ["ADAPTER"].split(":")
+          robot = getattr(importlib.import_module(module), name)
+          names = [c["name"] for c in robot.robot()["configurations"]]
+          for n in names:
+              robot.configuration(n)
+          print("profiles valid:", ", ".join(names))
+          PY
+      - run: mkdir -p artifacts && uv run --no-sync pytest tests --junitxml=artifacts/tests.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ !cancelled() }}
+        with:
+          name: ${{ inputs.artifact-prefix }}tests
+          path: artifacts/tests.xml
+          retention-days: 14
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      configurations: ${{ steps.lock.outputs.configurations }}
+      verifier-repository: ${{ steps.lock.outputs.verifier-repository }}
+      verifier-commit: ${{ steps.lock.outputs.verifier-commit }}
+      verifier-version: ${{ steps.lock.outputs.verifier-version }}
+      reporter-image: ${{ steps.lock.outputs.reporter-image }}
+      verifier-image: ${{ steps.lock.outputs.verifier-image }}
+      evaluator-repository: ${{ steps.lock.outputs.evaluator-repository }}
+      evaluator-commit: ${{ steps.lock.outputs.evaluator-commit }}
+      evaluator-tag: ${{ steps.lock.outputs.evaluator-tag }}
+      media-capable: ${{ steps.capability.outputs.media-capable }}
+      bundle-version: ${{ steps.capability.outputs.bundle-version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref }}
+          path: robot
+          persist-credentials: false
+      - name: Robot verification lock
+        id: robot-lock
+        run: |
+          if [ -f robot/verification.lock.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "source=robot" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Workflow source
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: workflow-src
+          persist-credentials: false
+      - name: Caller repository
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
+          persist-credentials: false
+      - name: Write evidence inputs for livingproof-sim-mujoco v2.0.3
+        id: evidence-inputs
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
+        env:
+          VERIFICATION_LOCK: ${{ inputs.verification-lock }}
+          COPY_CALLER_LOCK: "1"
+        run: |
+          sh workflow-src/.github/scripts/write_evidence_inputs.sh robot caller "$VERIFICATION_LOCK" workflow-src >> "$GITHUB_OUTPUT"
+          rm -rf caller workflow-src
+      - name: Refs from verification.lock.json
+        id: lock
+        working-directory: robot
+        env:
+          ONLY: ${{ inputs.configurations }}
+        run: |
+          all=$(jq -c '[.configurations[].name]' verification.lock.json)
+          if [ -n "$ONLY" ]; then
+            configurations=$(jq -cn --argjson all "$all" --argjson only "$ONLY" \
+              'if ($only - $all) == [] then $only else error("not in the lock: \($only - $all)") end')
+          else
+            configurations=$all
+          fi
+          # Evaluator pins live on the selected lock. The caller copy keeps the 0.2.0
+          # evaluators field; a robot verification.lock.json is used when that copy is absent.
+          pin=verification.lock.json
+          if [ -f caller-verification.lock.json ]; then
+            pin=caller-verification.lock.json
+          fi
+          echo "scenario: $(jq -r '.scenario // empty' verification.lock.json)"
+          echo "world: $(jq -r '.world.id // empty' verification.lock.json)"
+          {
+            echo "configurations=$configurations"
+            echo "verifier-repository=$(jq -r '.releases.verifier.repository' verification.lock.json)"
+            echo "verifier-commit=$(jq -r '.releases.verifier.commit' verification.lock.json)"
+            echo "verifier-version=$(jq -r '.releases.verifier.tag | ltrimstr("v")' verification.lock.json)"
+            echo "verifier-image=$(jq -r '.releases.verifier | if .image then .image + ":" + (.tag | ltrimstr("v")) + "@" + .digest else "" end' verification.lock.json)"
+            echo "reporter-image=$(jq -r '.releases.reporter.image + ":" + (.releases.reporter.tag | ltrimstr("v")) + "@" + .releases.reporter.digest' verification.lock.json)"
+            echo "evaluator-repository=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].repository // empty' "$pin")"
+            echo "evaluator-commit=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].commit // empty' "$pin")"
+            echo "evaluator-tag=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].tag // empty' "$pin")"
+          } >> "$GITHUB_OUTPUT"
+      - name: Media and bundle capability from the locks
+        # Media needs runner >= 1.6.0 with mcap and reporter >= 1.11.0; robots still on runner
+        # 1.5.0 / reporter 1.10.0 skip media instead of failing it. Bundle 1.1.0 (the verifier's
+        # own decisions, rendered by the reporter, never regraded) needs verifier >= 1.9.0 and
+        # reporter >= 2.0.0. Older locks (bundle 1.0.0, graded by the reporter, whose grade is
+        # gone from 3.0.0) fail here: call walk-hallway.yml at v1.10.0 or earlier for them.
+        # Versions compare by PEP 440; a pre-release or dev tag never counts as the release.
+        id: capability
+        working-directory: robot
+        run: |
+          python3 -m pip install --user packaging==26.3
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, sys, tomllib
+          from packaging.version import InvalidVersion, Version
+          def at_least(what, text, minimum):
+              # PEP 440. Fails closed: a pre-release, dev release or unparsable version is
+              # never the final release it precedes (1.7.0rc1 and 2.0.0.dev1 are not >= x.y.0).
+              try:
+                  version = Version(text)
+              except InvalidVersion:
+                  print(f"::warning::{what} {text!r} is not a PEP 440 version; treated as below {minimum}", file=sys.stderr)
+                  return False
+              if version.is_prerelease or version.is_devrelease:
+                  print(f"::warning::{what} {text} is a pre-release or dev release; treated as below {minimum}", file=sys.stderr)
+                  return False
+              return version >= Version(minimum)
+          packages = {p["name"]: p["version"] for p in tomllib.load(open("uv.lock", "rb"))["package"]}
+          releases = json.load(open("verification.lock.json"))["releases"]
+          reporter, verifier = releases["reporter"]["tag"], releases["verifier"]["tag"]
+          runner = packages.get("livingproof-sim-mujoco", "0")
+          capable = (
+              at_least("runner livingproof-sim-mujoco", runner, "1.6.0")
+              and "mcap" in packages
+              and at_least("reporter", reporter, "1.11.0")
+          )
+          print(f"media-capable={str(capable).lower()}")
+          if not (at_least("verifier", verifier, "1.9.0") and at_least("reporter", reporter, "2.0.0")):
+              sys.exit(
+                  f"::error::verifier {verifier} / reporter {reporter}: this workflow needs verifier "
+                  ">= 1.9.0 and reporter >= 2.0.0 (bundle 1.1.0). Repin the lock, or call "
+                  "walk-hallway.yml at v1.10.0 or earlier, which still grades bundle 1.0.0."
+              )
+          print("bundle-version=1.1.0")
+          PY
+      - name: Capability verifier at the locked release (for repin)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ steps.lock.outputs.verifier-repository }}
+          ref: ${{ steps.lock.outputs.verifier-commit }}
+          path: verifier
+          persist-credentials: false
+      - name: Every ref is a released tag
+        env:
+          EVIDENCE_SOURCE: ${{ steps.evidence-inputs.outputs.source || steps.robot-lock.outputs.source }}
+        run: |
+          if [ "$EVIDENCE_SOURCE" = "caller" ]; then
+            python3 verifier/src/capability_verifier/repin.py --root robot --lock caller-verification.lock.json --check
+          else
+            python3 verifier/src/capability_verifier/repin.py --root robot --check
+          fi
+  evidence:
+    needs: plan
+    runs-on: ubuntu-24.04
+    container:
+      # The verifier image from the lock (releases.verifier.image:tag@digest): osmesa, uv and
+      # the locked dependencies pre-synced. A lock without it runs on the runner (empty image).
+      image: ${{ needs.plan.outputs.verifier-image }}
+      # The image's user is lpl (uid 1000), but actions/checkout, upload-artifact and
+      # download-artifact write the runner-owned workspace (/__w, uid 1001), so run as root.
+      options: --user root
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: ${{ fromJSON(needs.plan.outputs.configurations) }}
+    env:
+      CONFIGURATION: ${{ matrix.configuration }}
+      MUJOCO_GL: osmesa
+      PYOPENGL_PLATFORM: osmesa
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Robot verification lock
+        id: robot-lock
+        run: |
+          if [ -f verification.lock.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "source=robot" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Workflow source
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: workflow-src
+          persist-credentials: false
+      - name: Caller repository
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
+          persist-credentials: false
+      - name: Write evidence inputs for livingproof-sim-mujoco v2.0.3
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
+        env:
+          VERIFICATION_LOCK: ${{ inputs.verification-lock }}
+        run: |
+          sh workflow-src/.github/scripts/write_evidence_inputs.sh . caller "$VERIFICATION_LOCK" workflow-src >> "$GITHUB_OUTPUT"
+          rm -rf caller workflow-src
+      - if: needs.plan.outputs.verifier-image == ''
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
+      - if: needs.plan.outputs.verifier-image == ''
+        run: python3 -m pip install --user uv==0.13.6
+      - name: Setup (locked environment, pinned upstream files)
+        run: |
+          uv sync --locked
+          uv run --no-sync python -c "from pathlib import Path; from livingproof_sim_mujoco import pins; print(len(pins.fetch(Path('.'))), 'pinned files verified')"
+      - name: Robot adapter from pyproject.toml
+        id: adapter
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+          print("ref=" + tomllib.load(open("pyproject.toml", "rb"))["tool"]["livingproof"]["adapter"])
+          PY
+      - name: Evidence (observations only, no grade)
+        env:
+          ADAPTER: ${{ steps.adapter.outputs.ref }}
+        run: uv run --no-sync python -m livingproof_sim_mujoco.evidence "$ADAPTER" "$CONFIGURATION" "artifacts/evidence/$CONFIGURATION"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
+          path: artifacts/evidence/${{ matrix.configuration }}/
+          retention-days: 30
+          if-no-files-found: error
+  verify:
+    needs: [plan, evidence]
+    runs-on: ubuntu-24.04
+    container:
+      # The verifier image from the lock (releases.verifier.image:tag@digest): osmesa, uv and
+      # the locked dependencies pre-synced. A lock without it runs on the runner (empty image).
+      image: ${{ needs.plan.outputs.verifier-image }}
+      # The image's user is lpl (uid 1000), but actions/checkout, upload-artifact and
+      # download-artifact write the runner-owned workspace (/__w, uid 1001), so run as root.
+      options: --user root
+    env:
+      LIVINGPROOF_VERIFIER_VERSION: ${{ needs.plan.outputs.verifier-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: ${{ fromJSON(needs.plan.outputs.configurations) }}
+    steps:
+      - name: Capability verifier at the locked release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ needs.plan.outputs.verifier-repository }}
+          ref: ${{ needs.plan.outputs.verifier-commit }}
+          persist-credentials: false
+      - if: needs.plan.outputs.verifier-image == ''
+        run: python3 -m pip install --user uv==0.13.6
+      - run: uv sync --locked
+      - name: Scenario catalog from the verifier's own lock
+        run: uv run --no-sync python tools/fetch_hallway_specs.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
+          path: evidence
+      - name: Assess every trial (bundle 1.1.0 also carries the verifier's decisions)
+        env:
+          BUNDLE_VERSION: ${{ needs.plan.outputs.bundle-version }}
+        run: |
+          PYTHONPATH=src uv run --no-sync python tools/verify_hallway.py --bundle-version "$BUNDLE_VERSION" evidence/manifest.json verified
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ${{ inputs.artifact-prefix }}verified-${{ matrix.configuration }}
+          path: verified/
+          retention-days: 30
+          if-no-files-found: error
+  scenario-evaluator:
+    # Parallel with verify. Writes only this evaluator's result files.
+    needs: [plan, evidence]
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ needs.plan.outputs.verifier-image }}
+      options: --user root
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: ${{ fromJSON(needs.plan.outputs.configurations) }}
+    steps:
+      - name: Capability verifier at the locked release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ needs.plan.outputs.verifier-repository }}
+          ref: ${{ needs.plan.outputs.verifier-commit }}
+          persist-credentials: false
+      - if: needs.plan.outputs.verifier-image == ''
+        run: python3 -m pip install --user uv==0.13.6
+      - run: uv sync --locked
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
+          path: evidence
+      - name: Scenario evaluator package at the locked pin
+        if: needs.plan.outputs.evaluator-commit != ''
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ needs.plan.outputs.evaluator-repository }}
+          ref: ${{ needs.plan.outputs.evaluator-commit }}
+          path: evaluator
+          persist-credentials: false
+      - name: Scenario evaluator, one result file per trial
+        env:
+          EVALUATOR_COMMIT: ${{ needs.plan.outputs.evaluator-commit }}
+        run: |
+          # The tool is the one in the verifier checkout named by the selected lock.
+          # The package import is that lock's evaluator pin when it has one; a robot
+          # lock with no evaluators field keeps the package from that verifier checkout.
+          if [ -n "$EVALUATOR_COMMIT" ]; then
+            PYTHONPATH="evaluator/src:src" uv run --no-sync python tools/run_scenario_evaluator.py \
+              evidence/manifest.json evaluator-results/livingproof-scenario
+          else
+            PYTHONPATH=src uv run --no-sync python tools/run_scenario_evaluator.py \
+              evidence/manifest.json evaluator-results/livingproof-scenario
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ${{ inputs.artifact-prefix }}evaluator-results-livingproof-scenario-${{ matrix.configuration }}
+          path: evaluator-results/
+          retention-days: 30
+          if-no-files-found: error
+  media:
+    # Recordings for links, never a grade: every trial is re-run and must hash to its evidence.
+    needs: [plan, verify]
+    if: inputs.media && needs.plan.outputs.media-capable == 'true'
+    runs-on: ubuntu-24.04
+    container:
+      # The verifier image from the lock (releases.verifier.image:tag@digest): osmesa, uv and
+      # the locked dependencies pre-synced. A lock without it runs on the runner (empty image).
+      image: ${{ needs.plan.outputs.verifier-image }}
+      # The image's user is lpl (uid 1000), but actions/checkout, upload-artifact and
+      # download-artifact write the runner-owned workspace (/__w, uid 1001), so run as root.
+      options: --user root
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: ${{ fromJSON(needs.plan.outputs.configurations) }}
+    env:
+      CONFIGURATION: ${{ matrix.configuration }}
+      MUJOCO_GL: osmesa
+      PYOPENGL_PLATFORM: osmesa
+      PREFIX: ${{ inputs.artifact-prefix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Robot verification lock
+        id: robot-lock
+        run: |
+          if [ -f verification.lock.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "source=robot" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Workflow source
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: workflow-src
+          persist-credentials: false
+      - name: Caller repository
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: caller
+          persist-credentials: false
+      - name: Write evidence inputs for livingproof-sim-mujoco v2.0.3
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
+        env:
+          VERIFICATION_LOCK: ${{ inputs.verification-lock }}
+        run: |
+          sh workflow-src/.github/scripts/write_evidence_inputs.sh . caller "$VERIFICATION_LOCK" workflow-src >> "$GITHUB_OUTPUT"
+          rm -rf caller workflow-src
+      - if: needs.plan.outputs.verifier-image == ''
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
+      - if: needs.plan.outputs.verifier-image == ''
+        run: python3 -m pip install --user uv==0.13.6
+      - name: Setup (locked environment, pinned upstream files)
+        run: |
+          uv sync --locked
+          uv run --no-sync python -c "from pathlib import Path; from livingproof_sim_mujoco import pins; print(len(pins.fetch(Path('.'))), 'pinned files verified')"
+      - name: Robot adapter from pyproject.toml
+        id: adapter
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+          print("ref=" + tomllib.load(open("pyproject.toml", "rb"))["tool"]["livingproof"]["adapter"])
+          PY
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
+          path: evidence
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact-prefix }}verified-${{ matrix.configuration }}
+          path: verified
+      - name: Recordings (MCAP every trial; video for the first PASS and first FAIL trial)
+        id: media
+        env:
+          ADAPTER: ${{ steps.adapter.outputs.ref }}
+        run: |
+          uv run --no-sync python -m livingproof_sim_mujoco.media "$ADAPTER" "$CONFIGURATION" evidence verified/verification.json media
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, sys
+          doc = json.load(open("media/media.json"))
+          fmt = doc.get("format") if isinstance(doc, dict) else None
+          if fmt == "livingproof-hallway-media/2.0.0":
+              key = "index"
+          elif fmt == "livingproof-hallway-media/1.0.0":
+              key = "seed"
+          else:
+              sys.exit(
+                  "media.json format %r is not livingproof-hallway-media/1.0.0 "
+                  "or livingproof-hallway-media/2.0.0" % (fmt,)
+              )
+          trials = doc.get("trials")
+          if not isinstance(trials, list):
+              sys.exit("media.json field 'trials' has the wrong type")
+          for t in trials:
+              if not isinstance(t, dict) or "video" not in t:
+                  continue
+              if key not in t or isinstance(t[key], bool) or type(t[key]) is not int:
+                  sys.exit("media.json trial video is missing an integer %s" % key)
+              kind = str(t.get("status", "")).lower()
+              if kind not in ("pass", "fail"):
+                  sys.exit("media.json trial video status %r is not PASS or FAIL" % (t.get("status"),))
+              video = t.get("video")
+              if not isinstance(video, dict) or not isinstance(video.get("path"), str):
+                  sys.exit("media.json trial video path is missing")
+              # Output names stay pass-seed and fail-seed. The pinned reporter's link
+              # schema has a seed field and no index field. For media 2.0.0 the integer
+              # is the trial index.
+              print(f"{kind}-seed={t[key]}")
+              print(f"{kind}-path=media/{video['path']}")
+          PY
+      - id: mcap
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ inputs.artifact-prefix }}mcap-${{ matrix.configuration }}
+          path: |
+            media/mcap/
+            media/media.json
+          retention-days: 30
+          if-no-files-found: error
+      - id: video-pass
+        if: steps.media.outputs.pass-path != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ inputs.artifact-prefix }}video-${{ matrix.configuration }}-seed-${{ steps.media.outputs.pass-seed }}-pass
+          path: ${{ steps.media.outputs.pass-path }}
+          retention-days: 30
+          if-no-files-found: error
+      - id: video-fail
+        if: steps.media.outputs.fail-path != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ inputs.artifact-prefix }}video-${{ matrix.configuration }}-seed-${{ steps.media.outputs.fail-seed }}-fail
+          path: ${{ steps.media.outputs.fail-path }}
+          retention-days: 30
+          if-no-files-found: error
+      - name: Evidence links for the reporter (run URL, artifact URLs, per-trial videos)
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MCAP_URL: ${{ steps.mcap.outputs.artifact-url }}
+          PASS_URL: ${{ steps.video-pass.outputs.artifact-url }}
+          PASS_SEED: ${{ steps.media.outputs.pass-seed }}
+          FAIL_URL: ${{ steps.video-fail.outputs.artifact-url }}
+          FAIL_SEED: ${{ steps.media.outputs.fail-seed }}
+        run: |
+          mkdir links
+          python3 - <<'PY' > links/evidence-links.json
+          import json, os
+          e = os.environ
+          n = len(json.load(open("media/media.json"))["trials"])
+          links = [{"label": f"MCAP, all {n} trials", "url": e["MCAP_URL"], "kind": "mcap"}]
+          for status in ("PASS", "FAIL"):
+              url, seed = e[f"{status}_URL"], e[f"{status}_SEED"]
+              if url:  # no FAIL (or no PASS) trial, no video
+                  # `seed` is the reporter's field name. Media 2.0.0 stores the trial index there.
+                  links.append({"label": "video", "url": url, "kind": "video",
+                                "seed": int(seed), "status": status})
+          print(json.dumps({"run": e["RUN_URL"], "links": links}, indent=2))
+          PY
+          cat links/evidence-links.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ inputs.artifact-prefix }}links-${{ matrix.configuration }}
+          path: links/
+          retention-days: 30
+          if-no-files-found: error
+  report:
+    # Runs without links when media is off or failed; links never change a decision.
+    # scenario-evaluator must succeed: its entry is part of the stored run.
+    needs: [plan, verify, scenario-evaluator, media]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.scenario-evaluator.result == 'success' }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: ${{ fromJSON(needs.plan.outputs.configurations) }}
+    container:
+      image: ${{ needs.plan.outputs.reporter-image }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact-prefix }}verified-${{ matrix.configuration }}
+          path: verified
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: ${{ inputs.artifact-prefix }}evaluator-results-*-${{ matrix.configuration }}
+          path: evaluator-results
+      - name: Append each evaluator's result documents
+        run: |
+          cat > /tmp/collect_evaluator_results.py <<'COLLECT'
+          # SPDX-License-Identifier: Apache-2.0
+          """Append evaluator result documents onto a bundle.
+
+          Each file whose ``format`` is ``livingproof-evaluator-result/1.*`` is appended
+          whole to the trial named by ``scenario.trial_id``. Documents are not merged
+          with each other. The report groups them by ``evaluator.id``.
+          """
+
+          from __future__ import annotations
+
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          RESULT_FORMAT = re.compile(r"^livingproof-evaluator-result/1\.\d+\.\d+$")
+
+
+          def collect(bundle: dict, directory: Path) -> dict:
+              """Append this bundle's result documents. ``bundle`` is updated.
+
+              A document whose ``scenario.trial_id`` is not one of this bundle's results
+              belongs to another configuration. It is left untouched. Documents that do
+              match are appended whole and are not merged with each other.
+              """
+              if not isinstance(bundle, dict) or not isinstance(bundle.get("results"), list):
+                  raise ValueError("bundle is missing results")
+              directory = Path(directory)
+              documents = []
+              if directory.is_dir():
+                  for path in sorted(directory.rglob("*.json")):
+                      if not path.is_file():
+                          continue
+                      document = json.loads(path.read_text(encoding="utf-8"))
+                      if isinstance(document, dict) and isinstance(document.get("format"), str):
+                          if RESULT_FORMAT.fullmatch(document["format"]):
+                              documents.append(document)
+              by_id = {}
+              for result in bundle["results"]:
+                  if isinstance(result, dict) and isinstance(result.get("id"), str):
+                      by_id[result["id"]] = result
+              for document in documents:
+                  scenario = document.get("scenario")
+                  trial_id = scenario.get("trial_id") if isinstance(scenario, dict) else None
+                  result = by_id.get(trial_id)
+                  if result is None:
+                      continue
+                  entries = result.get("evaluator_results")
+                  if entries is None:
+                      entries = []
+                      result["evaluator_results"] = entries
+                  if not isinstance(entries, list):
+                      raise ValueError(f"result {trial_id!r} evaluator_results is not a list")
+                  entries.append(document)
+              return bundle
+
+
+          def main(argv: list[str] | None = None) -> int:
+              args = list(sys.argv[1:] if argv is None else argv)
+              if len(args) != 2:
+                  print(
+                      "usage: collect_evaluator_results.py BUNDLE_MANIFEST RESULTS_DIR",
+                      file=sys.stderr,
+                  )
+                  return 2
+              manifest = Path(args[0])
+              bundle = json.loads(manifest.read_text(encoding="utf-8"))
+              collect(bundle, Path(args[1]))
+              manifest.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
+              return 0
+
+
+          if __name__ == "__main__":
+              sys.exit(main())
+          COLLECT
+          python3 /tmp/collect_evaluator_results.py verified/bundle/manifest.json evaluator-results
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: needs.media.result == 'success'
+        with:
+          name: ${{ inputs.artifact-prefix }}links-${{ matrix.configuration }}
+          path: links
+      - name: Validate, then render the verifier's decisions (a capability FAIL exits 0)
+        run: |
+          livingproof-capability-report --version
+          livingproof-capability-report validate verified/bundle/manifest.json
+          mkdir reports
+          set --
+          if [ -f links/evidence-links.json ]; then set -- --evidence-links links/evidence-links.json; fi
+          # Markdown and HTML are rendered from the bundle manifest, with the same
+          # evidence-link args as the JSON report. Reporter >= 3.4.0 reads duration_s
+          # from each trial observation next to that manifest (its parent directory).
+          # report.json lives outside the bundle, so rendering HTML from it leaves
+          # every Duration cell as an em dash. The terminal text stays a render of
+          # the saved JSON report; it has no per-trial duration column.
+          livingproof-capability-report render verified/bundle/manifest.json "$@" --format json -o reports/report.json
+          livingproof-capability-report render verified/bundle/manifest.json "$@" --format markdown -o reports/report.md
+          livingproof-capability-report render verified/bundle/manifest.json "$@" --format html -o reports/report.html
+          livingproof-capability-report render reports/report.json > reports/report.txt
+          (cd reports && sha256sum report.* > SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ inputs.artifact-prefix }}capability-report-${{ matrix.configuration }}
+          path: reports/
+          retention-days: 30
+          if-no-files-found: error
+      - name: Capability report in job summary
+        run: cat reports/report.md >> "$GITHUB_STEP_SUMMARY"
+  comment:
+    # One PR comment for every configuration: the reporter renders and posts it (image
+    # `comment` subcommand, reporter >= 1.10.0), updated in place under its hidden marker.
+    needs: [plan, report]
+    # Runs whatever media did (failed, skipped or disabled): only the report gates it.
+    if: >-
+      always() && needs.report.result == 'success' && inputs.comment && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (inputs.repository == '' || inputs.repository == github.repository)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    container:
+      image: ${{ needs.plan.outputs.reporter-image }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: ${{ inputs.artifact-prefix }}capability-report-*
+          path: reports
+      - name: Post or update the capability-report comment
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: livingproof-capability-report comment --repo "$REPO" --pr "$PR" reports/*/report.md

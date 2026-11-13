@@ -374,9 +374,10 @@ inside the exit segment (|y| <= half the world's `clear_width`, read from the tr
 cannot be read, or an end the format does not define, is INSUFFICIENT. Any other observation
 format is refused: every evaluator reports INSUFFICIENT. Any wall contact still fails.
 
-`hallway-specs.lock.json` pins the catalog. While it says `"tag": "UNRELEASED"`,
-`HALLWAY_SPECS_SOURCE` must name a local checkout that holds the locked commit. A release
-changes only the `"tag"` line (and `"commit"` if the release commit differs).
+`hallway-specs.lock.json` pins the catalog by tag. The reference is `v2.2.0`.
+The commit in that file is the commit the tag resolved to, recorded as evidence.
+While the lock says `"tag": "UNRELEASED"`, `HALLWAY_SPECS_SOURCE` must name a local
+checkout. A release changes the `"tag"` line. The fetch checks that tag, not the commit.
 
     PYTHONPATH=src python tools/verify_hallway.py <evidence>/manifest.json <out> [--prototype] [--bundle-version 1.1.0]
 
@@ -441,12 +442,14 @@ bundle bump; no grading decision reads them:
   `specs/scenarios/walk-hallway/description.json` (`livingproof-scenario-description/0.1`),
   copied unchanged with its `source` path, sha256 and catalog commit, once per bundle. It
   is written only when the catalog has the file, and refused if it names another scenario
-  revision or world; catalogs up to v1.8.0 have none; the lock pins v1.9.0, the first that does.
+  revision or world; catalogs up to v1.8.0 have none. The lock's tag is v2.2.0.
 
-## Reusable walk-hallway workflow (robot repositories)
+## Reusable scenario workflow (robot repositories)
 
-A robot repository's whole CI chain is one call. With no `verification-lock` input,
-every ref comes from that repository's `verification.lock.json`:
+`walk-hallway.yml` is a thin wrapper around `scenario.yml`. Existing callers keep
+the same inputs and outputs. The run reads the scenario and the world from the
+verification lock. With no `verification-lock` input, every ref comes from that
+repository's `verification.lock.json`:
 
 ```yaml
 jobs:

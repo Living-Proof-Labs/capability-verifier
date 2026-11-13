@@ -74,7 +74,7 @@ def test_policy_pass_fail_and_incomplete_evidence():
     policy = evaluate.AllRequiredV1()
     assert policy.decide(result(), True).status == P
     assert policy.decide(result(), True).reason == (
-        "All four hallway evaluators and every retained assessment pass"
+        "All required evaluators and every retained assessment pass"
     )
     assert policy.decide(result(), True).assessor_types == ["deterministic"]
     failed = policy.decide(result(obs=FAILING["max_abs_lateral"]), True)
@@ -142,8 +142,12 @@ def test_policy_incompatible_cases():
     with pytest.raises(ValueError):
         policy.decide(result(compatibility={"status": X, "scope": "run", "reason": "x"}), True)
     unknown = result()
-    unknown["spec"]["commit"] = "f" * 40
-    assert policy.decide(unknown, True).reason == "Unsupported walk-hallway contract"
+    unknown["spec"]["tag"] = "v9.9.9"
+    assert policy.decide(unknown, True).reason == "Unsupported scenario contract"
+    retagged = result()
+    retagged["spec"]["tag"] = "v2.2.0"
+    retagged["spec"]["commit"] = "f" * 40
+    assert policy.decide(retagged, True).status == P
     version = result()
     version["assessments"][0]["version"] = "9.9.9"
     assert policy.decide(version, True).status == X

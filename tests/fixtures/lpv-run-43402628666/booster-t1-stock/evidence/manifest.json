@@ -1,0 +1,384 @@
+{
+  "format": "livingproof-hallway-evidence/2.0.0",
+  "run_id": "walk-hallway-booster-t1-stock-20261113T093742Z",
+  "created": "2026-11-13T09:37:42+00:00",
+  "lock": {
+    "path": "verification.lock.json",
+    "sha256": "4a8a458eddd640c14d3bea593745912af186495c275003c57f21e5dbe0ac0a63",
+    "content": {
+      "format": "livingproof-verification-lock/1.0.0",
+      "scenario": "walk-hallway@0.1.0",
+      "releases": {
+        "specs": {
+          "repository": "Living-Proof-Labs/robot-capability-specs",
+          "tag": "v2.0.2",
+          "commit": "16524cbfeef18ff0454ebf125668b010d38a3993"
+        },
+        "runner": {
+          "repository": "Living-Proof-Labs/livingproof-sim-mujoco",
+          "tag": "v2.0.3",
+          "commit": "292589ad15582c26cff2bffcc851e3abaf4ea708"
+        },
+        "verifier": {
+          "repository": "Living-Proof-Labs/capability-verifier",
+          "tag": "v1.18.5",
+          "commit": "2b69ed41627504d7b5b78d72594b07a2973569cc",
+          "image": "ghcr.io/living-proof-labs/capability-verifier-hallway",
+          "digest": "sha256:6d1647def1582ad25b6f877d6ec2086aa4c9e03b43a2614282a3ea5c940e1fb2"
+        },
+        "reporter": {
+          "repository": "Living-Proof-Labs/livingproof-capability-report",
+          "tag": "v3.6.0",
+          "commit": "4420872bb744e0cf526ec5098af7254c3f51be80",
+          "image": "ghcr.io/living-proof-labs/livingproof-capability-report",
+          "digest": "sha256:9247f14b11851140ec8691bacb71d1db789a5689b4b1f9926dc3699944cbce8e"
+        }
+      },
+      "world": {
+        "id": "hallway-open",
+        "version": "0.1.0",
+        "repository": "Living-Proof-Labs/livingproof-worlds",
+        "tag": "v1.1.0",
+        "commit": "9b3e7119aa93a3370383227fb30bd39a9dd72b4b"
+      },
+      "configurations": [
+        {
+          "name": "stock",
+          "version": "1.0.0",
+          "path": "configurations/stock.json",
+          "sha256": "e1626385968e82997bebce743fab19fb2f2661da3def41de2a594051911c324a"
+        },
+        {
+          "name": "playground",
+          "version": "1.0.0",
+          "path": "configurations/playground.json",
+          "sha256": "3ddd5408f875b70111ece48c2a26be01edae7e8eba09b3524a5cacc3d636f3f1"
+        }
+      ],
+      "plan": {
+        "trials": {
+          "count": 3
+        },
+        "command_speed": 0.5
+      },
+      "overridden_robot_lock": {
+        "path": "verification.lock.json",
+        "sha256": "6a82c51942b7fb2fc4d9cc244e1e494e1e97a2b367764b4e8156d2d2e8ddc26f"
+      }
+    }
+  },
+  "pending_release": [],
+  "plan": {
+    "command_speed": 0.5,
+    "trials": {
+      "count": 3
+    }
+  },
+  "start": {
+    "spawn": "spawn-entrance",
+    "pose": "nominal",
+    "offset": null
+  },
+  "preconditions": [
+    {
+      "name": "fits_width",
+      "met": true,
+      "detail": "0.541 + 2 x clearance = 0.641 m vs 1.5 m"
+    },
+    {
+      "name": "configuration_offered",
+      "met": true,
+      "detail": "stock"
+    },
+    {
+      "name": "velocity_interface",
+      "met": true,
+      "detail": "interface ['velocity_command']"
+    },
+    {
+      "name": "simulator_declared",
+      "met": true,
+      "detail": "simulators ['mujoco']"
+    }
+  ],
+  "robot": {
+    "id": "booster-t1",
+    "profile_sha256": "159a1270d5050fd91bf53c2fabec67f4b04899fb5bcc4c6af05551e86404dead",
+    "profile": {
+      "$comment": "Robot profile (robot-capability-specs v2.0.2, specs/robots). model_source is booster_gym's MuJoCo model of the T1 (12 leg joints; head, arms and waist fixed to the trunk); its meshes are pinned in pins.json with every other upstream file.",
+      "format": "livingproof-robot-profile/0.1",
+      "id": "booster-t1",
+      "manufacturer": "Booster Robotics",
+      "model": "T1 (booster_gym locomotion model, 12 actuated leg joints)",
+      "class": "humanoid",
+      "model_source": {
+        "repo": "https://github.com/BoosterRobotics/booster_gym",
+        "path": "resources/T1/T1_locomotion.xml",
+        "commit": "da396a06d6eed99e2de72d7749c48ee8748950f9",
+        "sha256": "ac435ff179b1393294d41ee5dbc3d1161a6b9032e0a53fe2f4d693402dd4db36",
+        "license": "Apache-2.0 (booster_gym, model and meshes)"
+      },
+      "dimensions": {
+        "width": {
+          "value": 0.541,
+          "unit": "m",
+          "source": "measured",
+          "ref": "task profile:measure (mesh vertices at the published initial pose)"
+        },
+        "length": {
+          "value": 0.226,
+          "unit": "m",
+          "source": "measured",
+          "ref": "task profile:measure (mesh vertices at the published initial pose)"
+        },
+        "height": {
+          "value": 1.165,
+          "unit": "m",
+          "source": "measured",
+          "ref": "task profile:measure (mesh vertices at the published initial pose)"
+        },
+        "mass": {
+          "value": 31.61,
+          "unit": "kg",
+          "source": "measured",
+          "ref": "task profile:measure (sum of MJCF body masses)"
+        }
+      },
+      "configurations": [
+        {
+          "name": "stock",
+          "path": "configurations/stock.json"
+        },
+        {
+          "name": "playground",
+          "path": "configurations/playground.json"
+        }
+      ],
+      "default_configuration": "stock",
+      "simulators": [
+        "mujoco"
+      ]
+    }
+  },
+  "configuration": {
+    "name": "stock",
+    "version": "1.0.0",
+    "sha256": "e1626385968e82997bebce743fab19fb2f2661da3def41de2a594051911c324a",
+    "profile": {
+      "$comment": "Configuration profile (robot-capability-specs v2.0.2). settings.training copies the published booster_gym envs/T1.yaml values the MuJoCo loop (play_mujoco.py) reads; tests check them against the pinned upstream file. Nothing is tuned.",
+      "format": "livingproof-configuration-profile/0.1",
+      "robot": "booster-t1",
+      "name": "stock",
+      "version": "1.0.0",
+      "summary": "Booster Robotics' published booster_gym T1 walking policy (deploy/models/T1.pt) with the PD gains, default pose and rates of its training config envs/T1.yaml, as run by its play_mujoco.py.",
+      "controller": {
+        "publisher": "Booster Robotics",
+        "artifact": {
+          "repo": "https://github.com/BoosterRobotics/booster_gym",
+          "path": "deploy/models/T1.pt",
+          "commit": "da396a06d6eed99e2de72d7749c48ee8748950f9",
+          "sha256": "697cac61dbed2e76f25519c97ceb686f244d065dabf7d5d7ca386573143d215b",
+          "license": "Apache-2.0"
+        },
+        "format": "torchscript",
+        "interface": [
+          "velocity_command"
+        ],
+        "rate_hz": 50
+      },
+      "locomotion": {
+        "max_speed": {
+          "value": 1.0,
+          "unit": "m/s",
+          "source": "published",
+          "ref": "booster_gym envs/T1.yaml commands.lin_vel_x [-1, 1]"
+        },
+        "nominal_base_height": {
+          "value": 0.67,
+          "unit": "m",
+          "source": "measured",
+          "ref": "task profile:stand (publisher loop, zero command: trunk 0.667 m)"
+        },
+        "fall_base_height": {
+          "value": 0.44,
+          "unit": "m",
+          "source": "chosen",
+          "reason": "About two-thirds of the standing trunk height, the rule used for the G1."
+        }
+      },
+      "settings": {
+        "adapter": "booster_gym",
+        "training_config": {
+          "repo": "https://github.com/BoosterRobotics/booster_gym",
+          "path": "envs/T1.yaml",
+          "commit": "da396a06d6eed99e2de72d7749c48ee8748950f9",
+          "sha256": "9588982f4f8b460b151240e0012d0001b6e0024b132050f44acad2dd312bf60a",
+          "license": "Apache-2.0"
+        },
+        "reference": {
+          "repo": "https://github.com/BoosterRobotics/booster_gym",
+          "path": "play_mujoco.py",
+          "commit": "da396a06d6eed99e2de72d7749c48ee8748950f9",
+          "sha256": "69fc14a567b2977e77b416d485073d729cc5c08c1b6290d88ba1f158fa086402",
+          "license": "Apache-2.0"
+        },
+        "export": {
+          "repo": "https://github.com/BoosterRobotics/booster_gym",
+          "path": "export_model.py",
+          "commit": "da396a06d6eed99e2de72d7749c48ee8748950f9",
+          "sha256": "a03b3ee5956db9295ca5c3e7073e5c2baae966d16e24523b7f9059916a7207fb",
+          "license": "Apache-2.0"
+        },
+        "training": {
+          "sim": {
+            "dt": 0.002
+          },
+          "control": {
+            "stiffness": {
+              "Hip": 200.0,
+              "Knee": 200.0,
+              "Ankle": 50.0
+            },
+            "damping": {
+              "Hip": 5.0,
+              "Knee": 5.0,
+              "Ankle": 1.0
+            },
+            "action_scale": 1.0,
+            "decimation": 10
+          },
+          "init_state": {
+            "pos": [
+              0.0,
+              0.0,
+              0.72
+            ],
+            "rot": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "default_joint_angles": {
+              "Hip_Pitch": -0.2,
+              "Knee_Pitch": 0.4,
+              "Ankle_Pitch": -0.25,
+              "default": 0.0
+            }
+          },
+          "normalization": {
+            "gravity": 1.0,
+            "lin_vel": 1.0,
+            "ang_vel": 1.0,
+            "dof_pos": 1.0,
+            "dof_vel": 0.1,
+            "clip_actions": 1.0
+          },
+          "commands": {
+            "lin_vel_x": [
+              -1.0,
+              1.0
+            ],
+            "lin_vel_y": [
+              -1.0,
+              1.0
+            ],
+            "ang_vel_yaw": [
+              -1,
+              1
+            ],
+            "gait_frequency": [
+              1.0,
+              2.0
+            ]
+          }
+        },
+        "observation": {
+          "imu_site": "imu",
+          "orientation_sensor": "orientation",
+          "gyro_sensor": "angular-velocity",
+          "size": 47
+        },
+        "gait_note": "play_mujoco.py sets the gait frequency to the average of commands.gait_frequency (1.5 Hz) for any non-zero command and to 0 (phase terms zeroed) for a zero command. The runner's phase term is always on, so only non-zero commands are run.",
+        "action_note": "play_mujoco.py clips actions to +/- normalization.clip_actions (1.0) before targets and last_action; runner v1.4.0 does not clip. task reference measures whether any action reaches the limit.",
+        "deploy_note": "The real-robot deploy/configs/T1.yaml differs (ankle damping 3, gait_frequency 1); it is pinned for the record but not used: this configuration is the publisher's MuJoCo setup.",
+        "actuation": "pd_torque: every 0.002 s physics step runs mj_step1, writes kp (q* - q) - kd dq from current state into the model's <motor> actuators (ctrlrange = published torque limits, clamped by MuJoCo as play_mujoco.py clips), then mj_step2"
+      }
+    }
+  },
+  "world": {
+    "id": "hallway-open",
+    "version": "0.1.0",
+    "clear_width": 1.5,
+    "route_length": 5.5,
+    "exit_x": 3.0
+  },
+  "environment": {
+    "simulator": {
+      "id": "mujoco",
+      "version": "3.17.0",
+      "adapter": "livingproof-sim-mujoco",
+      "adapter_commit": "292589ad15582c26cff2bffcc851e3abaf4ea708"
+    },
+    "runner": {
+      "version": "2.0.3",
+      "tag": "v2.0.3",
+      "commit": "292589ad15582c26cff2bffcc851e3abaf4ea708"
+    },
+    "base_body": "Trunk",
+    "walls": [
+      "wall-left",
+      "wall-right"
+    ],
+    "model": "booster_gym",
+    "source_commit": "61b2559ebb401973ec7733b4c886753e6d2b704c"
+  },
+  "host": {
+    "wall_clock_s": 4.573,
+    "cpu": {
+      "sched_affinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "sched_affinity_count": 4,
+      "process_cpu_count": null,
+      "os_cpu_count": 4
+    }
+  },
+  "trials": {
+    "count": 3,
+    "results": [
+      {
+        "index": 1,
+        "path": "trials/trial-01.json",
+        "sha256": "885bffa4f214a5afe5b1e8822158723536ead5fb5dac6a1ce7659f401e8f0daa",
+        "trajectory_sha256": "61418b3bb0d848227ff6832fc81e5caa6f9d262ebedafadedd91ece7b98d8bc2",
+        "outcome": "left_hallway",
+        "wall_clock_s": 3.126
+      },
+      {
+        "index": 2,
+        "path": "trials/trial-02.json",
+        "sha256": "885bffa4f214a5afe5b1e8822158723536ead5fb5dac6a1ce7659f401e8f0daa",
+        "trajectory_sha256": "61418b3bb0d848227ff6832fc81e5caa6f9d262ebedafadedd91ece7b98d8bc2",
+        "outcome": "left_hallway",
+        "wall_clock_s": 0.725
+      },
+      {
+        "index": 3,
+        "path": "trials/trial-03.json",
+        "sha256": "885bffa4f214a5afe5b1e8822158723536ead5fb5dac6a1ce7659f401e8f0daa",
+        "trajectory_sha256": "61418b3bb0d848227ff6832fc81e5caa6f9d262ebedafadedd91ece7b98d8bc2",
+        "outcome": "left_hallway",
+        "wall_clock_s": 0.715
+      }
+    ],
+    "reproducibility": {
+      "compared": true,
+      "identical": true,
+      "finding": null
+    }
+  }
+}

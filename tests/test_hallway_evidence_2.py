@@ -15,7 +15,7 @@ from capability_verifier import evaluate, hallway
 
 FIXTURES = Path(__file__).parent / "fixtures" / "hallway"
 EVIDENCE = FIXTURES / "evidence-2.0.0"
-WORKFLOW = Path(__file__).parents[1] / ".github" / "workflows" / "walk-hallway.yml"
+WORKFLOW = Path(__file__).parents[1] / ".github" / "workflows" / "scenario.yml"
 FINDING = {
     "kind": "test-system",
     "name": "reproducibility",
@@ -81,11 +81,13 @@ def test_evidence_2_0_0_grades_every_identical_trial(tmp_path):
         "stock-seed-03",
     ]
     assert "seed" not in result["trials"][0]
-    assert all(t["status"] == hallway.PASS for t in result["trials"])
+    # The stored lateral value is inside the limit and the trace is not, so each
+    # trial is INSUFFICIENT_EVIDENCE. The repeats still agree with each other.
+    assert all(t["status"] == hallway.INSUFFICIENT for t in result["trials"])
     summary = result["summary"]
     count = _load()["trials"]["count"]
     statement = f"{count} of {count} repeats agree"
-    assert summary["grade"] == hallway.PASS
+    assert summary["grade"] == hallway.INSUFFICIENT
     assert summary["rationale"] == statement
     assert summary["reproducibility"] == {
         "compared": True,
@@ -98,7 +100,16 @@ def test_evidence_2_0_0_grades_every_identical_trial(tmp_path):
     assert summary["k"] is None and summary["n"] is None
     assert summary["required_passes"] is None and summary["wilson95"] == [None, None]
     assert summary["aggregation"]["id"] == "repeated-outcome"
-    assert hallway.summary_lines(result) == [f"{statement}: {hallway.PASS}"]
+    lines = hallway.summary_lines(result)
+    assert lines[0] == f"{statement}: {hallway.INSUFFICIENT}"
+    assert [line for line in lines[1:]] == [
+        "  trial  1 INSUFFICIENT_EVIDENCE: "
+        "observation max_abs_lateral disagrees with its trace (trial 1)",
+        "  trial  2 INSUFFICIENT_EVIDENCE: "
+        "observation max_abs_lateral disagrees with its trace (trial 2)",
+        "  trial  3 INSUFFICIENT_EVIDENCE: "
+        "observation max_abs_lateral disagrees with its trace (trial 3)",
+    ]
     assert result["findings"] == []
     assert "findings" not in summary
 
@@ -116,7 +127,7 @@ def test_identical_repeats_are_one_bundle_outcome(tmp_path, monkeypatch):
     report = json.loads((tmp_path / "verified" / "verification.json").read_text())
     run = bundle["assessment"]["runs"][0]
     count = _load()["trials"]["count"]
-    assert run["grade"] == report["summary"]["grade"] == hallway.PASS
+    assert run["grade"] == report["summary"]["grade"] == hallway.INSUFFICIENT
     assert run["reproducibility"] == report["summary"]["reproducibility"]
     assert run["reproducibility"]["statement"] == f"{count} of {count} repeats agree"
     assert len(run["result_ids"]) == count
@@ -212,26 +223,28 @@ def test_no_completed_trial_is_insufficient_evidence(tmp_path):
     assert result["summary"]["reproducibility"]["statement"] == statement
 
 
-def test_a_missing_repeat_is_labelled_as_a_mismatched_comparison(tmp_path):
-    """One missing observation among compared identical repeats is not a pass rate."""
+def test_a_missing_repeat_of_an_inconsistent_trace_still_agrees(tmp_path):
+    """The stored lateral value disagrees with the trace, so every trial is inconclusive.
+
+    A missing file is the same status. The repeats still agree, and the grade is not a
+    robot FAIL and not a pass rate.
+    """
     path = _copy(tmp_path)
     (path.parent / "trials" / "trial-02.json").unlink()
     result = hallway.verify(path)
     summary = result["summary"]
-    assert [t["status"] for t in result["trials"]] == [
-        hallway.PASS,
-        hallway.INSUFFICIENT,
-        hallway.PASS,
-    ]
+    count = _load()["trials"]["count"]
+    statement = f"{count} of {count} repeats agree"
+    assert [t["status"] for t in result["trials"]] == [hallway.INSUFFICIENT] * count
     assert summary["grade"] == hallway.INSUFFICIENT
     assert summary["grade"] != hallway.PASS
     assert summary["k"] is None and summary["n"] is None
     assert summary["wilson95"] == [None, None]
-    assert summary["rationale"] == "recorded results do not match the evidence comparison"
-    assert "agreeing" not in summary["reproducibility"]
+    assert summary["rationale"] == statement
+    assert summary["reproducibility"]["agreeing"] == count
     lines = hallway.summary_lines(result)
     assert "Wilson" not in lines[0] and "/" not in lines[0]
-    assert lines[0].startswith("recorded results do not match the evidence comparison")
+    assert lines[0].startswith(statement)
 
 
 def test_evidence_2_0_0_exports_the_finding_without_changing_the_grade(tmp_path, monkeypatch):
@@ -267,7 +280,7 @@ def test_evidence_2_0_0_exports_the_finding_without_changing_the_grade(tmp_path,
     assert bundle["results"][0]["provenance"]["findings"] == [FINDING]
     assert bundle["results"][0]["provenance"]["reproducibility"]["identical"] is False
     assert bundle["results"][0]["original_result"] == {
-        "status": hallway.PASS,
+        "status": hallway.INSUFFICIENT,
         "index": 1,
         "seed": 1,
     }
@@ -339,22 +352,27 @@ def test_one_trial_is_not_a_comparison(tmp_path):
     manifest["trials"]["results"] = manifest["trials"]["results"][:1]
     manifest["trials"]["reproducibility"] = {"compared": False, "identical": None, "finding": None}
     result = hallway.verify(_copy(tmp_path, manifest))
-    assert result["summary"]["grade"] == hallway.PASS
+    assert result["summary"]["grade"] == hallway.INSUFFICIENT
     assert (
         result["summary"]["k"],
         result["summary"]["n"],
         result["summary"]["required_passes"],
     ) == (
-        1,
+        0,
         1,
         1,
     )
-    assert result["summary"]["wilson95"] == hallway.wilson(1, 1)
-    assert result["summary"]["wilson95"] == [0.2065, 1.0]
+    assert result["summary"]["wilson95"] == hallway.wilson(0, 1)
     assert result["summary"]["aggregation"] == {"id": "k-of-n-wilson95", "version": "1.0.0"}
     assert "reproducibility" not in result["summary"]
-    assert hallway.summary_lines(result) == [
-        "1/1 trials PASS (needs 1), Wilson 95% [0.2065, 1.0000]: PASS"
+    low, high = result["summary"]["wilson95"]
+    lines = hallway.summary_lines(result)
+    assert lines[0] == (
+        f"0/1 trials PASS (needs 1), Wilson 95% [{low:.4f}, {high:.4f}]: {hallway.INSUFFICIENT}"
+    )
+    assert lines[1:] == [
+        "  trial  1 INSUFFICIENT_EVIDENCE: "
+        "observation max_abs_lateral disagrees with its trace (trial 1)"
     ]
     assert result["findings"] == []
 

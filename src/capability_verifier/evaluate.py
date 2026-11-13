@@ -30,22 +30,13 @@ from dataclasses import dataclass, field
 from typing import Iterable, Protocol
 
 from . import hallway
+from .specs_ref import SPECS as SPECS  # noqa: F401  re-exported for result specs
+from .specs_ref import accepted_reference
 
 PASS, FAIL, INSUFFICIENT = hallway.PASS, hallway.FAIL, hallway.INSUFFICIENT
 INCOMPATIBLE = "INCOMPATIBLE"
 STATUSES = (PASS, FAIL, INSUFFICIENT, INCOMPATIBLE)
 FORMAT = "livingproof-run-assessment/0.1"
-CAPABILITY = "walk-hallway"
-SPECS = "https://github.com/Living-Proof-Labs/robot-capability-specs"
-# Contracts the hallway policy grades, matched by repository, commit and revision; the same
-# set livingproof-capability-report v1.10.0 accepts.
-CONTRACTS = {
-    (SPECS, "34681d20bf13ba0a836e03ac09869c7fb13665f1", "0.1.0"),  # v1.6.0
-    (SPECS, "b4ba31eb2c7eaca2721d68d5d375260e2a114449", "0.1.0"),  # pre-merge candidate
-    (SPECS, "a378e92216fd9498984f290e677b9f4e7a33232c", "0.1.0"),  # specs #25 candidate
-    (SPECS, "0bdf1db3f975b044692c0b8f1ec37737ad8b889f", "0.1.0"),  # v1.6.1
-    (SPECS, "d677bd9770e60a6d42ea597966799e119dc7dd18", "0.1.0"),  # v1.9.0 (adds description.json)
-}
 EVALUATOR_VERSIONS = {name: hallway.VERSION for name in hallway.EVALUATORS}
 FAILURE_KEYS = {"check", "observed", "limit", "unit", "t", "seed"}
 # Optional keys: ``wall`` names a contacted wall; ``via`` names how a trial left the hallway
@@ -194,7 +185,7 @@ class Policy:
 
 
 class AllRequiredV1(Policy):
-    """all-required-v1 for walk-hallway results, as the reporter applies it today.
+    """all-required-v1, as the reporter applies it today.
 
     ``result`` is one reporter-bundle result. ``complete`` is whether every evidence
     file it names is present with a matching sha256. Retained human or agent assessments
@@ -217,15 +208,12 @@ class AllRequiredV1(Policy):
             raise ValueError("Invalid execution compatibility declaration")
         if compatibility is not None:
             return Decision(rid, INCOMPATIBLE, compatibility["reason"])
-        if result["spec"]["capability"] != CAPABILITY:
-            return Decision(rid, INCOMPATIBLE, f"{self.id} grades {CAPABILITY} only")
         spec = result["spec"]
-        if (spec["repository"], spec["commit"], spec["revision"]) not in CONTRACTS:
-            return Decision(rid, INCOMPATIBLE, "Unsupported walk-hallway contract")
+        capability = spec.get("capability")
+        if not isinstance(capability, str) or not capability or not accepted_reference(spec):
+            return Decision(rid, INCOMPATIBLE, "Unsupported scenario contract")
         if not self.members_supported(assessments):
-            return Decision(
-                rid, INCOMPATIBLE, "Unsupported hallway evaluator, version or assessor kind"
-            )
+            return Decision(rid, INCOMPATIBLE, "Unsupported evaluator, version or assessor kind")
         found = [f for a in assessments for f in structured_failures(a)]
         types = sorted({assessor_type(a) for a in assessments})
         failed = [a for a in assessments if a["status"] == FAIL]
@@ -250,7 +238,7 @@ class AllRequiredV1(Policy):
         return Decision(
             rid,
             PASS,
-            "All four hallway evaluators and every retained assessment pass",
+            "All required evaluators and every retained assessment pass",
             found,
             types,
         )
@@ -451,7 +439,7 @@ class Aggregator:
         for r in results:
             record = (r.get("provenance") or {}).get("reproducibility")
             compared = isinstance(record, dict) and record.get("compared") is True
-            if r["spec"]["capability"] == CAPABILITY or compared:
+            if accepted_reference(r["spec"]) or compared:
                 groups.setdefault(run_key(r), []).append(r)
         runs = []
         for key, members in groups.items():
@@ -460,7 +448,7 @@ class Aggregator:
             if block is not None:
                 runs.append(self._repeated(key, members, by_id, block))
                 continue
-            if members[0]["spec"]["capability"] != CAPABILITY:
+            if not accepted_reference(members[0]["spec"]):
                 continue
             plan = members[0]["provenance"].get("plan") or {}
             grade, planned, rationale = self.grade(statuses, plan)
@@ -469,7 +457,7 @@ class Aggregator:
             _n, need = hallway.planned_counts(plan)
             runs.append(
                 {
-                    "capability": CAPABILITY,
+                    "capability": members[0]["spec"]["capability"],
                     "spec": dict(members[0]["spec"]),
                     "system": dict(members[0]["system"]),
                     "environment": dict(members[0]["environment"]),
@@ -507,8 +495,8 @@ class Aggregator:
             "failures": [dict(f) for r in members for f in by_id[r["id"]].failures],
             "prototype": members[0]["provenance"].get("prototype"),
         }
-        if members[0]["spec"]["capability"] == CAPABILITY:
-            # Stored trial detail from the hallway checks. Not a success rate.
+        if accepted_reference(members[0]["spec"]):
+            # Stored trial detail from the scenario checks. Not a success rate.
             run["failure_summary"] = failure_summary(members, by_id)
             run["worst"] = worst_observed(members)
         return run
