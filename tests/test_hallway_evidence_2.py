@@ -439,3 +439,71 @@ def test_evidence_2_plan_is_the_same_threshold_the_bundle_aggregator_uses():
     )
     assert (grade, n) == (hallway.FAIL, 3)
     assert "needs 3" in rationale
+
+
+def _trace_inside_stored_maximum(tmp_path, manifest=None):
+    """A copy whose trace stays inside the stored maximum, so evaluator v1.2.0 grades it.
+
+    The committed trace steps farther from the route than its stored maximum, which
+    evaluator v1.2.0 reports as INSUFFICIENT_EVIDENCE. This copy keeps the v1.19.0
+    repeat checks about repeats, not about that disagreement.
+    """
+    path = _copy(tmp_path, manifest)
+    document = json.loads(path.read_text())
+
+    def on_route(obs):
+        for sample in obs["trace"]["samples"]:
+            sample[2] = 0.0
+
+    for trial in document["trials"]["results"]:
+        trial["sha256"] = _rewrite(path.parent / trial["path"], on_route)
+    path.write_text(json.dumps(document, indent=2) + "\n")
+    return path
+
+
+def test_v1_19_0_identical_repeats_are_one_pass_outcome(tmp_path):
+    result = hallway.verify(_trace_inside_stored_maximum(tmp_path))
+    count = _load()["trials"]["count"]
+    statement = f"{count} of {count} repeats agree"
+    assert [t["status"] for t in result["trials"]] == [hallway.PASS] * count
+    summary = result["summary"]
+    assert summary["grade"] == hallway.PASS
+    assert summary["rationale"] == statement
+    assert summary["reproducibility"]["agreeing"] == count
+    assert summary["k"] is None and summary["n"] is None
+    assert summary["aggregation"]["id"] == "repeated-outcome"
+    assert hallway.summary_lines(result) == [f"{statement}: {hallway.PASS}"]
+
+
+def test_v1_19_0_missing_repeat_is_a_mismatched_comparison(tmp_path):
+    path = _trace_inside_stored_maximum(tmp_path)
+    (path.parent / "trials" / "trial-02.json").unlink()
+    result = hallway.verify(path)
+    summary = result["summary"]
+    assert [t["status"] for t in result["trials"]] == [
+        hallway.PASS,
+        hallway.INSUFFICIENT,
+        hallway.PASS,
+    ]
+    assert summary["grade"] == hallway.INSUFFICIENT
+    assert summary["k"] is None and summary["n"] is None
+    assert summary["wilson95"] == [None, None]
+    assert summary["rationale"] == "recorded results do not match the evidence comparison"
+    assert "agreeing" not in summary["reproducibility"]
+    assert hallway.summary_lines(result)[0].startswith(
+        "recorded results do not match the evidence comparison"
+    )
+
+
+def test_v1_19_0_one_trial_is_k_of_n(tmp_path):
+    manifest = _load()
+    manifest["plan"]["trials"]["count"] = 1
+    manifest["trials"]["count"] = 1
+    manifest["trials"]["results"] = manifest["trials"]["results"][:1]
+    manifest["trials"]["reproducibility"] = {"compared": False, "identical": None, "finding": None}
+    result = hallway.verify(_trace_inside_stored_maximum(tmp_path, manifest))
+    summary = result["summary"]
+    assert summary["grade"] == hallway.PASS
+    assert (summary["k"], summary["n"], summary["required_passes"]) == (1, 1, 1)
+    assert summary["aggregation"] == {"id": "k-of-n-wilson95", "version": "1.0.0"}
+    assert "reproducibility" not in summary
