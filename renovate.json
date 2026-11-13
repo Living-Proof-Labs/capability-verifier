@@ -13,5 +13,20 @@
     "custom.regex",
     "pep621",
     "devcontainer"
+  ],
+  "packageRules": [
+    {
+      "description": "Fixture pin coupled to tests/fixtures/repin/verification.lock.json. Not a runtime dependency. Renovate's packageName for this git source is Living-Proof-Labs/livingproof-sim-mujoco; the dependency name stays livingproof-sim-mujoco. Move it only in a migration that updates the lock with the pin.",
+      "matchFileNames": ["tests/fixtures/repin/pyproject.toml"],
+      "matchDepNames": ["livingproof-sim-mujoco"],
+      "matchPackageNames": ["Living-Proof-Labs/livingproof-sim-mujoco"],
+      "enabled": false
+    },
+    {
+      "description": "Legacy demo image held at 1.6.0. tools/check_demo.py requires that reporter; move it only in a migration that updates the guard with the pin.",
+      "matchFileNames": [".github/workflows/verify.yml"],
+      "matchPackageNames": ["ghcr.io/living-proof-labs/livingproof-capability-report"],
+      "enabled": false
+    }
   ]
 }

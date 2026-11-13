@@ -23,3 +23,26 @@ and insufficient evidence, provenance, exact fixture/spec/executor pins and the
 existing runtime behavior. Passing expectation tests is not robot certification.
 See [verification and preview reproduction](documentation.md) and
 [license scopes](license.md).
+
+## Pins Renovate does not update on its own
+
+`renovate.json` disables two pins with `enabled: false`. Each rule names both the
+file path and the package name, so the same package in another file, and other
+packages in these files, still receive updates. The shared organization preset
+is unchanged.
+
+`livingproof-sim-mujoco` in `tests/fixtures/repin/pyproject.toml` is a test
+fixture coupled to `tests/fixtures/repin/verification.lock.json`. It is not a
+runtime dependency. Updating the tag alone fails the repin tests. Renovate
+resolves that git source to package name `Living-Proof-Labs/livingproof-sim-mujoco`
+and keeps the dependency name `livingproof-sim-mujoco`, so the rule matches
+both, with the fixture file.
+
+`ghcr.io/living-proof-labs/livingproof-capability-report` at 1.6.0 in
+`.github/workflows/verify.yml` is the legacy demonstration image.
+`tools/check_demo.py` requires reporter 1.6.0. Workflows do not reference that
+image at another version: the hallway workflow builds its reporter image from a
+verification lock. The rule therefore matches this file and package only.
+
+Move either pin later in a deliberate migration pull request that updates the
+fixture lock, or the `check_demo` guard, together with the pin.
