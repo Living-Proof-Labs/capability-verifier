@@ -587,3 +587,21 @@ def test_every_released_tag_grades_with_its_own_commit(tag, commit):
     r = result()
     r["spec"]["tag"], r["spec"]["commit"] = tag, commit
     assert evaluate.AllRequiredV1().decide(r, True).status == P
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="a0171a6 drops a run whose contract is rejected; v1.19.0 reported it INCOMPATIBLE",
+)
+@pytest.mark.parametrize(
+    "change",
+    [{"commit": "f" * 40}, {"revision": "9.9.9"}, {"tag": "v0.0.0"}],
+)
+def test_a_rejected_contract_is_still_an_incompatible_run(change):
+    """A result the policy rejects is reported as an INCOMPATIBLE run, not left out."""
+    results = [result("r1"), result("r2")]
+    for r in results:
+        r["spec"].update(change)
+    a = evaluate.assess_bundle(results, {"r1": True, "r2": True})
+    assert {d["status"] for d in a["decisions"]} == {X}
+    assert [run["grade"] for run in a["runs"]] == [X]
