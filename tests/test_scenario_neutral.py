@@ -76,7 +76,7 @@ def test_walk_hallway_workflow_is_a_thin_wrapper():
     jobs = wrapper["jobs"]
     assert set(jobs) == {"scenario"}
     job = jobs["scenario"]
-    assert job["uses"] == "./.github/workflows/scenario.yml"
+    assert job["uses"] == "$/.github/workflows/scenario.yml"
     assert set(job["with"]) == set(call["inputs"])
     for name in call["inputs"]:
         assert job["with"][name] == f"${{{{ inputs.{name} }}}}"
@@ -187,6 +187,18 @@ def test_runner_follows_the_wrapper_to_the_scenario_workflow():
     assert d.called_workflow(wrapper) == ".github/workflows/scenario.yml"
     assert d.called_workflow(scenario) is None
     assert d.procedure_text(ROOT, "walk-hallway") == scenario
+
+
+def test_called_workflow_accepts_the_same_repository_form():
+    """$/ is this workflow's repository and revision. ./ is the caller's repository."""
+    same = "jobs:\n  scenario:\n    uses: $/.github/workflows/scenario.yml\n"
+    assert d.called_workflow(same) == ".github/workflows/scenario.yml"
+    assert d.called_workflow(same.replace("$/", "./")) == ".github/workflows/scenario.yml"
+    remote = (
+        "jobs:\n  scenario:\n    uses: Living-Proof-Labs/capability-verifier/"
+        ".github/workflows/scenario.yml@abc\n"
+    )
+    assert d.called_workflow(remote) is None
 
 
 def test_catalog_step_accepts_the_new_name_and_the_old_name():

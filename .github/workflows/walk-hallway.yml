@@ -61,7 +61,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: ./.github/workflows/scenario.yml
+    uses: $/.github/workflows/scenario.yml
     with:
       repository: ${{ inputs.repository }}
       ref: ${{ inputs.ref }}
