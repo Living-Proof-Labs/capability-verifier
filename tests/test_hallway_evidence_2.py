@@ -200,9 +200,38 @@ def test_no_completed_trial_is_insufficient_evidence(tmp_path):
     for trial in path.parent.glob("trials/*.json"):
         trial.unlink()
     result = hallway.verify(path)
+    count = _load()["trials"]["count"]
+    statement = f"{count} of {count} repeats agree"
     assert all(t["status"] == hallway.INSUFFICIENT for t in result["trials"])
     assert result["summary"]["grade"] == hallway.INSUFFICIENT
     assert result["summary"]["grade"] != hallway.FAIL
+    # Every recorded result is the same status, so the compared-repeat rule
+    # labels the run as that one outcome, not a k-of-N missing-measurement rate.
+    assert result["summary"]["rationale"] == statement
+    assert result["summary"]["k"] is None and result["summary"]["wilson95"] == [None, None]
+    assert result["summary"]["reproducibility"]["statement"] == statement
+
+
+def test_a_missing_repeat_is_labelled_as_a_mismatched_comparison(tmp_path):
+    """One missing observation among compared identical repeats is not a pass rate."""
+    path = _copy(tmp_path)
+    (path.parent / "trials" / "trial-02.json").unlink()
+    result = hallway.verify(path)
+    summary = result["summary"]
+    assert [t["status"] for t in result["trials"]] == [
+        hallway.PASS,
+        hallway.INSUFFICIENT,
+        hallway.PASS,
+    ]
+    assert summary["grade"] == hallway.INSUFFICIENT
+    assert summary["grade"] != hallway.PASS
+    assert summary["k"] is None and summary["n"] is None
+    assert summary["wilson95"] == [None, None]
+    assert summary["rationale"] == "recorded results do not match the evidence comparison"
+    assert "agreeing" not in summary["reproducibility"]
+    lines = hallway.summary_lines(result)
+    assert "Wilson" not in lines[0] and "/" not in lines[0]
+    assert lines[0].startswith("recorded results do not match the evidence comparison")
 
 
 def test_evidence_2_0_0_exports_the_finding_without_changing_the_grade(tmp_path, monkeypatch):
@@ -321,7 +350,12 @@ def test_one_trial_is_not_a_comparison(tmp_path):
         1,
     )
     assert result["summary"]["wilson95"] == hallway.wilson(1, 1)
+    assert result["summary"]["wilson95"] == [0.2065, 1.0]
+    assert result["summary"]["aggregation"] == {"id": "k-of-n-wilson95", "version": "1.0.0"}
     assert "reproducibility" not in result["summary"]
+    assert hallway.summary_lines(result) == [
+        "1/1 trials PASS (needs 1), Wilson 95% [0.2065, 1.0000]: PASS"
+    ]
     assert result["findings"] == []
 
 

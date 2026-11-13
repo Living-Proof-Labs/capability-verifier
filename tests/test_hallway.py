@@ -806,6 +806,25 @@ def test_complete_export_carries_no_missing_evidence(tmp_path, monkeypatch, bund
     assert len(list((out / "bundle" / "evidence").iterdir())) == 20
 
 
+def test_seeded_k_of_n_output_matches_main_24c531b(tmp_path):
+    """A 20-seed 1.0.0 run is still k of N with the Wilson range, unchanged from main."""
+    result = hallway.verify(_manifest(tmp_path, failing_seed=7))
+    summary = result["summary"]
+    assert summary["aggregation"] == {"id": "k-of-n-wilson95", "version": "1.0.0"}
+    assert (summary["k"], summary["n"], summary["required_passes"], summary["grade"]) == (
+        19,
+        20,
+        18,
+        hallway.PASS,
+    )
+    assert summary["wilson95"] == [0.7639, 0.9911]
+    assert "reproducibility" not in summary
+    assert hallway.summary_lines(result) == [
+        "19/20 trials PASS (needs 18), Wilson 95% [0.7639, 0.9911]: PASS",
+        "  seed  7 FAIL: lateral 0.62 m > 0.49 m at 10.10 s (seed 7)",
+    ]
+
+
 # capability-verifier#37: an exit counts only through the exit segment, a left_hallway end
 # fails, unknown observation formats are refused, and no grade softens.
 V1 = "livingproof-hallway-observation/1.0.0"

@@ -457,3 +457,39 @@ def test_compared_repeats_aggregate_for_a_pause_capability():
     assert run["k"] is None and run["n"] is None
     assert run["interval"]["lower"] is None and run["interval"]["upper"] is None
     assert "agreeing" not in run["reproducibility"]
+
+
+def test_a_mixed_bundle_keeps_seeded_k_of_n_beside_compared_repeats():
+    """Older seeded results stay k of N when a compared-repeat run is in the same bundle."""
+    playground = json.loads(
+        (ROOT / "tests/fixtures/g1-playground-bundle/manifest.json").read_text()
+    )
+    seeded = []
+    complete = {}
+    for item in playground["results"]:
+        row = {key: value for key, value in item.items() if key != "decision"}
+        seeded.append(row)
+        complete[row["id"]] = True
+    base, evidence = _pause_and_evidence()
+    compared = _pause_results(base, evidence, evidence["trials"]["reproducibility"])
+    for row in compared:
+        complete[row["id"]] = True
+    assessment = evaluate.assess_bundle(seeded + compared, complete)
+    runs = {run["capability"]: run for run in assessment["runs"]}
+    hallway_run = runs["walk-hallway"]
+    assert (hallway_run["k"], hallway_run["n"], hallway_run["required_passes"]) == (3, 3, 3)
+    assert hallway_run["interval"] == {
+        "method": "wilson",
+        "level": 0.95,
+        "lower": 0.4385,
+        "upper": 1.0,
+    }
+    assert hallway_run["rationale"] == "3/3 PASS, needs 3"
+    assert "reproducibility" not in hallway_run
+    pause_run = runs["pause"]
+    count = evidence["trials"]["count"]
+    statement = f"{count} of {count} repeats agree"
+    assert pause_run["k"] is None and pause_run["n"] is None
+    assert pause_run["interval"]["lower"] is None and pause_run["interval"]["upper"] is None
+    assert pause_run["rationale"] == statement
+    assert pause_run["reproducibility"]["statement"] == statement
