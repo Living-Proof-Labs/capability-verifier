@@ -682,3 +682,17 @@ def test_pause_results_without_compared_repeats_are_not_runs():
     assert results
     assessment = evaluate.assess_bundle(results, {item["id"]: True for item in results})
     assert assessment["runs"] == []
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="7235785 groups k-of-n results by tag, so an unknown tag gets no run",
+)
+@pytest.mark.parametrize("plan", [PLAN, {"trials": {"count": 1}}])
+def test_an_unknown_tag_is_an_incompatible_run(plan):
+    """A walk-hallway result with an unreleased tag is reported as INCOMPATIBLE, not left out."""
+    trial = result("r1", plan=plan)
+    trial["spec"]["tag"] = "v9.9.9"
+    a = evaluate.assess_bundle([trial], {"r1": True})
+    assert [d["status"] for d in a["decisions"]] == [X]
+    assert [run["grade"] for run in a["runs"]] == [X]
