@@ -29,13 +29,15 @@ and the configuration names in ``robot.json``. It does not read a robot
 ``verification.lock.json``.
 
 ``run`` checks the lock, checks out the robot at the locked commit and the verifier at the
-commit the robot lock names, then executes the named ``run:`` scripts of that verifier
+commit the lock names, then executes the named ``run:`` scripts of that verifier
 commit's ``walk-hallway.yml`` in the same directories CI uses: the plan job's checks (refs
-from the robot lock, every ref a released tag, media and bundle capability), setup, robot
-adapter, profiles valid, catalog, evidence, assessment and render. A robot commit with no
-``verification.lock.json`` needs a ``0.2.0`` lock: ``run`` writes the evidence document from
-it before those steps and points ``repin.py --check`` at that lock. A robot file is left
-untouched. The robot's own test suite (``uv run pytest tests``) is CI-only. No step logic is
+from that lock, every ref a released tag, media and bundle capability), setup, robot
+adapter, profiles valid, catalog, evidence, assessment and render. A ``0.2.0`` lock
+controls those steps even when the robot commit has ``verification.lock.json``: ``run``
+writes the evidence document from it, logs ``EVIDENCE_SOURCE: caller``, records the
+replaced robot file's sha256, and points ``repin.py --check`` at that lock. When the
+robot commit has no lock, ``run`` logs that instead. A ``0.1.0`` lock leaves a robot
+file untouched. The robot's own test suite (``uv run pytest tests``) is CI-only. No step logic is
 copied here, so local and CI runs share one definition of each step. Rendering uses the
 locked reporter image by digest (``docker``),
 or the reporter source at the locked commit (``--reporter source``).
@@ -685,19 +687,29 @@ def pinned_robot_problems(lock: dict, dest: Path) -> list[str]:
 
 
 def prepare_evidence_inputs(lock: dict, robot: Path, caller_lock: Path) -> dict:
-    """Env for the plan steps. A robot ``verification.lock.json`` is left as it is.
+    """Env for the plan steps.
 
-    When that file is absent, write the v2.0.3 evidence document from ``lock`` and
-    return ``EVIDENCE_SOURCE=caller`` so ``repin.py --check`` reads the caller lock.
+    A ``0.2.0`` lock is the caller's verification lock. It controls the run even when
+    the robot commit has ``verification.lock.json``: write the v2.0.3 evidence document
+    from it, log ``EVIDENCE_SOURCE: caller``, and record the replaced file's sha256.
+    When the robot commit has no lock, log that instead. ``EVIDENCE_SOURCE=caller``
+    makes ``repin.py --check`` read the caller lock. A ``0.1.0`` lock leaves a robot
+    file as it is.
     """
-    if (robot / evidence_lock.ROBOT_LOCK_NAME).is_file():
-        return {}
+    robot_lock = robot / evidence_lock.ROBOT_LOCK_NAME
     if lock.get("format") != FORMAT_V2:
+        if robot_lock.is_file():
+            return {}
         raise DefinitionError(
             "the robot commit has no verification.lock.json; pass a "
             "livingproof-verification-lock/0.2.0 as verification-lock"
         )
-    evidence_lock.write_evidence_document(lock, robot / evidence_lock.ROBOT_LOCK_NAME)
+    digest = sha256(robot_lock.read_bytes()) if robot_lock.is_file() else None
+    evidence_lock.write_evidence_document(lock, robot_lock)
+    if digest is not None:
+        evidence_lock.note_overridden_robot_lock(robot_lock, digest)
+    for line in evidence_lock.evidence_source_lines(digest):
+        print(line, file=sys.stderr)
     (robot / evidence_lock.CALLER_LOCK_NAME).write_bytes(caller_lock.read_bytes())
     return {"EVIDENCE_SOURCE": "caller"}
 

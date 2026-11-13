@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -55,6 +56,33 @@ def write_evidence_document(lock: dict, dest: Path) -> dict:
     return document
 
 
+def evidence_source_lines(digest: str | None) -> list[str]:
+    """Log lines when the caller lock is the source.
+
+    ``digest`` is the sha256 of the robot ``verification.lock.json`` this run
+    replaced. ``None`` means the robot commit has no such file.
+    """
+    if digest is None:
+        detail = "robot commit has no verification.lock.json"
+    else:
+        detail = f"overridden robot verification.lock.json sha256: {digest}"
+    return ["EVIDENCE_SOURCE: caller", detail]
+
+
+def note_overridden_robot_lock(dest: Path, digest: str) -> None:
+    """Record the robot lock ``dest`` replaced.
+
+    livingproof-sim-mujoco v2.0.3 copies the whole ``verification.lock.json`` into
+    the evidence manifest's ``lock.content``, so this digest is part of the
+    evidence record. ``digest`` is the sha256 of the file before replacement.
+    """
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise SystemExit(f"overridden robot lock sha256 must be 64 hex characters, got {digest!r}")
+    document = json.loads(dest.read_text())
+    document["overridden_robot_lock"] = {"path": ROBOT_LOCK_NAME, "sha256": digest}
+    dest.write_text(json.dumps(document, indent=2) + "\n")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--lock", type=Path, required=True, help="caller verification lock")
@@ -63,6 +91,10 @@ def main(argv=None) -> int:
         "--copy-caller",
         type=Path,
         help="also copy the caller lock here for repin.py --lock",
+    )
+    parser.add_argument(
+        "--overridden-sha256",
+        help="sha256 of the robot verification.lock.json this write replaces",
     )
     args = parser.parse_args(argv)
     try:
@@ -73,6 +105,8 @@ def main(argv=None) -> int:
     except json.JSONDecodeError as exc:
         raise SystemExit(f"{args.lock}: not valid JSON ({exc})") from None
     write_evidence_document(lock, args.out)
+    if args.overridden_sha256:
+        note_overridden_robot_lock(args.out, args.overridden_sha256)
     if args.copy_caller is not None:
         args.copy_caller.write_bytes(raw)
     return 0

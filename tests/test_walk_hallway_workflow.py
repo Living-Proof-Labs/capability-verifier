@@ -8,8 +8,8 @@ STEPS = "\n".join(line for line in WORKFLOW.splitlines() if not line.lstrip().st
 
 
 # Published livingproof-verification pins. Each robot commit contains
-# verification.lock.json, so a released walk-hallway.yml keeps today's plan,
-# repin and evidence steps for them. Callers do not pass verification-lock.
+# verification.lock.json, and those calls do not pass verification-lock, so a
+# released walk-hallway.yml keeps today's plan, repin and evidence steps for them.
 CURRENT_PINS = (
     (
         "unitree-g1-stock",
@@ -61,12 +61,12 @@ def test_every_ref_comes_from_the_robot_lock():
     assert '"@" + .releases.reporter.digest' in STEPS
 
 
-def test_current_pins_keep_the_robot_lock_and_a_missing_file_uses_the_caller():
+def test_current_pins_keep_the_robot_lock_and_a_caller_lock_overrides_it():
     """verification-lock defaults to empty, so the four published calls are unchanged.
 
-    When the robot file is absent the plan, evidence and media jobs write the
-    v2.0.3 evidence document. repin --check then reads the caller lock.
-    scenario-evaluator stays parallel to verify, and report needs it.
+    A set verification-lock is written even when the robot file is present.
+    The same write runs when the robot file is absent. repin --check then reads
+    the caller lock. scenario-evaluator stays parallel to verify, and report needs it.
     """
     import yaml
 
@@ -90,15 +90,268 @@ def test_current_pins_keep_the_robot_lock_and_a_missing_file_uses_the_caller():
         "  python3 verifier/src/capability_verifier/repin.py --root robot --check\n"
         "fi\n"
     )
+    writer_if = (
+        "${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}"
+    )
+    assert WORKFLOW.count(f"if: {writer_if}") == 9
     writers = []
     for name, job in doc["jobs"].items():
         for step in job.get("steps") or []:
             if "write_evidence_inputs.sh" in (step.get("run") or ""):
                 writers.append(name)
-                assert step["if"] == "${{ steps.robot-lock.outputs.present == 'false' }}"
+                assert step["if"] == writer_if
     assert writers == ["plan", "evidence", "media"]
     report = WORKFLOW.split("\n  report:\n", 1)[1].split("\n  comment:\n", 1)[0]
     assert "needs: [plan, verify, scenario-evaluator, media]" in report
+
+
+def _release(commit, digest, *, tag, image, repository="Org/component"):
+    return {
+        "repository": repository,
+        "tag": tag,
+        "commit": commit,
+        "image": image,
+        "digest": digest,
+    }
+
+
+def _evidence_lock(verifier, reporter, evaluator, *, world, speed):
+    """A 0.2.0 lock whose evidence fields and evaluator pin are the arguments."""
+    return {
+        "format": "livingproof-verification-lock/0.2.0",
+        "scenario": "walk-hallway@0.1.0",
+        "releases": {
+            "specs": _release(
+                "a" * 40, "sha256:" + "a" * 64, tag="v2.0.2", image="ghcr.io/example/specs"
+            ),
+            "runner": _release(
+                "b" * 40, "sha256:" + "b" * 64, tag="v2.0.3", image="ghcr.io/example/runner"
+            ),
+            "verifier": verifier,
+            "reporter": reporter,
+        },
+        "world": {"id": world, "version": "0.1.0"},
+        "configurations": [
+            {
+                "name": "playground",
+                "version": "1.0.0",
+                "path": "configurations/playground.json",
+                "sha256": "d" * 64,
+            }
+        ],
+        "plan": {"trials": {"count": 3}, "command_speed": speed},
+        "evaluators": {"livingproof-evaluator-scenario": evaluator},
+    }
+
+
+def _write_lock(robot, caller_dir, relative, *, copy):
+    import os
+    import subprocess
+
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    if copy:
+        env["COPY_CALLER_LOCK"] = "1"
+    return subprocess.run(
+        [
+            "sh",
+            str(Path(__file__).parents[1] / ".github/scripts/write_evidence_inputs.sh"),
+            str(robot),
+            str(caller_dir),
+            relative,
+            str(Path(__file__).parents[1]),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def _plan_outputs(robot):
+    """Run the workflow's own ref step against ``robot``."""
+    import os
+    import subprocess
+
+    destination = robot / "github-output.txt"
+    env = os.environ.copy()
+    env["GITHUB_OUTPUT"] = str(destination)
+    env["ONLY"] = ""
+    done = subprocess.run(
+        ["bash", "-e", "-c", _step("Refs from verification.lock.json")],
+        cwd=robot,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert done.returncode == 0, done.stderr
+    return dict(line.split("=", 1) for line in destination.read_text().splitlines() if "=" in line)
+
+
+def _image(ref):
+    return f"{ref['image']}:{ref['tag'].removeprefix('v')}@{ref['digest']}"
+
+
+def test_caller_lock_wins_over_a_robot_lock_for_verifier_image_and_evaluator(tmp_path):
+    """Both locks exist. Checkout ref, hallway image and evaluator pin follow the caller."""
+    import hashlib
+    import json
+
+    from capability_verifier import evidence_lock
+
+    caller_verifier = _release(
+        "b" * 40,
+        "sha256:" + "2" * 64,
+        tag="v1.18.0",
+        image="ghcr.io/example/caller-hallway",
+        repository="Example/caller-verifier",
+    )
+    robot_verifier = _release(
+        "a" * 40,
+        "sha256:" + "1" * 64,
+        tag="v1.16.1",
+        image="ghcr.io/example/robot-hallway",
+        repository="Example/robot-verifier",
+    )
+    caller_reporter = _release(
+        "c" * 40,
+        "sha256:" + "3" * 64,
+        tag="v3.5.0",
+        image="ghcr.io/example/caller-reporter",
+    )
+    robot_reporter = _release(
+        "d" * 40,
+        "sha256:" + "4" * 64,
+        tag="v3.3.1",
+        image="ghcr.io/example/robot-reporter",
+    )
+    caller_eval = {"repository": "Example/caller-evaluator", "tag": "v1.2.3", "commit": "e" * 40}
+    robot_eval = {"repository": "Example/robot-evaluator", "tag": "v9.9.9", "commit": "f" * 40}
+    caller_lock = _evidence_lock(
+        caller_verifier, caller_reporter, caller_eval, world="caller-world", speed=0.8
+    )
+    robot_lock = {
+        "format": "livingproof-verification-lock/1.0.0",
+        "scenario": "walk-hallway@0.1.0",
+        "releases": {"verifier": robot_verifier, "reporter": robot_reporter},
+        "world": {"id": "robot-world", "version": "0.1.0"},
+        "configurations": [
+            {
+                "name": "stock",
+                "version": "1.0.0",
+                "path": "configurations/stock.json",
+                "sha256": "0" * 64,
+            }
+        ],
+        "plan": {"trials": {"count": 1}, "command_speed": 0.1},
+        "evaluators": {"livingproof-evaluator-scenario": robot_eval},
+    }
+    caller = tmp_path / "caller"
+    (caller / "verifications").mkdir(parents=True)
+    (caller / "verifications" / "lock.json").write_text(json.dumps(caller_lock) + "\n")
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    original = (json.dumps(robot_lock) + "\n").encode()
+    (robot / "verification.lock.json").write_bytes(original)
+    done = _write_lock(robot, caller, "verifications/lock.json", copy=True)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "source=caller"
+    digest = hashlib.sha256(original).hexdigest()
+    assert done.stderr.splitlines() == evidence_lock.evidence_source_lines(digest)
+    written = json.loads((robot / "verification.lock.json").read_text())
+    assert written["releases"]["verifier"] == caller_verifier
+    assert written["releases"]["reporter"] == caller_reporter
+    assert written["world"]["id"] == "caller-world"
+    assert written["plan"]["command_speed"] == 0.8
+    assert written["configurations"][0]["name"] == "playground"
+    assert written["overridden_robot_lock"] == {
+        "path": "verification.lock.json",
+        "sha256": digest,
+    }
+    assert "evaluators" not in written  # evidence.py's document; the pin is on the caller copy
+    outputs = _plan_outputs(robot)
+    assert outputs["verifier-repository"] == "Example/caller-verifier"
+    assert outputs["verifier-commit"] == "b" * 40
+    assert outputs["verifier-image"] == _image(caller_verifier)
+    assert outputs["reporter-image"] == _image(caller_reporter)
+    assert outputs["evaluator-repository"] == "Example/caller-evaluator"
+    assert outputs["evaluator-commit"] == "e" * 40
+    assert outputs["evaluator-tag"] == "v1.2.3"
+    assert robot_verifier["commit"] not in outputs.values()
+    assert robot_verifier["digest"] not in outputs["verifier-image"]
+    assert robot_eval["commit"] not in outputs.values()
+    assert "ghcr.io/example/robot-hallway" not in outputs["verifier-image"]
+
+
+def test_caller_lock_without_a_robot_lock_logs_that_and_supplies_the_pins(tmp_path):
+    import json
+
+    from capability_verifier import evidence_lock
+
+    verifier = _release(
+        "b" * 40,
+        "sha256:" + "2" * 64,
+        tag="v1.18.0",
+        image="ghcr.io/example/caller-hallway",
+        repository="Example/caller-verifier",
+    )
+    reporter = _release(
+        "c" * 40, "sha256:" + "3" * 64, tag="v3.5.0", image="ghcr.io/example/caller-reporter"
+    )
+    evaluator = {"repository": "Example/caller-evaluator", "tag": "v1.2.3", "commit": "e" * 40}
+    lock = _evidence_lock(verifier, reporter, evaluator, world="caller-world", speed=0.8)
+    caller = tmp_path / "caller"
+    (caller / "verifications").mkdir(parents=True)
+    (caller / "verifications" / "lock.json").write_text(json.dumps(lock) + "\n")
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    done = _write_lock(robot, caller, "verifications/lock.json", copy=True)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "source=caller"
+    assert done.stderr.splitlines() == evidence_lock.evidence_source_lines(None)
+    written = json.loads((robot / "verification.lock.json").read_text())
+    assert "overridden_robot_lock" not in written
+    outputs = _plan_outputs(robot)
+    assert outputs["verifier-commit"] == "b" * 40
+    assert outputs["verifier-image"] == _image(verifier)
+    assert outputs["evaluator-commit"] == "e" * 40
+    assert outputs["evaluator-repository"] == "Example/caller-evaluator"
+
+
+def test_no_caller_lock_uses_the_robot_lock_and_no_evaluator_default(tmp_path):
+    import json
+
+    verifier = _release(
+        "a" * 40,
+        "sha256:" + "1" * 64,
+        tag="v1.16.1",
+        image="ghcr.io/example/robot-hallway",
+        repository="Example/robot-verifier",
+    )
+    reporter = _release(
+        "d" * 40, "sha256:" + "4" * 64, tag="v3.3.1", image="ghcr.io/example/robot-reporter"
+    )
+    robot_lock = {
+        "format": "livingproof-verification-lock/1.0.0",
+        "configurations": [{"name": "playground"}],
+        "releases": {"verifier": verifier, "reporter": reporter},
+    }
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    original = (json.dumps(robot_lock) + "\n").encode()
+    (robot / "verification.lock.json").write_bytes(original)
+    done = _write_lock(robot, tmp_path / "caller", "", copy=False)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "source=robot"
+    assert done.stderr == ""
+    assert (robot / "verification.lock.json").read_bytes() == original
+    outputs = _plan_outputs(robot)
+    assert outputs["verifier-repository"] == "Example/robot-verifier"
+    assert outputs["verifier-commit"] == "a" * 40
+    assert outputs["verifier-image"] == _image(verifier)
+    assert outputs["reporter-image"] == _image(reporter)
+    assert outputs["evaluator-repository"] == ""
+    assert outputs["evaluator-commit"] == ""
+    assert outputs["evaluator-tag"] == ""
 
 
 def test_capability_fail_is_not_a_ci_failure_and_reporter_posts_the_comment():
@@ -145,6 +398,11 @@ def test_scenario_evaluator_is_a_parallel_job_and_the_report_collects_by_pattern
     assert "needs: [plan, evidence]" in scenario
     assert "needs: [plan, verify]" not in scenario
     assert "tools/run_scenario_evaluator.py" in scenario
+    assert "needs.plan.outputs.verifier-commit" in scenario
+    assert "needs.plan.outputs.verifier-image" in scenario
+    assert "needs.plan.outputs.evaluator-repository" in scenario
+    assert "needs.plan.outputs.evaluator-commit" in scenario
+    assert "ghcr.io/" not in scenario
     assert "evaluator-results-livingproof-scenario-" in scenario
     assert "needs.scenario-evaluator.result == 'success'" in STEPS
     pattern = (

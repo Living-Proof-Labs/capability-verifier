@@ -108,19 +108,21 @@ def _run_script(robot, caller, lock_rel, env=None):
     )
 
 
-def test_a_robot_lock_file_is_left_unchanged(tmp_path):
-    """The four current pins ship verification.lock.json, so this is their path.
+def test_an_empty_verification_lock_leaves_the_robot_file(tmp_path):
+    """No verification-lock input. The four current pins take this path.
 
     unitree-g1 862cf979 (stock and playground, walk-hallway.yml @ 44acb9ed),
     unitree-go1 c56816dc and booster-t1 9bbcd300 (walk-hallway.yml @ 67bb6bbc).
+    They call walk-hallway without verification-lock, so a robot file stays the source.
     """
     robot = tmp_path / "robot"
     robot.mkdir()
     original = G1_LOCK.read_bytes()
     (robot / "verification.lock.json").write_bytes(original)
-    done = _run_script(robot, tmp_path / "missing-caller", "verifications/lock.json")
+    done = _run_script(robot, tmp_path / "missing-caller", "")
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip() == "source=robot"
+    assert done.stderr == ""
     assert (robot / "verification.lock.json").read_bytes() == original
     assert not (robot / evidence_lock.CALLER_LOCK_NAME).exists()
 
@@ -143,8 +145,10 @@ def test_the_workflow_script_writes_the_robot_files_evidence_inputs(tmp_path):
     )
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip() == "source=caller"
+    assert done.stderr.splitlines() == evidence_lock.evidence_source_lines(None)
     written = json.loads((robot / "verification.lock.json").read_text())
     assert written == {key: value for key, value in robot_lock.items() if key != "$comment"}
+    assert "overridden_robot_lock" not in written
     assert (robot / evidence_lock.CALLER_LOCK_NAME).read_bytes() == raw
 
 
@@ -165,21 +169,64 @@ def test_the_workflow_script_refuses_a_bad_caller_path(tmp_path, lock_rel, messa
     assert message in done.stderr
 
 
-def test_prepare_evidence_inputs_matches_the_workflow_script(tmp_path):
+def test_a_missing_caller_lock_does_not_fall_back_to_the_robot_file(tmp_path):
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    original = G1_LOCK.read_bytes()
+    (robot / "verification.lock.json").write_bytes(original)
+    done = _run_script(robot, tmp_path / "caller", "verifications/missing.lock.json")
+    assert done.returncode != 0
+    assert "no verification lock" in done.stderr
+    assert (robot / "verification.lock.json").read_bytes() == original
+
+
+def test_prepare_evidence_inputs_matches_the_workflow_script(tmp_path, capsys):
     robot_lock = _robot_lock()
     lock = v2_from_robot(robot_lock)
     caller = tmp_path / "caller.lock.json"
     caller.write_text(json.dumps(lock, indent=2) + "\n")
-    present = tmp_path / "present"
-    present.mkdir()
-    (present / "verification.lock.json").write_bytes(G1_LOCK.read_bytes())
-    assert d.prepare_evidence_inputs(lock, present, caller) == {}
-    assert (present / "verification.lock.json").read_bytes() == G1_LOCK.read_bytes()
     absent = tmp_path / "absent"
     absent.mkdir()
     env = d.prepare_evidence_inputs(lock, absent, caller)
     assert env == {"EVIDENCE_SOURCE": "caller"}
+    assert capsys.readouterr().err.splitlines() == evidence_lock.evidence_source_lines(None)
     assert json.loads(
         (absent / "verification.lock.json").read_text()
     ) == evidence_lock.evidence_document(lock)
     assert (absent / evidence_lock.CALLER_LOCK_NAME).read_bytes() == caller.read_bytes()
+
+
+def test_prepare_evidence_inputs_overrides_a_robot_lock(tmp_path, capsys):
+    import hashlib
+
+    robot_lock = _robot_lock()
+    caller_body = v2_from_robot(robot_lock)
+    caller_body["releases"] = json.loads(json.dumps(robot_lock["releases"]))
+    caller_body["releases"]["verifier"]["commit"] = "b" * 40
+    caller_body["releases"]["verifier"]["digest"] = "sha256:" + "2" * 64
+    caller_body["plan"] = {"trials": {"count": 3}, "command_speed": 0.8}
+    caller_body["evaluators"]["livingproof-evaluator-scenario"]["commit"] = "d" * 40
+    caller = tmp_path / "caller.lock.json"
+    caller.write_text(json.dumps(caller_body) + "\n")
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    original = G1_LOCK.read_bytes()
+    (robot / "verification.lock.json").write_bytes(original)
+    assert d.prepare_evidence_inputs(caller_body, robot, caller) == {"EVIDENCE_SOURCE": "caller"}
+    digest = hashlib.sha256(original).hexdigest()
+    assert capsys.readouterr().err.splitlines() == evidence_lock.evidence_source_lines(digest)
+    written = json.loads((robot / "verification.lock.json").read_text())
+    assert written["releases"]["verifier"]["commit"] == "b" * 40
+    assert written["plan"]["command_speed"] == 0.8
+    assert written["overridden_robot_lock"]["sha256"] == digest
+    copied = json.loads((robot / evidence_lock.CALLER_LOCK_NAME).read_text())
+    assert copied["evaluators"]["livingproof-evaluator-scenario"]["commit"] == "d" * 40
+
+
+def test_a_v1_lock_leaves_a_robot_file(tmp_path):
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    original = G1_LOCK.read_bytes()
+    (robot / "verification.lock.json").write_bytes(original)
+    assert d.prepare_evidence_inputs({"format": d.FORMAT}, robot, tmp_path / "missing") == {}
+    assert (robot / "verification.lock.json").read_bytes() == original
