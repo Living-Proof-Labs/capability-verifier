@@ -408,8 +408,8 @@ bundle bump; no grading decision reads them:
 
 ## Reusable walk-hallway workflow (robot repositories)
 
-A robot repository's whole CI chain is one call; every ref comes from its
-`verification.lock.json`:
+A robot repository's whole CI chain is one call. With no `verification-lock` input,
+every ref comes from that repository's `verification.lock.json`:
 
 ```yaml
 jobs:
@@ -417,6 +417,15 @@ jobs:
     uses: Living-Proof-Labs/capability-verifier/.github/workflows/walk-hallway.yml@<release commit>
     permissions: {contents: read, pull-requests: write}
 ```
+
+When the caller passes `verification-lock` (a `livingproof-verification-lock/0.2.0` path
+in the caller repository), that lock is the source even if the robot commit still has
+`verification.lock.json`. It supplies the verifier checkout, the hallway image and its
+digest, the scenario-evaluator pin, the reporter, and the plan, world, configuration and
+evidence inputs. The job logs `EVIDENCE_SOURCE: caller` and the sha256 of the robot file
+it replaced. If the robot commit has no lock, the job logs that instead. Omitting the
+input leaves the robot file as the only source, which is what robot repositories that
+call this workflow themselves still rely on.
 
 The robot repository provides the lock, `pins.json`, `tests/` and a `pyproject.toml` with
 the runner source and `[tool.livingproof] adapter = "<module>:ROBOT"`. The workflow runs

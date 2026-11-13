@@ -9,12 +9,14 @@
 #   image renders the bundle 1.1.0 decisions;
 #   it never grades; with the run and artifact links) ->
 #   comment (reporter image `comment`).
-# Every ref comes from verification.lock.json. When the robot commit has that file, it is
-# the only source and the steps below are the ones the four current pins run. When it does
-# not, the caller passes verification-lock (a livingproof-verification-lock/0.2.0 path in
-# the caller repository). This workflow then writes the document livingproof-sim-mujoco
-# v2.0.3 evidence.py reads and points repin.py --check at the caller lock. Nothing is
-# pinned in this file.
+# Every ref comes from one verification lock. When the caller passes verification-lock
+# (a livingproof-verification-lock/0.2.0 path in the caller repository), that lock is the
+# only source even if the robot commit also has verification.lock.json: the verifier
+# checkout, hallway image and digest, scenario-evaluator pin, reporter, plan, world,
+# configuration and evidence. The job logs EVIDENCE_SOURCE: caller and the sha256 of the
+# robot file it replaced, or that the robot commit has no lock. When the input is empty
+# and the robot commit has verification.lock.json, that file stays the only source (the
+# v1.18.0 path). Nothing is pinned in this file.
 # A capability FAIL is the result, not a CI failure. One call = one robot lock, so a
 # cross-robot compare.yml fans out by calling this workflow once per robot repository and
 # merging the verified-* bundles it uploads.
@@ -47,10 +49,12 @@ on:
       verification-lock:
         description: >-
           Path in the caller repository of a livingproof-verification-lock/0.2.0.
-          Read only when the robot commit has no verification.lock.json; that file
-          otherwise stays the only source. The workflow writes the document
-          livingproof-sim-mujoco v2.0.3 evidence.py reads, and points repin --check
-          at this lock. PENDING_RELEASE in it still fails.
+          When set, this lock is the only source for the run, even if the robot
+          commit has verification.lock.json. The workflow writes the document
+          livingproof-sim-mujoco v2.0.3 evidence.py reads, points repin --check
+          at this lock, and records the replaced robot lock's sha256. Empty
+          leaves a robot verification.lock.json as the only source.
+          PENDING_RELEASE in a caller lock still fails.
         type: string
         default: ''
       artifact-prefix:
@@ -138,6 +142,9 @@ jobs:
       verifier-version: ${{ steps.lock.outputs.verifier-version }}
       reporter-image: ${{ steps.lock.outputs.reporter-image }}
       verifier-image: ${{ steps.lock.outputs.verifier-image }}
+      evaluator-repository: ${{ steps.lock.outputs.evaluator-repository }}
+      evaluator-commit: ${{ steps.lock.outputs.evaluator-commit }}
+      evaluator-tag: ${{ steps.lock.outputs.evaluator-tag }}
       media-capable: ${{ steps.capability.outputs.media-capable }}
       bundle-version: ${{ steps.capability.outputs.bundle-version }}
     steps:
@@ -157,7 +164,7 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Workflow source
-        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ job.workflow_repository }}
@@ -165,7 +172,7 @@ jobs:
           path: workflow-src
           persist-credentials: false
       - name: Caller repository
-        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ github.repository }}
@@ -174,7 +181,7 @@ jobs:
           persist-credentials: false
       - name: Write evidence inputs for livingproof-sim-mujoco v2.0.3
         id: evidence-inputs
-        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
         env:
           VERIFICATION_LOCK: ${{ inputs.verification-lock }}
           COPY_CALLER_LOCK: "1"
@@ -194,6 +201,12 @@ jobs:
           else
             configurations=$all
           fi
+          # Evaluator pins live on the selected lock. The caller copy keeps the 0.2.0
+          # evaluators field; a robot verification.lock.json is used when that copy is absent.
+          pin=verification.lock.json
+          if [ -f caller-verification.lock.json ]; then
+            pin=caller-verification.lock.json
+          fi
           {
             echo "configurations=$configurations"
             echo "verifier-repository=$(jq -r '.releases.verifier.repository' verification.lock.json)"
@@ -201,6 +214,9 @@ jobs:
             echo "verifier-version=$(jq -r '.releases.verifier.tag | ltrimstr("v")' verification.lock.json)"
             echo "verifier-image=$(jq -r '.releases.verifier | if .image then .image + ":" + (.tag | ltrimstr("v")) + "@" + .digest else "" end' verification.lock.json)"
             echo "reporter-image=$(jq -r '.releases.reporter.image + ":" + (.releases.reporter.tag | ltrimstr("v")) + "@" + .releases.reporter.digest' verification.lock.json)"
+            echo "evaluator-repository=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].repository // empty' "$pin")"
+            echo "evaluator-commit=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].commit // empty' "$pin")"
+            echo "evaluator-tag=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].tag // empty' "$pin")"
           } >> "$GITHUB_OUTPUT"
       - name: Media and bundle capability from the locks
         # Media needs runner >= 1.6.0 with mcap and reporter >= 1.11.0; robots still on runner
@@ -297,7 +313,7 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Workflow source
-        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ job.workflow_repository }}
@@ -305,7 +321,7 @@ jobs:
           path: workflow-src
           persist-credentials: false
       - name: Caller repository
-        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ github.repository }}
@@ -313,7 +329,7 @@ jobs:
           path: caller
           persist-credentials: false
       - name: Write evidence inputs for livingproof-sim-mujoco v2.0.3
-        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
         env:
           VERIFICATION_LOCK: ${{ inputs.verification-lock }}
         run: |
@@ -414,10 +430,28 @@ jobs:
         with:
           name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
           path: evidence
+      - name: Scenario evaluator package at the locked pin
+        if: needs.plan.outputs.evaluator-commit != ''
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ needs.plan.outputs.evaluator-repository }}
+          ref: ${{ needs.plan.outputs.evaluator-commit }}
+          path: evaluator
+          persist-credentials: false
       - name: Scenario evaluator, one result file per trial
+        env:
+          EVALUATOR_COMMIT: ${{ needs.plan.outputs.evaluator-commit }}
         run: |
-          PYTHONPATH=src uv run --no-sync python tools/run_scenario_evaluator.py \
-            evidence/manifest.json evaluator-results/livingproof-scenario
+          # The tool is the one in the verifier checkout named by the selected lock.
+          # The package import is that lock's evaluator pin when it has one; a robot
+          # lock with no evaluators field keeps the package from that verifier checkout.
+          if [ -n "$EVALUATOR_COMMIT" ]; then
+            PYTHONPATH="evaluator/src:src" uv run --no-sync python tools/run_scenario_evaluator.py \
+              evidence/manifest.json evaluator-results/livingproof-scenario
+          else
+            PYTHONPATH=src uv run --no-sync python tools/run_scenario_evaluator.py \
+              evidence/manifest.json evaluator-results/livingproof-scenario
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -463,7 +497,7 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Workflow source
-        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ job.workflow_repository }}
@@ -471,7 +505,7 @@ jobs:
           path: workflow-src
           persist-credentials: false
       - name: Caller repository
-        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ github.repository }}
@@ -479,7 +513,7 @@ jobs:
           path: caller
           persist-credentials: false
       - name: Write evidence inputs for livingproof-sim-mujoco v2.0.3
-        if: ${{ steps.robot-lock.outputs.present == 'false' }}
+        if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
         env:
           VERIFICATION_LOCK: ${{ inputs.verification-lock }}
         run: |
