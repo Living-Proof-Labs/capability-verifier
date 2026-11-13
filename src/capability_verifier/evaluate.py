@@ -451,9 +451,9 @@ class Aggregator:
         for r in results:
             record = (r.get("provenance") or {}).get("reproducibility")
             compared = isinstance(record, dict) and record.get("compared") is True
-            # A released tag or v0.0.0 is one run even when the commit or revision
-            # is rejected. Pause results name the specs repository and are grouped
-            # only when their repeats were compared.
+            # A released tag is one run, and so is a contract rejected for a wrong
+            # repository or the v0.0.0 placeholder. Pause results name the specs
+            # repository and are grouped only when their repeats were compared.
             if reported_contract(r["spec"]) or compared:
                 groups.setdefault(run_key(r), []).append(r)
         runs = []

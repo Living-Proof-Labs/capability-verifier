@@ -144,21 +144,17 @@ def test_policy_incompatible_cases():
     unknown = result()
     unknown["spec"]["tag"] = "v9.9.9"
     assert policy.decide(unknown, True).reason == "Unsupported scenario contract"
+    # A released tag is the identity. The recorded commit and revision are not compared.
     retagged = result()
     retagged["spec"]["tag"] = "v2.2.0"
     retagged["spec"]["commit"] = "f" * 40
-    forged = policy.decide(retagged, True)
-    assert forged.status == X
-    assert forged.reason == (
-        "v2.2.0 resolves to 23bec516bda29be7b26555286cbf2e8217ac5c81, not " + "f" * 40
-    )
+    assert policy.decide(retagged, True).status == P
     matched = result()
     matched["spec"]["tag"] = "v2.2.0"
     matched["spec"]["commit"] = "23bec516bda29be7b26555286cbf2e8217ac5c81"
     assert policy.decide(matched, True).status == P
     matched["spec"]["revision"] = "9.9.9"
-    assert policy.decide(matched, True).status == X
-    assert policy.decide(matched, True).reason == "v2.2.0 is revision 0.1.0, not 9.9.9"
+    assert policy.decide(matched, True).status == P
     del matched["spec"]["revision"]
     assert policy.decide(matched, True).status == P
     version = result()
@@ -540,29 +536,31 @@ def test_a_mixed_bundle_keeps_seeded_k_of_n_beside_compared_repeats():
 
 
 @pytest.mark.parametrize(
+    "change",
+    [
+        {"commit": None},
+        {"commit": "0bdf1db"},
+        {"commit": "0BDF1DB3F975B044692C0B8F1EC37737AD8B889F"},
+        {"revision": None},
+    ],
+)
+def test_contract_commit_or_revision_mismatch_is_accepted(change):
+    """A released tag is accepted when the commit or revision does not match."""
+    r = result()
+    r["spec"].update(change)
+    assert evaluate.AllRequiredV1().decide(r, True).status == P
+
+
+@pytest.mark.parametrize(
     "change, reason",
     [
-        (
-            {"commit": None},
-            "v1.6.1 resolves to 0bdf1db3f975b044692c0b8f1ec37737ad8b889f, not None",
-        ),
-        (
-            {"commit": "0bdf1db"},
-            "v1.6.1 resolves to 0bdf1db3f975b044692c0b8f1ec37737ad8b889f, not 0bdf1db",
-        ),
-        (
-            {"commit": "0BDF1DB3F975B044692C0B8F1EC37737AD8B889F"},
-            "v1.6.1 resolves to 0bdf1db3f975b044692c0b8f1ec37737ad8b889f, "
-            "not 0BDF1DB3F975B044692C0B8F1EC37737AD8B889F",
-        ),
-        ({"revision": None}, "v1.6.1 is revision 0.1.0, not None"),
         ({"tag": "v9.9.9"}, "Unsupported scenario contract"),
         ({"tag": None}, "Unsupported scenario contract"),
         ({"repository": "https://github.com/example/specs"}, "Unsupported scenario contract"),
     ],
 )
 def test_contract_identity_edge_cases_are_incompatible(change, reason):
-    """Only the full lowercase commit a released tag resolves to is graded."""
+    """An unknown tag, a null tag, or another repository is an unsupported contract."""
     r = result()
     r["spec"].update(change)
     decision = evaluate.AllRequiredV1().decide(r, True)
@@ -570,12 +568,10 @@ def test_contract_identity_edge_cases_are_incompatible(change, reason):
     assert decision.reason == reason
 
 
-def test_contract_commit_missing_entirely_is_incompatible():
+def test_contract_commit_missing_entirely_is_accepted():
     r = result()
     del r["spec"]["commit"]
-    decision = evaluate.AllRequiredV1().decide(r, True)
-    assert decision.status == X
-    assert decision.reason.startswith("v1.6.1 resolves to 0bdf1db")
+    assert evaluate.AllRequiredV1().decide(r, True).status == P
 
 
 def test_contract_revision_absent_with_matching_commit_is_graded():
@@ -594,30 +590,62 @@ def test_contract_revision_absent_with_matching_commit_is_graded():
     ],
 )
 def test_every_released_tag_grades_with_its_own_commit(tag, commit):
+    """The tag's own commit is graded, and so is a different commit and revision."""
     r = result()
     r["spec"]["tag"], r["spec"]["commit"] = tag, commit
+    assert evaluate.AllRequiredV1().decide(r, True).status == P
+    r["spec"]["commit"] = "f" * 40
+    r["spec"]["revision"] = "9.9.9"
     assert evaluate.AllRequiredV1().decide(r, True).status == P
 
 
 @pytest.mark.parametrize(
     "change",
-    [{"commit": "f" * 40}, {"revision": "9.9.9"}, {"tag": "v0.0.0"}],
+    [{"commit": "f" * 40}, {"revision": "9.9.9"}],
+)
+def test_a_commit_or_revision_mismatch_is_accepted_as_a_run(change):
+    """A tag identifies the contract, so a commit or revision mismatch is still graded."""
+    plan = {"trials": {"count": 2}}
+    results = [result("r1", plan=plan), result("r2", plan=plan)]
+    for row in results:
+        row["spec"].update(change)
+    assessment = evaluate.assess_bundle(results, {"r1": True, "r2": True})
+    assert {decision["status"] for decision in assessment["decisions"]} == {P}
+    [run] = assessment["runs"]
+    assert run["grade"] == P
+    assert run["rationale"] == "2/2 PASS, needs 2"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"repository": "https://github.com/example/specs"},
+        {"tag": "v0.0.0"},
+    ],
 )
 def test_a_rejected_contract_is_still_an_incompatible_run(change):
-    """A result the policy rejects is reported as an INCOMPATIBLE run, not left out."""
+    """A wrong repository or the placeholder tag is an INCOMPATIBLE run, not left out."""
     results = [result("r1"), result("r2")]
     for r in results:
         r["spec"].update(change)
     a = evaluate.assess_bundle(results, {"r1": True, "r2": True})
     assert {d["status"] for d in a["decisions"]} == {X}
     assert [run["grade"] for run in a["runs"]] == [X]
+    assert a["runs"]
 
 
-def test_rejected_contract_run_counts_incompatible_results():
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"repository": "https://github.com/example/specs"},
+        {"tag": "v0.0.0"},
+    ],
+)
+def test_rejected_contract_run_counts_incompatible_results(change):
     """v1.19.0 reported the run as N result(s) INCOMPATIBLE, without trial detail."""
     results = [result("r1"), result("r2")]
     for row in results:
-        row["spec"]["commit"] = "f" * 40
+        row["spec"].update(change)
     [run] = evaluate.assess_bundle(results, {"r1": True, "r2": True})["runs"]
     assert run["grade"] == X
     assert run["rationale"] == "2 result(s) INCOMPATIBLE"
@@ -625,10 +653,17 @@ def test_rejected_contract_run_counts_incompatible_results():
     assert "worst" not in run
 
 
-def test_one_uncompared_trial_with_a_rejected_contract_is_an_incompatible_run():
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"repository": "https://github.com/example/specs"},
+        {"tag": "v0.0.0"},
+    ],
+)
+def test_one_uncompared_trial_with_a_rejected_contract_is_an_incompatible_run(change):
     """The one-trial default is k of N. A rejected contract is still that run."""
     trial = result("r1", plan={"trials": {"count": 1}})
-    trial["spec"]["commit"] = "f" * 40
+    trial["spec"].update(change)
     trial["provenance"]["reproducibility"] = {
         "compared": False,
         "identical": None,
