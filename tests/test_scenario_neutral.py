@@ -124,3 +124,23 @@ def test_limits_and_replay_match_the_stored_run():
             fixture = FIXTURES / copied["fixture_path"]
             digest = hashlib.sha256(fixture.read_bytes()).hexdigest()
             assert digest == copied["sha256"]
+
+
+def test_stored_verification_bytes_match_except_the_v1_19_0_summary():
+    """Each stored verification.json is rewritten byte for byte with this commit's limits.
+
+    Only ``summary`` may differ: v1.19.0 reports identical repeats as one outcome, and
+    run 43402628666 was graded by v1.18.5.
+    """
+    for definition in DEFINITIONS:
+        evidence = FIXTURES / definition / "evidence" / "manifest.json"
+        raw = (FIXTURES / definition / "verification.json").read_text()
+        stored = json.loads(raw)
+        assert json.dumps(stored, indent=2) + "\n" == raw
+        got = hallway.verify(evidence)
+        assert json.dumps({**stored, "limits": got["limits"]}, indent=2) + "\n" == raw
+        assert set(got) == set(stored)
+        changed = sorted(key for key in stored if got[key] != stored[key])
+        assert changed == ["summary"], (definition, changed)
+        assert got["summary"]["aggregation"]["id"] == "repeated-outcome"
+        assert got["summary"]["rationale"] == "3 of 3 repeats agree"
