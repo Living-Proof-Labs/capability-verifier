@@ -28,14 +28,15 @@ PLACEHOLDER_REASON = "tag v0.0.0 is a placeholder, not a release"
 def contract_problem(spec: dict) -> str | None:
     """Why ``spec`` is not a released contract, or None when it is.
 
-    The commit must be the commit the tag resolves to. A revision is compared
-    only when the bundle carries one. Tag v0.0.0 is the unreleased-catalog
-    placeholder, and the reason says so.
+    The repository is checked first, so tag v0.0.0 from another repository is
+    an unsupported contract. The commit must be the commit the tag resolves to.
+    A revision is compared only when the bundle carries one. Tag v0.0.0 on this
+    repository is the unreleased-catalog placeholder, and the reason says so.
     """
-    if isinstance(spec, dict) and spec.get("tag") == PLACEHOLDER_TAG:
-        return PLACEHOLDER_REASON
     if not isinstance(spec, dict) or spec.get("repository") != SPECS:
         return "Unsupported scenario contract"
+    if spec.get("tag") == PLACEHOLDER_TAG:
+        return PLACEHOLDER_REASON
     tag = spec.get("tag")
     released = RELEASED.get(tag) if isinstance(tag, str) else None
     if released is None:

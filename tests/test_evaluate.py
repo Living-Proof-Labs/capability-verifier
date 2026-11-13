@@ -187,6 +187,16 @@ def test_placeholder_v0_0_0_is_incompatible_and_says_why(commit):
     assert decision.reason == "tag v0.0.0 is a placeholder, not a release"
 
 
+def test_placeholder_tag_from_another_repository_names_the_repository():
+    """Tag v0.0.0 from another repository is an unsupported contract."""
+    r = result()
+    r["spec"]["repository"] = "https://github.com/example/specs"
+    r["spec"]["tag"] = "v0.0.0"
+    decision = evaluate.AllRequiredV1().decide(r, True)
+    assert decision.status == X
+    assert decision.reason == "Unsupported scenario contract"
+
+
 def test_policy_missing_member_is_insufficient():
     r = result()
     r["assessments"].pop()
