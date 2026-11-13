@@ -7,9 +7,47 @@ WORKFLOW = (Path(__file__).parents[1] / ".github/workflows/walk-hallway.yml").re
 STEPS = "\n".join(line for line in WORKFLOW.splitlines() if not line.lstrip().startswith("#"))
 
 
+# Published livingproof-verification pins. Each robot commit contains
+# verification.lock.json, so a released walk-hallway.yml keeps today's plan,
+# repin and evidence steps for them. Callers do not pass verification-lock.
+CURRENT_PINS = (
+    (
+        "unitree-g1-stock",
+        "Living-Proof-Labs/livingproof-unitree-g1",
+        "862cf979f57e40d6158070c59b432b0cf4eaa4bd",
+        "44acb9ed412a04fc458addba47fdf019b6d21027",
+    ),
+    (
+        "unitree-g1-playground",
+        "Living-Proof-Labs/livingproof-unitree-g1",
+        "862cf979f57e40d6158070c59b432b0cf4eaa4bd",
+        "44acb9ed412a04fc458addba47fdf019b6d21027",
+    ),
+    (
+        "unitree-go1-playground",
+        "Living-Proof-Labs/livingproof-unitree-go1",
+        "c56816dc1cf8bfe3be9c1385a609dd6c7de97694",
+        "67bb6bbc330645f9fee66b9ab16f6c055cd313f8",
+    ),
+    (
+        "booster-t1-stock",
+        "Living-Proof-Labs/livingproof-booster-t1",
+        "9bbcd3001998ab242e63273ea070b483d73c24d5",
+        "67bb6bbc330645f9fee66b9ab16f6c055cd313f8",
+    ),
+)
+
+
 def test_is_a_reusable_workflow_with_fan_out_inputs():
     assert "workflow_call:" in STEPS
-    for name in ("repository:", "ref:", "configurations:", "artifact-prefix:", "comment:"):
+    for name in (
+        "repository:",
+        "ref:",
+        "configurations:",
+        "verification-lock:",
+        "artifact-prefix:",
+        "comment:",
+    ):
         assert name in STEPS, name
     assert "report-artifacts:" in STEPS
 
@@ -21,6 +59,46 @@ def test_every_ref_comes_from_the_robot_lock():
     assert "LIVINGPROOF_VERIFIER_VERSION: ${{ needs.plan.outputs.verifier-version }}" in STEPS
     assert "livingproof-capability-report:1." not in STEPS
     assert '"@" + .releases.reporter.digest' in STEPS
+
+
+def test_current_pins_keep_the_robot_lock_and_a_missing_file_uses_the_caller():
+    """verification-lock defaults to empty, so the four published calls are unchanged.
+
+    When the robot file is absent the plan, evidence and media jobs write the
+    v2.0.3 evidence document. repin --check then reads the caller lock.
+    scenario-evaluator stays parallel to verify, and report needs it.
+    """
+    import yaml
+
+    from capability_verifier import evidence_lock
+
+    assert [pin[0] for pin in CURRENT_PINS] == [
+        "unitree-g1-stock",
+        "unitree-g1-playground",
+        "unitree-go1-playground",
+        "booster-t1-stock",
+    ]
+    doc = yaml.safe_load(WORKFLOW)
+    inputs = doc[True]["workflow_call"]["inputs"]
+    assert inputs["verification-lock"]["default"] == ""
+    assert inputs["verification-lock"]["type"] == "string"
+    assert _step("Every ref is a released tag") == (
+        'if [ "$EVIDENCE_SOURCE" = "caller" ]; then\n'
+        "  python3 verifier/src/capability_verifier/repin.py --root robot "
+        f"--lock {evidence_lock.CALLER_LOCK_NAME} --check\n"
+        "else\n"
+        "  python3 verifier/src/capability_verifier/repin.py --root robot --check\n"
+        "fi\n"
+    )
+    writers = []
+    for name, job in doc["jobs"].items():
+        for step in job.get("steps") or []:
+            if "write_evidence_inputs.sh" in (step.get("run") or ""):
+                writers.append(name)
+                assert step["if"] == "${{ steps.robot-lock.outputs.present == 'false' }}"
+    assert writers == ["plan", "evidence", "media"]
+    report = WORKFLOW.split("\n  report:\n", 1)[1].split("\n  comment:\n", 1)[0]
+    assert "needs: [plan, verify, scenario-evaluator, media]" in report
 
 
 def test_capability_fail_is_not_a_ci_failure_and_reporter_posts_the_comment():

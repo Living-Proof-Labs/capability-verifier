@@ -1,0 +1,8 @@
+{
+  "format": "livingproof-robot-profile/0.1",
+  "id": "fixture-robot",
+  "configurations": [
+    {"name": "stock", "path": "configurations/stock.json"},
+    {"name": "playground", "path": "configurations/playground.json"}
+  ]
+}

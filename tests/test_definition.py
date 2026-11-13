@@ -3,6 +3,7 @@
 
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import tomllib
 
@@ -83,6 +84,7 @@ def test_lock_records_the_robot_commit_lock_digest_and_releases(tmp_path, robot)
     assert lock["robot"]["commit"] == head
     assert lock["robot"]["configurations"] == ["stock"]
     assert lock["releases"] == RELEASES
+    assert lock["format"] == d.FORMAT
     assert len(lock["robot"]["lock"]["sha256"]) == 64
 
 
@@ -626,3 +628,230 @@ def test_an_unknown_job_id_is_refused(tmp_path, robot):
         SystemExit, match=r"job extra: calls the procedure, but job id 'extra' is no known"
     ):
         d.check(path, tmp_path / "w2", wf)
+
+
+THIN = Path(__file__).parent / "fixtures" / "thin-robot"
+EVALUATOR_COMMIT = "752a6f0a9f9d448c950e56a8e345a69a6693a907"
+
+
+def _release(commit, *, image=None):
+    ref = {
+        "repository": "Living-Proof-Labs/example",
+        "tag": "v1.2.3",
+        "commit": commit,
+    }
+    if image is not None:
+        ref["image"] = image
+        ref["digest"] = "sha256:" + "ab" * 32
+    return ref
+
+
+@pytest.fixture
+def thin_robot(tmp_path, monkeypatch):
+    """A robot commit with adapter, robot.json and configuration files, and no lock file."""
+    base = tmp_path / "git"
+    repo = base / "Org" / "robot.git"
+    shutil.copytree(THIN, repo)
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+    monkeypatch.setattr(d, "GITHUB", f"file://{base}")
+    return repo
+
+
+def _v2_lock(repo, definition):
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    profile = json.loads((repo / "robot.json").read_text())
+    versions = {"stock": "1.1.0", "playground": "1.0.0"}
+    configurations = []
+    for item in profile["configurations"]:
+        raw = (repo / item["path"]).read_bytes()
+        configurations.append(
+            {
+                "name": item["name"],
+                "version": versions[item["name"]],
+                "path": item["path"],
+                "sha256": d.sha256(raw),
+            }
+        )
+    adapter = tomllib.loads((repo / "pyproject.toml").read_text())["tool"]["livingproof"]["adapter"]
+    return {
+        "format": d.FORMAT_V2,
+        "definition": {"path": definition.name, "sha256": d.sha256(definition.read_bytes())},
+        "procedure": "walk-hallway",
+        "scenario": "walk-hallway@0.1.0",
+        "robot": {
+            "repository": "Org/robot",
+            "ref": "main",
+            "commit": commit,
+            "configurations": ["stock"],
+            "adapter": adapter,
+        },
+        "releases": {
+            "specs": _release("a" * 40),
+            "runner": _release("b" * 40),
+            "verifier": _release(
+                "c" * 40, image="ghcr.io/living-proof-labs/capability-verifier-hallway"
+            ),
+            "reporter": _release(
+                "d" * 40, image="ghcr.io/living-proof-labs/livingproof-capability-report"
+            ),
+        },
+        "world": {"id": "hallway-open", "version": "0.1.0"},
+        "configurations": configurations,
+        "plan": {"trials": {"count": 3}, "command_speed": 0.5},
+        "evaluators": {
+            "livingproof-evaluator-scenario": {
+                "repository": "Living-Proof-Labs/livingproof-evaluator-scenario",
+                "tag": "v1.0.0",
+                "commit": EVALUATOR_COMMIT,
+            }
+        },
+    }
+
+
+def _write_v2(path, lock):
+    d.lock_path(path).write_text(json.dumps(lock))
+    return lock
+
+
+def test_v1_still_compares_releases_to_the_robot_lock(tmp_path, robot):
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    lock["releases"] = {
+        "verifier": {
+            "repository": "Living-Proof-Labs/capability-verifier",
+            "tag": "v9.9.9",
+            "commit": "a" * 40,
+        }
+    }
+    d.lock_path(path).write_text(json.dumps(lock))
+    with pytest.raises(SystemExit, match="releases in g1.lock.json differ from the robot lock"):
+        d.check(path, tmp_path / "w2")
+
+
+def test_v2_check_compares_configuration_sha_adapter_and_robot_json(tmp_path, thin_robot):
+    path = _definition(tmp_path)
+    lock = _write_v2(path, _v2_lock(thin_robot, path))
+    assert not (thin_robot / "verification.lock.json").exists()
+    assert d.check(path, tmp_path / "w2", _workflow(tmp_path, lock)) == lock
+
+
+def test_v2_does_not_compare_releases_to_a_robot_verification_lock(tmp_path, thin_robot):
+    (thin_robot / "verification.lock.json").write_text(
+        json.dumps(
+            {
+                "format": "livingproof-verification-lock/1.0.0",
+                "releases": {"verifier": {"tag": "v0.0.1"}},
+            }
+        )
+    )
+    _git(thin_robot, "add", "-A")
+    _git(thin_robot, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "add lock")
+    path = _definition(tmp_path)
+    lock = _write_v2(path, _v2_lock(thin_robot, path))
+    robot_releases = json.loads((thin_robot / "verification.lock.json").read_text())["releases"]
+    assert robot_releases != lock["releases"]
+    assert d.check(path, tmp_path / "w2") == lock
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        ("sha", "sha256 is"),
+        ("adapter", "adapter is"),
+        ("names", "configuration names are"),
+        ("missing", "is missing"),
+    ],
+)
+def test_v2_check_refuses_a_robot_tree_that_drifted(tmp_path, thin_robot, mutate, message):
+    path = _definition(tmp_path)
+    lock = _v2_lock(thin_robot, path)
+    if mutate == "sha":
+        lock["configurations"][0]["sha256"] = "0" * 64
+    elif mutate == "adapter":
+        lock["robot"]["adapter"] = "other.adapter:ROBOT"
+    elif mutate == "names":
+        lock["configurations"].reverse()
+    else:
+        lock["configurations"][0]["path"] = "configurations/missing.json"
+    _write_v2(path, lock)
+    with pytest.raises(SystemExit, match=message):
+        d.check(path, tmp_path / "w2")
+
+
+def test_v2_refuses_a_configuration_path_that_leaves_the_robot(tmp_path, thin_robot, monkeypatch):
+    path = _definition(tmp_path)
+    lock = _v2_lock(thin_robot, path)
+    lock["configurations"][0]["path"] = "../secret"
+    _write_v2(path, lock)
+
+    def no_fetch(*args, **kwargs):
+        raise AssertionError("fetched a path that leaves the robot repository")
+
+    monkeypatch.setattr(d, "checkout", no_fetch)
+    with pytest.raises(SystemExit, match="must stay inside the robot repository"):
+        d.check(path, tmp_path / "w2")
+
+
+def test_v2_pending_release_is_refused(tmp_path, thin_robot):
+    path = _definition(tmp_path)
+    lock = _v2_lock(thin_robot, path)
+    lock["evaluators"]["livingproof-evaluator-scenario"]["tag"] = "PENDING_RELEASE"
+    lock["evaluators"]["livingproof-evaluator-scenario"]["commit"] = "PENDING_RELEASE"
+    _write_v2(path, lock)
+    with pytest.raises(SystemExit, match="vX.Y.Z release tag"):
+        d.check(path, tmp_path / "w2")
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"uses": "Org/fork/.github/workflows/walk-hallway.yml@main"}, "must call"),
+        ({"ref": "main"}, "locked robot commit"),
+        ({"repository": "Org/other"}, "locked robot repository"),
+        ({"configurations": "'[\"playground\"]'"}, "locked configurations"),
+        ({"job": "other"}, "no job calls"),
+    ],
+)
+def test_v2_workflow_call_keeps_every_equality(tmp_path, thin_robot, change, message):
+    path = _definition(tmp_path)
+    lock = _write_v2(path, _v2_lock(thin_robot, path))
+    assert d.check(path, tmp_path / "pass", _workflow(tmp_path, lock)) == lock
+    with pytest.raises(SystemExit, match=message):
+        d.check(path, tmp_path / "drift", _workflow(tmp_path, lock, **change))
+
+
+def test_a_workflow_dispatch_preview_ref_is_ignored(tmp_path, robot):
+    """The preview input belongs on livingproof-verification's workflow_dispatch.
+
+    This checker does not read it. The committed with.ref stays the locked commit.
+    An expression written into with.ref is still a drift.
+    """
+    path = _definition(tmp_path)
+    lock = _lock(tmp_path, path)
+    commit = lock["robot"]["commit"]
+    wf = tmp_path / "verify.yml"
+    wf.write_text(
+        "on:\n"
+        "  workflow_dispatch:\n"
+        "    inputs:\n"
+        "      preview-ref:\n"
+        "        description: Robot commit to preview\n"
+        "        type: string\n"
+        "        default: ''\n"
+        "jobs:\n"
+        "  g1-stock:\n"
+        f"    uses: {_pin(lock)}\n"
+        "    with:\n"
+        f"      repository: {lock['robot']['repository']}\n"
+        f"      ref: {commit}\n"
+        "      configurations: '[\"stock\"]'\n"
+        "      preview-ref: ${{ inputs.preview-ref }}\n"
+    )
+    assert d.check(path, tmp_path / "w2", wf) == lock
+    wf.write_text(wf.read_text().replace(f"ref: {commit}", "ref: ${{ inputs.preview-ref }}"))
+    with pytest.raises(SystemExit, match="locked robot commit"):
+        d.check(path, tmp_path / "w3", wf)

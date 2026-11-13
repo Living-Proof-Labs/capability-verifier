@@ -9,24 +9,35 @@ its reviewed lock and a thin workflow call. This module owns the rest:
     python3 -m capability_verifier.definition run DEFINITION.toml --out DIR
     livingproof capability verify lock|run ...   (the same, through the livingproof plugin)
 
-``lock`` resolves the definition's robot ref to a commit and records that commit, the sha256
-of the robot's ``verification.lock.json`` and the releases it names (runner, verifier,
-reporter image digest, specs) for review. ``--check`` re-resolves nothing: it fails when the
-definition changed since locking, when the robot lock at the locked commit no longer has the
-recorded sha256, or when ``--workflow`` does not call ``walk-hallway.yml`` at the locked
-verifier commit with the locked robot repository and commit. The job for a definition is the
-one whose id equals the definition id; repository, configurations, ``uses`` and ref are
-checked on that job. Pairing is by job id, so one workflow can hold several definitions that
-share a robot repository. If that job is absent, the check fails. Any other procedure-calling
-job whose id is not a definition is refused.
+``lock`` resolves the definition's robot ref to a commit and writes
+``livingproof-verification-lock/0.1.0``: that commit, the sha256 of the robot's
+``verification.lock.json``, and the releases that file names. ``--check`` accepts ``0.1.0``
+and ``livingproof-verification-lock/0.2.0``. It re-resolves nothing. It fails when the
+definition changed since locking, or when ``--workflow`` does not call ``walk-hallway.yml``
+at the locked verifier commit with the locked robot repository, commit and configurations.
+The job for a definition is the one whose id equals the definition id. Pairing is by job id,
+so one workflow can hold several definitions that share a robot repository. If that job is
+absent, the check fails. Any other procedure-calling job whose id is not a definition is
+refused.
+
+``0.1.0`` still fails when the robot ``verification.lock.json`` at the locked commit has a
+different sha256 or different releases. ``0.2.0`` owns releases (specs, runner, verifier,
+reporter digest), plan, world, configuration sha256s and the
+``livingproof-evaluator-scenario`` package pin. At the locked commit it compares each
+configuration file's sha256, the ``[tool.livingproof]`` adapter string in ``pyproject.toml``,
+and the configuration names in ``robot.json``. It does not read a robot
+``verification.lock.json``.
 
 ``run`` checks the lock, checks out the robot at the locked commit and the verifier at the
 commit the robot lock names, then executes the named ``run:`` scripts of that verifier
 commit's ``walk-hallway.yml`` in the same directories CI uses: the plan job's checks (refs
 from the robot lock, every ref a released tag, media and bundle capability), setup, robot
-adapter, profiles valid, catalog, evidence, assessment and render. The robot's own test suite
-(``uv run pytest tests``) is CI-only. No step logic is copied here, so local and CI runs share one
-definition of each step. Rendering uses the locked reporter image by digest (``docker``),
+adapter, profiles valid, catalog, evidence, assessment and render. A robot commit with no
+``verification.lock.json`` needs a ``0.2.0`` lock: ``run`` writes the evidence document from
+it before those steps and points ``repin.py --check`` at that lock. A robot file is left
+untouched. The robot's own test suite (``uv run pytest tests``) is CI-only. No step logic is
+copied here, so local and CI runs share one definition of each step. Rendering uses the
+locked reporter image by digest (``docker``),
 or the reporter source at the locked commit (``--reporter source``).
 The workflow call is checked by parsing its YAML (PyYAML), never by matching text.
 """
@@ -47,7 +58,31 @@ import tomllib
 
 import yaml
 
+from capability_verifier import evidence_lock
+from capability_verifier.repin import DIGEST, TAG
+
 FORMAT = "livingproof-verification-lock/0.1.0"
+FORMAT_V2 = evidence_lock.FORMAT_V2
+FILE_SHA = re.compile(r"[0-9a-f]{64}")
+SEMVER = re.compile(r"\d+\.\d+\.\d+")
+SCENARIO_ID = re.compile(r"[a-z0-9-]+@\d+\.\d+\.\d+")
+V1_SHAPE = {
+    "definition": ("sha256",),
+    "procedure": (),
+    "robot": ("repository", "commit", "configurations", "lock"),
+    "releases": ("verifier",),
+}
+V2_SHAPE = {
+    "definition": ("sha256",),
+    "procedure": (),
+    "robot": ("repository", "commit", "configurations", "adapter"),
+    "releases": ("specs", "runner", "verifier", "reporter"),
+    "scenario": (),
+    "plan": ("command_speed",),
+    "world": ("id", "version"),
+    "configurations": (),
+    "evaluators": ("livingproof-evaluator-scenario",),
+}
 DEFINITION_FORMAT = "livingproof-verification-definition/0.1.0"
 PROCEDURES = {"walk-hallway": ".github/workflows/walk-hallway.yml"}
 # A procedure is recognised by its interface, not its file name: a reusable-workflow call that
@@ -331,23 +366,136 @@ def same_call(uses: str, pinned: str) -> bool:
     return target.lower() == want.lower() and ref == commit
 
 
+def _relative_robot_path(path: object) -> bool:
+    if not isinstance(path, str) or not path:
+        return False
+    return not Path(path).is_absolute() and ".." not in Path(path).parts
+
+
+def _pin_problems(label: str, ref: object, *, require_digest: bool = False) -> list[str]:
+    """Tag, commit and digest problems. The patterns match ``repin.py``."""
+    if not isinstance(ref, dict):
+        return [f"{label} must be an object"]
+    problems = []
+    repository = ref.get("repository")
+    if not isinstance(repository, str) or not REPO.fullmatch(repository):
+        problems.append(f"{label}.repository must be OWNER/NAME")
+    tag = ref.get("tag")
+    if not isinstance(tag, str) or not TAG.fullmatch(tag):
+        problems.append(f"{label}.tag must be a vX.Y.Z release tag (got {tag!r})")
+    commit = ref.get("commit")
+    if not isinstance(commit, str) or not SHA.fullmatch(commit):
+        problems.append(f"{label}.commit must be a full commit sha")
+    if require_digest or "image" in ref or "digest" in ref:
+        digest = ref.get("digest")
+        if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
+            problems.append(f"{label}.digest must be a sha256 digest")
+    if require_digest and not isinstance(ref.get("image"), str):
+        problems.append(f"{label}.image is required")
+    return problems
+
+
+def _v2_details(lock: dict) -> list[str]:
+    """Shape problems for a 0.2.0 lock whose required keys are already present."""
+    problems = []
+    scenario = lock.get("scenario")
+    if not isinstance(scenario, str) or not SCENARIO_ID.fullmatch(scenario):
+        problems.append(
+            f"scenario must be name@version (for example walk-hallway@0.1.0), got {scenario!r}"
+        )
+    robot = lock["robot"]
+    adapter = robot.get("adapter")
+    if not isinstance(adapter, str) or not adapter:
+        problems.append("robot.adapter must be the [tool.livingproof] adapter string")
+    selected = robot.get("configurations")
+    if (
+        not isinstance(selected, list)
+        or not selected
+        or not all(isinstance(name, str) for name in selected)
+    ):
+        problems.append("robot.configurations must be a non-empty list of names")
+        selected = []
+    entries = lock.get("configurations")
+    names: list[str] = []
+    if not isinstance(entries, list) or not entries:
+        problems.append("configurations must be a non-empty list")
+        entries = []
+    for index, entry in enumerate(entries):
+        where = f"configurations[{index}]"
+        if not isinstance(entry, dict):
+            problems.append(f"{where} must be an object")
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name:
+            problems.append(f"{where}.name must be a string")
+        else:
+            names.append(name)
+        version = entry.get("version")
+        if not isinstance(version, str) or not SEMVER.fullmatch(version):
+            problems.append(f"{where}.version must be X.Y.Z")
+        if not _relative_robot_path(entry.get("path")):
+            problems.append(f"{where}.path must stay inside the robot repository")
+        digest = entry.get("sha256")
+        if not isinstance(digest, str) or not FILE_SHA.fullmatch(digest):
+            problems.append(f"{where}.sha256 must be 64 hex characters")
+    if len(names) != len(set(names)):
+        problems.append("configuration names must be unique")
+    missing = [name for name in selected if name not in names]
+    if missing:
+        problems.append(f"robot.configurations {missing} are not in configurations")
+    plan = lock.get("plan")
+    speed = plan.get("command_speed") if isinstance(plan, dict) else None
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+        problems.append("plan.command_speed must be a number")
+    world = lock.get("world")
+    if isinstance(world, dict):
+        for key in ("id", "version"):
+            if not isinstance(world.get(key), str) or not world[key]:
+                problems.append(f"world.{key} must be a string")
+        declared = world.get("sha256")
+        if declared is not None and (
+            not isinstance(declared, str) or not FILE_SHA.fullmatch(declared)
+        ):
+            problems.append("world.sha256 must be 64 hex characters")
+    releases = lock.get("releases") if isinstance(lock.get("releases"), dict) else {}
+    for name in ("specs", "runner", "verifier"):
+        if name in releases:
+            problems.extend(_pin_problems(f"releases.{name}", releases[name]))
+    if "reporter" in releases:
+        problems.extend(
+            _pin_problems("releases.reporter", releases["reporter"], require_digest=True)
+        )
+    evaluators = lock.get("evaluators") if isinstance(lock.get("evaluators"), dict) else {}
+    problems.extend(
+        _pin_problems(
+            "evaluators.livingproof-evaluator-scenario",
+            evaluators.get("livingproof-evaluator-scenario"),
+        )
+    )
+    return problems
+
+
 def read_lock(path: Path) -> dict:
-    """The lock at ``path``, with a message (not a traceback) when it is malformed."""
+    """The lock at ``path``, with a message (not a traceback) when it is malformed.
+
+    ``0.1.0`` records the robot ``verification.lock.json`` digest and the releases copied
+    out of that file. ``0.2.0`` owns releases, plan, world, configuration sha256s and the
+    evaluator pin. ``0.1.0`` remains accepted until the robots no longer publish a lock.
+    """
     try:
         lock = json.loads(path.read_text())
     except json.JSONDecodeError as e:
         raise DefinitionError(f"{path}: not valid JSON ({e}); re-run lock and review") from None
-    problems = []
     if not isinstance(lock, dict):
         raise DefinitionError(f"{path}: must be a JSON object; re-run lock and review")
-    if lock.get("format") != FORMAT:
-        problems.append(f"format is not {FORMAT}")
-    shape = {
-        "definition": ("sha256",),
-        "procedure": (),
-        "robot": ("repository", "commit", "configurations", "lock"),
-        "releases": ("verifier",),
-    }
+    problems = []
+    version = lock.get("format")
+    if version not in (FORMAT, FORMAT_V2):
+        problems.append(
+            "format is not livingproof-verification-lock/0.1.0 or "
+            "livingproof-verification-lock/0.2.0"
+        )
+    shape = V2_SHAPE if version == FORMAT_V2 else V1_SHAPE
     for key, inner in shape.items():
         if key not in lock:
             problems.append(f"missing {key}")
@@ -356,14 +504,19 @@ def read_lock(path: Path) -> dict:
     if not problems:
         if lock["procedure"] not in PROCEDURES:
             problems.append(f"procedure must be one of {sorted(PROCEDURES)}")
-        if not (
-            isinstance(lock["robot"]["lock"], dict)
-            and {"path", "sha256"} <= set(lock["robot"]["lock"])
-        ):
-            problems.append("robot.lock must have path, sha256")
-        v = lock["releases"]["verifier"]
-        if not (isinstance(v, dict) and {"repository", "tag", "commit"} <= set(v)):
-            problems.append("releases.verifier must have repository, tag, commit")
+        if version == FORMAT:
+            if not (
+                isinstance(lock["robot"]["lock"], dict)
+                and {"path", "sha256"} <= set(lock["robot"]["lock"])
+            ):
+                problems.append("robot.lock must have path, sha256")
+            verifier = lock["releases"]["verifier"]
+            if not (
+                isinstance(verifier, dict) and {"repository", "tag", "commit"} <= set(verifier)
+            ):
+                problems.append("releases.verifier must have repository, tag, commit")
+        else:
+            problems.extend(_v2_details(lock))
     if problems:
         raise DefinitionError(f"{path}: " + "; ".join(problems) + "; re-run lock and review")
     return lock
@@ -396,6 +549,9 @@ def check(definition: Path, work: Path, workflow: Path | None = None) -> dict:
     # Never fetch a repository the definition does not name: report the edit instead.
     if repository_ok and not SHA.fullmatch(r["commit"]):
         problems.append("robot.commit is not a full commit sha")
+    elif repository_ok and lock["format"] == FORMAT_V2:
+        # 0.2.0 owns releases. Compare the robot tree, not a robot verification.lock.json.
+        problems.extend(pinned_robot_problems(lock, work / "robot"))
     elif repository_ok:
         raw = show(r["repository"], r["commit"], r["lock"]["path"], work / "robot")
         if sha256(raw) != r["lock"]["sha256"]:
@@ -479,6 +635,73 @@ def reporter_shim(lock: dict, mode: str, work: Path) -> Path:
     return bindir
 
 
+def pinned_robot_problems(lock: dict, dest: Path) -> list[str]:
+    """Configuration sha256s, adapter and robot.json names at the locked commit."""
+    robot = lock["robot"]
+    checkout(robot["repository"], robot["commit"], dest)
+    problems = []
+    where = f"{robot['repository']}@{robot['commit'][:12]}"
+    for entry in lock["configurations"]:
+        rel = entry["path"]
+        file = dest / rel
+        if not file.is_file():
+            problems.append(f"{where}: {rel} is missing")
+            continue
+        got = sha256(file.read_bytes())
+        if got != entry["sha256"]:
+            problems.append(f"{where}: {rel} sha256 is {got}, not the locked {entry['sha256']}")
+    pyproject = dest / "pyproject.toml"
+    if not pyproject.is_file():
+        problems.append(f"{where}: pyproject.toml is missing")
+    else:
+        try:
+            adapter = tomllib.loads(pyproject.read_text())["tool"]["livingproof"]["adapter"]
+        except (tomllib.TOMLDecodeError, KeyError, TypeError):
+            problems.append(f"{where}: pyproject.toml has no [tool.livingproof] adapter string")
+        else:
+            if adapter != robot["adapter"]:
+                problems.append(
+                    f"{where}: [tool.livingproof] adapter is {adapter!r}, "
+                    f"not the locked {robot['adapter']!r}"
+                )
+    profile = dest / "robot.json"
+    if not profile.is_file():
+        problems.append(f"{where}: robot.json is missing")
+    else:
+        try:
+            listed = json.loads(profile.read_text())["configurations"]
+            names = [item["name"] for item in listed]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            problems.append(
+                f"{where}: robot.json configurations must be a list of objects with name"
+            )
+        else:
+            want = [entry["name"] for entry in lock["configurations"]]
+            if names != want:
+                problems.append(
+                    f"{where}: robot.json configuration names are {names}, not the locked {want}"
+                )
+    return problems
+
+
+def prepare_evidence_inputs(lock: dict, robot: Path, caller_lock: Path) -> dict:
+    """Env for the plan steps. A robot ``verification.lock.json`` is left as it is.
+
+    When that file is absent, write the v2.0.3 evidence document from ``lock`` and
+    return ``EVIDENCE_SOURCE=caller`` so ``repin.py --check`` reads the caller lock.
+    """
+    if (robot / evidence_lock.ROBOT_LOCK_NAME).is_file():
+        return {}
+    if lock.get("format") != FORMAT_V2:
+        raise DefinitionError(
+            "the robot commit has no verification.lock.json; pass a "
+            "livingproof-verification-lock/0.2.0 as verification-lock"
+        )
+    evidence_lock.write_evidence_document(lock, robot / evidence_lock.ROBOT_LOCK_NAME)
+    (robot / evidence_lock.CALLER_LOCK_NAME).write_bytes(caller_lock.read_bytes())
+    return {"EVIDENCE_SOURCE": "caller"}
+
+
 def tally(verification: Path) -> dict:
     statuses = [t.get("status") for t in json.loads(verification.read_text())["trials"]]
     return {s: statuses.count(s) for s in sorted(set(statuses))}
@@ -493,10 +716,11 @@ def run(definition: Path, out: Path, *, reporter: str = "docker") -> dict:
     checkout(v["repository"], v["commit"], verifier)
     wf = (verifier / PROCEDURES[lock["procedure"]]).read_text()
     gh = {"MUJOCO_GL": "osmesa", "PYOPENGL_PLATFORM": "osmesa"}
-    # plan job: the configurations must be in the robot lock, every ref a released tag.
+    # plan job: the configurations must be in the lock, every ref a released tag.
+    evidence_env = prepare_evidence_inputs(lock, robot, lock_path(definition))
     only = json.dumps(lock["robot"]["configurations"])
     sh(step(wf, "Refs from verification.lock.json"), robot, {**gh, "ONLY": only}, work / "r.out")
-    sh(step(wf, "Every ref is a released tag"), work, gh)
+    sh(step(wf, "Every ref is a released tag"), work, {**gh, **evidence_env})
     plan = sh(
         f"uv run --no-project --with packaging==26.3 -- bash -e <<'LP'\n"
         f"{step(wf, 'Media and bundle capability')}LP\n",

@@ -1,0 +1,9 @@
+[project]
+name = "fixture-robot"
+version = "0.1.0"
+
+[tool.livingproof]
+adapter = "lpl_g1.adapter:ROBOT"
+
+[tool.uv.sources]
+livingproof-sim-mujoco = { git = "https://github.com/Living-Proof-Labs/livingproof-sim-mujoco.git", tag = "v2.0.3" }
