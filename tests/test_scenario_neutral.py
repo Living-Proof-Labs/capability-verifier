@@ -6,8 +6,10 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
+from capability_verifier import definition as d
 from capability_verifier import hallway
 from capability_verifier.specs_ref import SPECS_TAG, catalog_reference_ok
 
@@ -144,3 +146,55 @@ def test_stored_verification_bytes_match_except_the_v1_19_0_summary():
         assert changed == ["summary"], (definition, changed)
         assert got["summary"]["aggregation"]["id"] == "repeated-outcome"
         assert got["summary"]["rationale"] == "3 of 3 repeats agree"
+
+
+def _workflow(name):
+    return yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text())
+
+
+def test_wrapper_forwards_every_input_and_output_definition_unchanged():
+    """Callers see the same types, defaults and descriptions through the wrapper."""
+    wrapper = _workflow("walk-hallway.yml")[True]["workflow_call"]
+    scenario = _workflow("scenario.yml")[True]["workflow_call"]
+    assert wrapper["inputs"] == scenario["inputs"]
+    assert list(wrapper["inputs"]) == list(scenario["inputs"])
+    for name, output in wrapper["outputs"].items():
+        assert output["description"] == scenario["outputs"][name]["description"]
+    assert "secrets" not in wrapper and "secrets" not in scenario
+
+
+def test_workflow_permissions_are_no_wider_than_contents_read_and_pr_write():
+    allowed = {"contents": "read", "pull-requests": "write"}
+    for name in ("walk-hallway.yml", "scenario.yml"):
+        document = _workflow(name)
+        assert document["permissions"] == {"contents": "read"}, name
+        assert set(document[True]) == {"workflow_call"}, name
+        for job_id, job in document["jobs"].items():
+            granted = job.get("permissions", {})
+            assert isinstance(granted, dict), (name, job_id)
+            assert granted.items() <= allowed.items(), (name, job_id, granted)
+            assert "secrets" not in job, (name, job_id)
+    wrapper_job = _workflow("walk-hallway.yml")["jobs"]["scenario"]
+    assert wrapper_job["permissions"] == allowed
+    text = (ROOT / ".github" / "workflows" / "scenario.yml").read_text()
+    assert "secrets." not in text
+    assert "pull_request_target" not in text
+
+
+def test_runner_follows_the_wrapper_to_the_scenario_workflow():
+    scenario = (ROOT / ".github" / "workflows" / "scenario.yml").read_text()
+    wrapper = (ROOT / ".github" / "workflows" / "walk-hallway.yml").read_text()
+    assert d.called_workflow(wrapper) == ".github/workflows/scenario.yml"
+    assert d.called_workflow(scenario) is None
+    assert d.procedure_text(ROOT, "walk-hallway") == scenario
+
+
+def test_catalog_step_accepts_the_new_name_and_the_old_name():
+    scenario = (ROOT / ".github" / "workflows" / "scenario.yml").read_text()
+    names = ("Scenario catalog", "Walk-hallway catalog")
+    new = d.first_step(scenario, names)
+    old = d.first_step(scenario.replace("Scenario catalog", "Walk-hallway catalog"), names)
+    assert new == old
+    assert "fetch_hallway_specs.py" in new
+    with pytest.raises(d.DefinitionError, match="no step"):
+        d.first_step(scenario.replace("Scenario catalog", "Other catalog"), names)
