@@ -599,6 +599,21 @@ def procedure_text(root: Path, procedure: str) -> str:
     return (root / called).read_text()
 
 
+def first_step(workflow: str, names: tuple[str, ...]) -> str:
+    """The first of ``names`` that has a run script.
+
+    A lock can check out an older workflow whose catalog step is still named
+    ``Walk-hallway catalog``. The current workflow names it ``Scenario catalog``.
+    """
+    missing = None
+    for name in names:
+        try:
+            return step(workflow, name)
+        except DefinitionError as exc:
+            missing = exc
+    raise missing
+
+
 def step(workflow: str, name: str) -> str:
     """The ``run: |`` script of the first step whose name starts with ``name``."""
     lines = workflow.splitlines()
@@ -775,7 +790,7 @@ def run(definition: Path, out: Path, *, reporter: str = "docker") -> dict:
     adapter = sh(step(wf, "Robot adapter from pyproject.toml"), robot, gh, work / "a.out")["ref"]
     sh(step(wf, "Robot and configuration profiles valid"), robot, {**gh, "ADAPTER": adapter})
     subprocess.run(["uv", "sync", "--locked", "-q"], cwd=verifier, check=True)
-    sh(step(wf, "Scenario catalog"), verifier, gh)
+    sh(first_step(wf, ("Scenario catalog", "Walk-hallway catalog")), verifier, gh)
     bindir = reporter_shim(lock, reporter, work)
     summary = {"definition": definition.name, "bundle-version": bundle, "configurations": {}}
     for conf in lock["robot"]["configurations"]:

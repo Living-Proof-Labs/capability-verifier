@@ -365,6 +365,16 @@ def test_missing_step_is_an_error():
         d.step(IMPLEMENTATION, "Nonexistent step")
 
 
+def test_an_older_catalog_step_name_still_runs():
+    """Locks that check out an older workflow still name the catalog step Walk-hallway."""
+    old = IMPLEMENTATION.replace(
+        "Scenario catalog from the verifier's own lock",
+        "Walk-hallway catalog from the verifier's own lock",
+    )
+    script = d.first_step(old, ("Scenario catalog", "Walk-hallway catalog"))
+    assert "fetch_hallway_specs.py" in script
+
+
 def test_livingproof_plugin_entry_point():
     meta = tomllib.loads((ROOT / "pyproject.toml").read_text())
     entry = meta["project"]["entry-points"]["livingproof.capability.commands"]
