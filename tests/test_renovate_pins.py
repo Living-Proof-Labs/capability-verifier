@@ -24,7 +24,9 @@ RUNTIME_FILE = "pyproject.toml"
 RUNTIME_PACKAGE = "pyyaml"
 SAME_FILE_PACKAGE = "actions/checkout"
 RUNTIME_REPORTER = "livingproof-capability-report"
-PRESET = "github>Living-Proof-Labs/collaboration-guidelines:renovate-preset#v7.10.4"
+PRESET = re.compile(
+    r"github>Living-Proof-Labs/collaboration-guidelines:renovate-preset#v[0-9]+\.[0-9]+\.[0-9]+"
+)
 GIT_SOURCE = re.compile(r'livingproof-sim-mujoco = \{ git = "https://github.com/([^"]+?)\.git"')
 
 
@@ -54,7 +56,11 @@ def names(rule):
 
 
 def test_disabled_rules_name_only_the_two_intentional_pins():
-    assert config()["extends"] == [PRESET]
+    # Permit reviewed release upgrades, but never floating branches or other presets.
+    presets = config()["extends"]
+    assert len(presets) == 1
+    assert PRESET.fullmatch(presets[0])
+    assert "renovate-config" in config()["enabledManagers"]
     fixture = rule_for(FIXTURE_FILE)
     reporter = rule_for(REPORTER_FILE)
     source = GIT_SOURCE.search((ROOT / FIXTURE_FILE).read_text())
