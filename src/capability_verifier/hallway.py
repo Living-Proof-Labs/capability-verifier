@@ -33,7 +33,7 @@ from livingproof_evaluator_scenario.checks import (
     assessment,
     failure,
 )
-from livingproof_scenario_parameters import quantize_half_up_decimal_text
+from livingproof_scenario_parameters import ScenarioParameterError, quantize_half_up_decimal_text
 
 from .scenario_parameters import acceptance, clearance_table, evaluator_thresholds
 
@@ -342,6 +342,14 @@ def media_trial_key(document) -> str:
     raise ManifestError(f"media field 'format' {fmt!r} is not one of {accepted}")
 
 
+def _parameters(fn, *args, **kwargs):
+    """A scenario or world mismatch is the parameter message, not a traceback."""
+    try:
+        return fn(*args, **kwargs)
+    except ScenarioParameterError as exc:
+        raise ManifestError(str(exc)) from None
+
+
 def millimetres(metres: float) -> int:
     """Metres to integer millimetres, half up from the decimal text of the value."""
     return quantize_half_up_decimal_text(metres, 3)
@@ -355,7 +363,7 @@ def fits_width(manifest: dict) -> dict:
     scenario parameter file.
     """
     profile = manifest["robot"]["profile"]
-    table = clearance_table(manifest)
+    table = _parameters(clearance_table, manifest)
     cls = profile.get("class")
     if cls not in table:
         raise ManifestError(
@@ -420,7 +428,7 @@ def unmet_precondition(manifest: dict) -> dict | None:
 
 def thresholds(manifest: dict) -> dict:
     """Spec-rounded limits from the parameter file, passed to the evaluator as-is."""
-    return evaluator_thresholds(acceptance(manifest))
+    return evaluator_thresholds(_parameters(acceptance, manifest))
 
 
 LATERAL_FORMULA = "clear_width / 2 - robot_width / 2"
@@ -436,7 +444,7 @@ def limits(manifest: dict) -> dict:
     (never re-rounded for display). The formula strings and input keys stay the
     recorded bundle shape. Additive: no grading decision reads this.
     """
-    resolved = acceptance(manifest)
+    resolved = _parameters(acceptance, manifest)
     th = evaluator_thresholds(resolved)
     robot = manifest["robot"]["profile"]
     world, plan = manifest["world"], manifest["plan"]
@@ -446,7 +454,7 @@ def limits(manifest: dict) -> dict:
     fit = fits_width(manifest)
     if fit["met"] != resolved["preconditions"]["fits_width"]:
         raise ManifestError("fits_width does not match the parameter file's precondition")
-    clearance = clearance_table(manifest)[cls]
+    clearance = _parameters(clearance_table, manifest)[cls]
     return {
         "lateral_limit": {
             "value": th["lateral_limit"],

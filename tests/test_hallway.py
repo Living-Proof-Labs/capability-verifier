@@ -552,6 +552,44 @@ def test_bad_evidence_is_a_manifest_error_with_no_traceback(tmp_path, break_it, 
     assert not out.exists() and not list(tmp_path.glob(".out.*"))
 
 
+def _one_trial(plan):
+    return dict(plan, trials=1, seeds=[1], required_passes=1)
+
+
+def _other_scenario(document):
+    document["plan"]["scenario"] = "walk-hallway@9.9.9"
+
+
+def _other_world(document):
+    document["world"]["id"] = "other-hall"
+
+
+@pytest.mark.parametrize(
+    "mutate, message",
+    [
+        (_other_scenario, "parameter file names walk-hallway@0.1.0, not walk-hallway@9.9.9"),
+        (_other_world, "parameter file is for hallway-open 0.1.0, not other-hall 0.1.0"),
+    ],
+)
+def test_world_or_scenario_mismatch_ends_on_one_line(tmp_path, mutate, message):
+    """A world or scenario that is not the parameter file's exits with that one line."""
+    src = tmp_path / "evidence"
+    src.mkdir()
+    manifest = _manifest(src, plan=_one_trial(PLAN))
+    document = json.loads(manifest.read_text())
+    mutate(document)
+    manifest.write_text(json.dumps(document))
+    with pytest.raises(hallway.ManifestError, match=re.escape(message)):
+        hallway.verify(manifest)
+    out = tmp_path / "out"
+    completed = _cli(tmp_path, manifest, out, "1.4.2")
+    assert completed.returncode != 0
+    assert "Traceback" not in completed.stderr
+    assert "ScenarioParameterError" not in completed.stderr
+    assert completed.stderr.splitlines() == [f"invalid evidence manifest {manifest}: {message}"]
+    assert not out.exists() and not list(tmp_path.glob(".out.*"))
+
+
 def test_sigterm_removes_the_staging_folder(tmp_path, monkeypatch):
     tool = _tool()
     monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
