@@ -168,23 +168,49 @@ def _write_lock(robot, caller_dir, relative, *, copy):
 
 
 def _plan_outputs(robot):
-    """Run the workflow's own ref step against ``robot``."""
-    import os
-    import subprocess
+    """The plan job's ref outputs, read the way its jq reads the selected lock.
 
-    destination = robot / "github-output.txt"
-    env = os.environ.copy()
-    env["GITHUB_OUTPUT"] = str(destination)
-    env["ONLY"] = ""
-    done = subprocess.run(
-        ["bash", "-e", "-c", _step("Refs from verification.lock.json")],
-        cwd=robot,
-        env=env,
-        capture_output=True,
-        text=True,
+    The runtime image has no jq. The workflow script's jq is pinned below so this
+    reader and that script stay on the same files and fields.
+    """
+    import json
+
+    script = _step("Refs from verification.lock.json")
+    assert "jq -r '.releases.verifier.commit' verification.lock.json" in script
+    assert "jq -r '.releases.verifier.repository' verification.lock.json" in script
+    assert (
+        'jq -r \'.releases.verifier | if .image then .image + ":" + '
+        '(.tag | ltrimstr("v")) + "@" + .digest else "" end\' verification.lock.json'
+    ) in script
+    assert "pin=verification.lock.json" in script
+    assert (
+        "if [ -f caller-verification.lock.json ]; then\n  pin=caller-verification.lock.json\nfi\n"
+        in script
     )
-    assert done.returncode == 0, done.stderr
-    return dict(line.split("=", 1) for line in destination.read_text().splitlines() if "=" in line)
+    for field in ("repository", "commit", "tag"):
+        assert (
+            f'jq -r \'(.evaluators // {{}})["livingproof-evaluator-scenario"].{field} // empty\' "$pin"'
+        ) in script
+    evidence = json.loads((robot / "verification.lock.json").read_text())
+    pin_path = robot / "caller-verification.lock.json"
+    pin = json.loads(pin_path.read_text()) if pin_path.is_file() else evidence
+    verifier = evidence["releases"]["verifier"]
+    reporter = evidence["releases"]["reporter"]
+    evaluator = (pin.get("evaluators") or {}).get("livingproof-evaluator-scenario") or {}
+    image = ""
+    if verifier.get("image"):
+        image = f"{verifier['image']}:{verifier['tag'].removeprefix('v')}@{verifier['digest']}"
+    return {
+        "verifier-repository": verifier["repository"],
+        "verifier-commit": verifier["commit"],
+        "verifier-image": image,
+        "reporter-image": (
+            f"{reporter['image']}:{reporter['tag'].removeprefix('v')}@{reporter['digest']}"
+        ),
+        "evaluator-repository": evaluator.get("repository") or "",
+        "evaluator-commit": evaluator.get("commit") or "",
+        "evaluator-tag": evaluator.get("tag") or "",
+    }
 
 
 def _image(ref):
