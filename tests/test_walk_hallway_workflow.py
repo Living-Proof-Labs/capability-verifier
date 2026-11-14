@@ -456,6 +456,80 @@ def test_scenario_evaluator_is_a_parallel_job_and_the_report_collects_by_pattern
     assert extracted + "\n" == source
 
 
+# The verify job's catalog step. fetch_hallway_specs.py reads hallway-specs.lock.json
+# in the verifier checkout and checks the tag and file hashes. No other command.
+_HALLWAY_CATALOG_STEP = {
+    "name": "Scenario catalog from the verifier's own lock",
+    "run": "uv run --no-sync python tools/fetch_hallway_specs.py",
+}
+
+
+def _tools_that_read_the_hallway_catalog():
+    """Tool scripts that read the checkout fetch_hallway_specs.py writes."""
+    root = Path(__file__).parents[1] / "tools"
+    found = []
+    for path in sorted(root.glob("*.py")):
+        if path.name == "fetch_hallway_specs.py":
+            continue
+        text = path.read_text()
+        if (
+            ".specs-hallway" in text
+            or "load_parameters(" in text
+            or "from capability_verifier.hallway import thresholds" in text
+        ):
+            found.append(path.name)
+    return tuple(found)
+
+
+def test_every_job_that_reads_hallway_specs_fetches_them_first():
+    """A job that reads the locked catalog fetches it before that read.
+
+    run_scenario_evaluator.py calls hallway.thresholds, which reads
+    .specs-hallway/specs/scenarios/walk-hallway/parameters.json.
+    verify_hallway.py reads that same checkout. v1.20.1 runs scenario-evaluator
+    without fetch_hallway_specs.py, so the parameter file is missing.
+    """
+    import yaml
+
+    tools = _tools_that_read_the_hallway_catalog()
+    assert "run_scenario_evaluator.py" in tools
+    assert "verify_hallway.py" in tools
+    workflows = Path(__file__).parents[1] / ".github" / "workflows"
+    readers = []
+    for path in sorted(workflows.glob("*.yml")):
+        document = yaml.safe_load(path.read_text())
+        jobs = document.get("jobs") if isinstance(document, dict) else None
+        if not isinstance(jobs, dict):
+            continue
+        for job_id, job in jobs.items():
+            steps = job.get("steps") or []
+            runs = [step.get("run") if isinstance(step.get("run"), str) else "" for step in steps]
+            reading = [i for i, run in enumerate(runs) if any(name in run for name in tools)]
+            if not reading:
+                continue
+            where = f"{path.name} job {job_id}"
+            readers.append(where)
+            fetching = [i for i, run in enumerate(runs) if "fetch_hallway_specs.py" in run]
+            assert fetching, f"{where} reads the hallway catalog and does not fetch it"
+            assert min(fetching) < min(reading), f"{where} fetches the catalog after reading it"
+            assert steps[min(fetching)] == _HALLWAY_CATALOG_STEP, where
+            assert "permissions" not in job, where
+            checkout = next(
+                step
+                for step in steps[: min(fetching)]
+                if str(step.get("uses", "")).startswith("actions/checkout@")
+                and step.get("with", {}).get("repository")
+                == "${{ needs.plan.outputs.verifier-repository }}"
+            )
+            assert checkout["with"]["ref"] == "${{ needs.plan.outputs.verifier-commit }}"
+            assert checkout["with"]["persist-credentials"] is False
+            assert "path" not in checkout["with"]
+    assert readers == [
+        "scenario.yml job verify",
+        "scenario.yml job scenario-evaluator",
+    ]
+
+
 def test_report_collects_with_media_on_and_with_media_off():
     """The collector is in report, so a skipped media job still stores evaluator entries."""
     media = WORKFLOW.split("\n  media:\n", 1)[1].split("\n  report:\n", 1)[0]
