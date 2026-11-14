@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Thin wrapper. Existing callers keep using this file.
 # The run is .github/workflows/scenario.yml. Every input and output is forwarded.
+# Evidence exit 4 is handled there: verify runs, prints the summary, and then fails.
 name: walk-hallway
 on:
   workflow_call:
