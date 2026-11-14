@@ -973,9 +973,13 @@ def test_evidence_branches_on_the_exit_code_and_verify_needs_that_job():
     assert "verify will not run" in script
     assert 'exit "$code"' in script
     assert 'python -m livingproof_sim_mujoco.evidence "$ADAPTER"' in script
+    assert "without a test-system reproducibility finding" in script
     assert "needs: [plan, evidence]" in head
     assert "\n    if:" not in head
-    assert "set +e" not in assess
+    assert "set +e" in assess
+    assert 'if [ "$code" -ne 0 ]' in assess
+    assert 'exit "$code"' in assess
+    assert "finding is on the record; exiting 4" in assess
     assert "verify_hallway.py" in assess
     assert "if: always()" in verify
 
@@ -1030,3 +1034,61 @@ def test_evidence_exit_4_verify_prints_the_summary_then_fails(tmp_path):
     bundle = json.loads((work / "verified" / "bundle" / "manifest.json").read_text())
     assert bundle["results"][0]["provenance"]["findings"][0]["kind"] == "test-system"
     assert bundle["results"][0]["original_result"]["status"] == "INSUFFICIENT_EVIDENCE"
+
+
+def test_evidence_exit_4_without_a_finding_stops(tmp_path):
+    """Exit 4 with no test-system finding is a failed evidence step. Verify is not run."""
+    done = _run_evidence(tmp_path, 4, _EVIDENCE)
+    assert done["continued"] is False
+    assert "exit 4" in done["error"]
+    manifest = done["robot"] / "artifacts" / "evidence" / "stock" / "manifest.json"
+    recorded = json.loads(manifest.read_text())
+    assert recorded["trials"]["reproducibility"]["finding"] is None
+
+
+def _run_assess_stub(work: Path, code: int):
+    """Run the assess script with ``uv`` exiting ``code``, as an older verifier would."""
+    bindir = work / "bin"
+    bindir.mkdir()
+    stub = bindir / "uv"
+    stub.write_text('#!/bin/sh\necho "$*" >> "$CALLS"\nexit "$STUB_EXIT"\n')
+    stub.chmod(0o755)
+    calls = work / "calls.txt"
+    calls.write_text("")
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
+    env["CALLS"] = str(calls)
+    env["STUB_EXIT"] = str(code)
+    env["BUNDLE_VERSION"] = "1.1.0"
+    script = definition.step(WORKFLOW, "Assess every trial")
+    done = subprocess.run(
+        ["bash", "-e", "-c", script], cwd=work, env=env, capture_output=True, text=True
+    )
+    return done, calls.read_text()
+
+
+def test_an_older_verifier_exit_0_still_fails_verify_when_the_finding_is_present(tmp_path):
+    """The workflow gate, not the locked verifier, fails the job after a disagreement."""
+    work = tmp_path / "verifier"
+    shutil.copytree(_produced(tmp_path / "produced"), work / "evidence")
+    done, calls = _run_assess_stub(work, 0)
+    assert done.returncode == 4, done.stderr
+    assert "finding is on the record; exiting 4" in done.stderr
+    assert "verify_hallway.py" in calls
+
+
+def test_assess_keeps_a_nonzero_exit_from_the_verifier(tmp_path):
+    work = tmp_path / "verifier"
+    shutil.copytree(_produced(tmp_path / "produced"), work / "evidence")
+    done, calls = _run_assess_stub(work, 2)
+    assert done.returncode == 2, done.stderr
+    assert "on the record" not in done.stderr
+    assert "verify_hallway.py" in calls
+
+
+def test_assess_exits_0_when_an_older_verifier_returns_0_and_trials_agree(tmp_path):
+    work = tmp_path / "verifier"
+    shutil.copytree(_EVIDENCE, work / "evidence")
+    done, calls = _run_assess_stub(work, 0)
+    assert done.returncode == 0, done.stderr
+    assert "verify_hallway.py" in calls

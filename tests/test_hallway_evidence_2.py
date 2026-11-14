@@ -585,6 +585,28 @@ def test_job_exit_follows_the_finding():
     assert caught.value.code == "finding kind is not test-system: 'robot'"
 
 
+def test_passing_trials_that_disagree_exit_4_and_are_not_graded_pass(tmp_path):
+    """Observations that pass stay PASS. The run is repeated-outcome and the process exits 4."""
+    path = _trace_inside_stored_maximum(tmp_path)
+    document = json.loads(path.read_text())
+    document["trials"]["reproducibility"] = {
+        "compared": True,
+        "identical": False,
+        "finding": FINDING,
+    }
+    path.write_text(json.dumps(document) + "\n")
+    out = tmp_path / "verified"
+    done = _cli(path, out)
+    assert done.returncode == 4, done.stderr
+    assert "test-system reproducibility:" in done.stdout
+    report = json.loads((out / "verification.json").read_text())
+    count = _load()["trials"]["count"]
+    assert [trial["status"] for trial in report["trials"]] == [hallway.PASS] * count
+    assert report["summary"]["grade"] == hallway.INSUFFICIENT
+    assert report["summary"]["aggregation"]["id"] == "repeated-outcome"
+    assert report["findings"] == [FINDING]
+
+
 def test_v1_19_0_one_trial_is_k_of_n(tmp_path):
     manifest = _load()
     manifest["plan"]["trials"]["count"] = 1

@@ -20,10 +20,12 @@
 # source (the v1.18.0 path). Nothing is pinned in this file.
 # A capability FAIL is the result, not a CI failure. Evidence exit 4 means
 # livingproof-sim-mujoco wrote the manifest and identical trials disagreed. That step
-# continues, verify prints the summary, and verify then exits 4. Any other non-zero
-# evidence exit fails that job, so verify does not run. Exit 4 is the test-system
-# finding. One call = one robot lock, so a cross-robot compare fans out by calling
-# walk-hallway.yml once per robot repository and merging the verified-* bundles it uploads.
+# continues only when the manifest records a test-system reproducibility finding.
+# Verify prints the summary, then this workflow exits 4 when that finding is present,
+# including when the locked verifier itself returns 0. Any other non-zero evidence
+# exit fails that job, so verify does not run. One call = one robot lock, so a
+# cross-robot compare fans out by calling walk-hallway.yml once per robot repository
+# and merging the verified-* bundles it uploads.
 #
 # Robot repository contract: pins.json, tests/, and a pyproject.toml with the runner source
 # and `[tool.livingproof] adapter = "<module>:<object>"` (a livingproof_sim_mujoco.evidence
@@ -357,8 +359,8 @@ jobs:
           print("ref=" + tomllib.load(open("pyproject.toml", "rb"))["tool"]["livingproof"]["adapter"])
           PY
       - name: Evidence (observations only, no grade)
-        # Exit 4 is a completed test-system finding: the manifest is already written,
-        # so this step succeeds and verify runs. Any other non-zero exit fails the step.
+        # Exit 4 continues only when the manifest records a test-system finding.
+        # Any other non-zero exit, including exit 4 without that finding, fails the step.
         env:
           ADAPTER: ${{ steps.adapter.outputs.ref }}
         run: |
@@ -373,8 +375,23 @@ jobs:
             exit 0
           fi
           if [ "$code" -eq 4 ]; then
-            echo "evidence exit 4: trials disagreed; the manifest carries a test-system finding; continuing to verify" >&2
-            exit 0
+            if python3 - "artifacts/evidence/$CONFIGURATION/manifest.json" <<'PY'
+          import json, sys
+          try:
+              doc = json.load(open(sys.argv[1]))
+          except (OSError, ValueError):
+              sys.exit(1)
+          trials = doc.get("trials") if isinstance(doc, dict) else None
+          record = trials.get("reproducibility") if isinstance(trials, dict) else None
+          finding = record.get("finding") if isinstance(record, dict) else None
+          sys.exit(0 if isinstance(finding, dict) and finding.get("kind") == "test-system" else 1)
+          PY
+            then
+              echo "evidence exit 4: trials disagreed; the manifest carries a test-system finding; continuing to verify" >&2
+              exit 0
+            fi
+            echo "evidence exit 4 without a test-system reproducibility finding; verify will not run" >&2
+            exit 4
           fi
           echo "evidence failed (exit $code); verify will not run" >&2
           exit "$code"
@@ -418,13 +435,35 @@ jobs:
           name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
           path: evidence
       - name: Assess every trial (bundle 1.1.0 also carries the verifier's decisions)
-        # Prints the summary and writes the files, then exits 4 when a test-system
-        # finding is present. A grade with no finding exits 0. The upload below keeps
-        # the written record when this step fails.
+        # The locked verifier writes the summary. This step then exits 4 when the
+        # manifest carries a test-system finding, including when that verifier returns 0.
+        # A non-zero verifier exit is kept. The upload below keeps the written record.
         env:
           BUNDLE_VERSION: ${{ needs.plan.outputs.bundle-version }}
         run: |
+          set +e
           PYTHONPATH=src uv run --no-sync python tools/verify_hallway.py --bundle-version "$BUNDLE_VERSION" evidence/manifest.json verified
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ]; then
+            exit "$code"
+          fi
+          if python3 - evidence/manifest.json <<'PY'
+          import json, sys
+          try:
+              doc = json.load(open(sys.argv[1]))
+          except (OSError, ValueError):
+              sys.exit(1)
+          trials = doc.get("trials") if isinstance(doc, dict) else None
+          record = trials.get("reproducibility") if isinstance(trials, dict) else None
+          finding = record.get("finding") if isinstance(record, dict) else None
+          sys.exit(0 if isinstance(finding, dict) and finding.get("kind") == "test-system" else 1)
+          PY
+          then
+            echo "test-system reproducibility finding is on the record; exiting 4" >&2
+            exit 4
+          fi
+          exit 0
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

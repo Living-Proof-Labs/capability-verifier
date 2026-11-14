@@ -385,6 +385,11 @@ checkout. A release changes the `"tag"` line. The fetch checks that tag, not the
 
     PYTHONPATH=src python tools/verify_hallway.py <evidence>/manifest.json <out> [--prototype] [--bundle-version 1.1.0]
 
+Exit 0 means the assessment is written and there is no test-system finding. Exit 4
+means the assessment is written, the summary has printed the finding, and the process
+stops. The scenario workflow applies that same exit from its own script when the
+manifest carries the finding, including when the locked verifier is older and returns 0.
+
 `--bundle-version 1.1.0` adds the verifier's own grading to the bundle
 (`capability_verifier.evaluate`): each result carries a `decision` (status, reason,
 structured failures, assessor types, policy) and the bundle carries an `assessment`
@@ -480,20 +485,24 @@ let a cross-robot workflow call it once per robot. `python3 -m capability_verifi
 repositories' `tools/repin.py`.
 
 `livingproof-sim-mujoco` v2.0.0 writes the evidence manifest and exits 4 when identical
-trials disagree. That exit is the test-system reproducibility finding above. The evidence
-step records the process exit and branches on it. Exit 0 continues. Exit 4 continues
-into verify, because the manifest is complete. Any other non-zero exit fails the evidence
-job, and verify does not run (`needs: [plan, evidence]`, with no job-level `if:`). Verify
-prints the summary, including `test-system reproducibility: ...`, writes
-`verification.json` and the bundle, then exits 4 when a test-system finding is present.
-The verify job fails after that record is written. The `verified-*` upload uses
-`if: always()`, so the files remain. The report job and the pull-request comment run
-when `needs.verify.result == 'success'`, so they stay idle for that finding. A run with
-no test-system finding exits 0, including a capability `FAIL`, which stays the recorded
-result. Exit 4 leaves the repeated-outcome grade in place: disagreeing repeats are
-`FAIL` when a recorded result is `FAIL`, and `INSUFFICIENT_EVIDENCE` otherwise. Seeded
-runs, and evidence 2.0.0 runs with `compared: false`, stay k-of-N (`k-of-n-wilson95`
-1.0.0) with the Wilson 95% interval and exit 0.
+trials disagree. That exit is the test-system reproducibility finding above. The branch
+lives in this workflow's `run:` scripts, so it applies when the lock still checks out an
+older verifier. The evidence step records the process exit. Exit 0 continues. Exit 4
+continues into verify only when `trials.reproducibility.finding` is present and its kind
+is `test-system`. Exit 4 without that finding fails the evidence job. Any other non-zero
+exit also fails it, and verify does not run (`needs: [plan, evidence]`, with no job-level
+`if:`). The locked verifier prints the summary, including `test-system reproducibility:
+...`, and writes `verification.json` and the bundle. This workflow then exits 4 when the
+finding is present, including when that verifier returns 0. The verify job fails after
+the record is written. The `verified-*` upload uses `if: always()`, so the files remain.
+The report job and the pull-request comment run when `needs.verify.result == 'success'`,
+so they stay idle for that finding. A run with no test-system finding exits 0, including
+a capability `FAIL`, which stays the recorded result. Exit 4 leaves the repeated-outcome
+grade in place: disagreeing repeats are `FAIL` when a recorded result is `FAIL`, and
+`INSUFFICIENT_EVIDENCE` otherwise. Seeded runs, and evidence 2.0.0 runs with
+`compared: false`, stay k-of-N (`k-of-n-wilson95` 1.0.0) with the Wilson 95% interval
+and exit 0. When these scripts run, a finding stops `definition run` after that
+configuration's summary. Later configurations in the same definition are not started.
 
 The `media` job (on by default, `media: false` to skip) runs `livingproof_sim_mujoco.media`:
 an MCAP file for every trial and a video for the first PASS and the first FAIL trial, each
