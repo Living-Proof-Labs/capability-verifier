@@ -180,7 +180,7 @@ def test_a_reproducibility_finding_is_not_a_robot_fail(tmp_path):
     assert summary["findings"] == [FINDING]
 
 
-def test_a_robot_fail_stays_a_robot_fail_beside_the_finding(tmp_path):
+def test_a_failed_trial_stays_failed_and_the_run_is_not_a_robot_fail(tmp_path):
     dest = tmp_path / "evidence"
     shutil.copytree(EVIDENCE, dest)
     digest = _rewrite(
@@ -196,7 +196,9 @@ def test_a_robot_fail_stays_a_robot_fail_beside_the_finding(tmp_path):
     }
     (dest / "manifest.json").write_text(json.dumps(manifest) + "\n")
     result = hallway.verify(dest / "manifest.json")
-    assert result["summary"]["grade"] == hallway.FAIL
+    assert result["summary"]["grade"] == hallway.INSUFFICIENT
+    assert result["summary"]["grade"] != hallway.FAIL
+    assert result["summary"]["rationale"] == "repeats differ"
     assert result["summary"]["k"] is None and result["summary"]["wilson95"] == [None, None]
     assert result["summary"]["reproducibility"]["finding"]["kind"] == "test-system"
     assert result["findings"][0]["kind"] == "test-system"
@@ -205,6 +207,10 @@ def test_a_robot_fail_stays_a_robot_fail_beside_the_finding(tmp_path):
     assert failed["failures"][0]["seed"] == 2
     assert "(trial 2)" in failed["assessments"][1]["rationale"]
     assert "reproducibility" not in failed["assessments"][1]["rationale"]
+    text = "\n".join(hallway.summary_lines(result))
+    assert "not a robot FAIL.: FAIL" not in text
+    assert text.splitlines()[0] == f"repeats differ: {hallway.INSUFFICIENT}"
+    assert any(line.startswith("test-system reproducibility:") for line in text.splitlines())
 
 
 def test_no_completed_trial_is_insufficient_evidence(tmp_path):

@@ -350,15 +350,13 @@ def repeat_assessment(record, repeats, statuses, repeat_records=None):
             "reproducibility": block,
             "aggregation": dict(REPEAT_AGGREGATION),
         }
-    if identical is False and FAIL in statuses:
-        grade = FAIL
-    else:
-        grade = INSUFFICIENT
+    grade = INSUFFICIENT
     if identical is True:
         rationale = "recorded results do not match the evidence comparison"
     else:
-        detail = finding.get("detail") if isinstance(finding, dict) else None
-        rationale = detail if isinstance(detail, str) and detail else "repeats differ"
+        # The finding stays a test-system record. The grade sentence is separate,
+        # so the summary does not glue that detail onto a robot PASS or FAIL.
+        rationale = "repeats differ"
         differing = _differing(repeat_records)
         if differing:
             block["differing"] = differing
@@ -417,7 +415,8 @@ class Aggregator:
     When the evidence reproducibility record says the repeats were compared, the run
     is one outcome plus that record. Identical repeats say ``N of N repeats agree``
     and carry no k, n, or Wilson interval. Repeats that disagree are a reproducibility
-    finding, not a success rate, and the run is not graded PASS on that basis.
+    finding. The run grade is INSUFFICIENT_EVIDENCE, including when a trial failed.
+    That grade is not a robot PASS or FAIL.
     """
 
     id, version = hallway.AGGREGATION["id"], hallway.AGGREGATION["version"]
