@@ -4,6 +4,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -493,6 +494,95 @@ def test_v1_19_0_missing_repeat_is_a_mismatched_comparison(tmp_path):
     assert hallway.summary_lines(result)[0].startswith(
         "recorded results do not match the evidence comparison"
     )
+
+
+def _tool():
+    spec = importlib.util.spec_from_file_location(
+        "verify_hallway_tool_exit", Path(__file__).parents[1] / "tools" / "verify_hallway.py"
+    )
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    return tool
+
+
+def _cli(manifest, out):
+    env = os.environ.copy()
+    env["LIVINGPROOF_VERIFIER_VERSION"] = "1.15.2"
+    env["SOURCE_COMMIT"] = "0" * 40
+    env["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
+    return subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).parents[1] / "tools" / "verify_hallway.py"),
+            "--bundle-version",
+            "1.1.0",
+            str(manifest),
+            str(out),
+        ],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _with_finding(tmp_path):
+    dest = tmp_path / "evidence"
+    shutil.copytree(EVIDENCE, dest)
+    manifest = json.loads((dest / "manifest.json").read_text())
+    manifest["trials"]["reproducibility"] = {
+        "compared": True,
+        "identical": False,
+        "finding": FINDING,
+    }
+    path = dest / "manifest.json"
+    path.write_text(json.dumps(manifest) + "\n")
+    return path
+
+
+def test_verify_exits_0_when_the_repeats_agree(tmp_path):
+    """An agreeing repeated-outcome run is a result. It does not fail verify."""
+    done = _cli(_copy(tmp_path), tmp_path / "verified")
+    assert done.returncode == 0, done.stderr
+    assert "test-system reproducibility:" not in done.stdout
+    assert "exiting 4" not in done.stderr
+    report = json.loads((tmp_path / "verified" / "verification.json").read_text())
+    assert report["findings"] == []
+    assert report["summary"]["aggregation"]["id"] == "repeated-outcome"
+    assert report["summary"]["k"] is None
+
+
+def test_verify_reports_the_finding_then_exits_4(tmp_path):
+    """Disagreeing repeats stay repeated-outcome, and the finding fails verify after the summary."""
+    out = tmp_path / "verified"
+    done = _cli(_with_finding(tmp_path), out)
+    assert done.returncode == 4, done.stderr
+    assert "test-system reproducibility:" in done.stdout
+    assert FINDING["detail"] in done.stdout
+    assert "exiting 4" in done.stderr
+    grade = done.stdout.splitlines()[0]
+    assert grade.endswith(f": {hallway.INSUFFICIENT}")
+    assert grade.startswith("test-system") is False
+    report = json.loads((out / "verification.json").read_text())
+    assert report["summary"]["grade"] == hallway.INSUFFICIENT
+    assert report["summary"]["aggregation"]["id"] == "repeated-outcome"
+    assert report["summary"]["k"] is None and report["summary"]["wilson95"] == [None, None]
+    assert report["findings"] == [FINDING]
+    assert [t["status"] for t in report["trials"]] == [hallway.INSUFFICIENT] * 3
+    bundle = json.loads((out / "bundle" / "manifest.json").read_text())
+    assert bundle["results"][0]["provenance"]["findings"][0]["kind"] == "test-system"
+    assert bundle["results"][0]["original_result"]["status"] == hallway.INSUFFICIENT
+    assert bundle["assessment"]["aggregation"]["id"] == "repeated-outcome"
+
+
+def test_job_exit_follows_the_finding():
+    tool = _tool()
+    assert tool.job_exit({"summary": {"grade": hallway.PASS}}) == 0
+    assert tool.job_exit({"findings": [], "summary": {"grade": hallway.FAIL}}) == 0
+    assert tool.job_exit({"findings": [FINDING], "summary": {"grade": hallway.INSUFFICIENT}}) == 4
+    with pytest.raises(SystemExit, match="not test-system") as caught:
+        tool.job_exit({"findings": [{"kind": "FAIL", "name": "robot", "detail": "fell"}]})
+    assert caught.value.code == "finding kind is not test-system: 'robot'"
 
 
 def test_v1_19_0_one_trial_is_k_of_n(tmp_path):

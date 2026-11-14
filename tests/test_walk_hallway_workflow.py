@@ -1,7 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """The reusable walk-hallway workflow: callable, lock-driven, renderer is the reporter image."""
 
+import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
+
+from capability_verifier import definition
 
 WORKFLOW = (Path(__file__).parents[1] / ".github/workflows/scenario.yml").read_text()
 WRAPPER = (Path(__file__).parents[1] / ".github/workflows/walk-hallway.yml").read_text()
@@ -855,3 +861,172 @@ def test_rendered_html_shows_each_trial_duration(tmp_path, monkeypatch):
     assert (job / "reports" / "from-report-json.md").read_text() == (
         job / "reports" / "report.md"
     ).read_text()
+
+
+_EVIDENCE = Path(__file__).parent / "fixtures" / "hallway" / "evidence-2.0.0"
+_FINDING = {
+    "kind": "test-system",
+    "name": "reproducibility",
+    "detail": (
+        "Identical trials disagreed on trajectory hash or outcome. "
+        "This is a test-system reproducibility finding, not a robot FAIL."
+    ),
+    "trajectory_sha256": ["a" * 64, "b" * 64],
+    "outcomes": ["crossed_exit", "crossed_exit"],
+}
+_UV_STUB = """#!/usr/bin/env python3
+import os, shutil, sys
+from pathlib import Path
+args = sys.argv[1:]
+Path(os.environ["CALLS"]).open("a").write(" ".join(args) + "\\n")
+if "livingproof_sim_mujoco.evidence" not in args:
+    sys.exit("uv stub expected the evidence command, got: " + " ".join(args))
+code = int(os.environ["EVIDENCE_EXIT"])
+if code == 4:
+    dest = Path(args[-1])
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(os.environ["EVIDENCE_FIXTURE"], dest)
+raise SystemExit(code)
+"""
+
+
+def _produced(dest: Path) -> Path:
+    """Simulated livingproof-sim-mujoco 2.0.0 evidence with a reproducibility finding."""
+    shutil.copytree(_EVIDENCE, dest)
+    manifest = json.loads((dest / "manifest.json").read_text())
+    manifest["trials"]["reproducibility"] = {
+        "compared": True,
+        "identical": False,
+        "finding": _FINDING,
+    }
+    (dest / "manifest.json").write_text(json.dumps(manifest) + "\n")
+    return dest
+
+
+def _run_evidence(tmp_path, code, fixture=None):
+    """Run the evidence step the way ``definition.run`` does. Verify is separate."""
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    stub = bindir / "uv"
+    stub.write_text(_UV_STUB)
+    stub.chmod(0o755)
+    calls = tmp_path / "calls.txt"
+    calls.write_text("")
+    env = {
+        "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
+        "CALLS": str(calls),
+        "EVIDENCE_EXIT": str(code),
+        "ADAPTER": "robot.adapter:ROBOT",
+        "CONFIGURATION": "stock",
+    }
+    if fixture is not None:
+        env["EVIDENCE_FIXTURE"] = str(fixture)
+    script = definition.step(WORKFLOW, "Evidence (observations only")
+    try:
+        outputs = definition.sh(script, robot, env, tmp_path / "github-output.txt")
+    except definition.DefinitionError as err:
+        return {"continued": False, "error": str(err), "calls": calls.read_text(), "robot": robot}
+    return {"continued": True, "outputs": outputs, "calls": calls.read_text(), "robot": robot}
+
+
+def _run_verify(work: Path):
+    """Run the assess step under ``bash -e``, which is how ``definition.sh`` runs it."""
+    root = Path(__file__).parents[1]
+    for name in ("src", "tools", "pyproject.toml", "uv.lock", "hallway-specs.lock.json", ".venv"):
+        target = root / name
+        if target.exists():
+            (work / name).symlink_to(target)
+    env = os.environ.copy()
+    env["BUNDLE_VERSION"] = "1.1.0"
+    if not env.get("LIVINGPROOF_VERIFIER_VERSION"):
+        env["LIVINGPROOF_VERIFIER_VERSION"] = "dev"
+    if not env.get("SOURCE_COMMIT"):
+        env["SOURCE_COMMIT"] = "0" * 40
+    script = definition.step(WORKFLOW, "Assess every trial")
+    return subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=work,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_evidence_branches_on_the_exit_code_and_verify_needs_that_job():
+    root = Path(__file__).parents[1]
+    evidence = WORKFLOW.split("\n  evidence:\n", 1)[1].split("\n  verify:\n", 1)[0]
+    verify = WORKFLOW.split("\n  verify:\n", 1)[1].split("\n  scenario-evaluator:\n", 1)[0]
+    head = verify.split("    steps:\n", 1)[0]
+    script = definition.step(WORKFLOW, "Evidence (observations only")
+    assess = definition.step(WORKFLOW, "Assess every trial")
+    same = definition.step(
+        definition.procedure_text(root, "walk-hallway"), "Evidence (observations only"
+    )
+    assert same == script
+    assert "continue-on-error" not in evidence
+    assert "set +e" in script and "code=$?" in script
+    assert 'if [ "$code" -eq 4 ]' in script
+    assert "continuing to verify" in script
+    assert "verify will not run" in script
+    assert 'exit "$code"' in script
+    assert 'python -m livingproof_sim_mujoco.evidence "$ADAPTER"' in script
+    assert "needs: [plan, evidence]" in head
+    assert "\n    if:" not in head
+    assert "set +e" not in assess
+    assert "verify_hallway.py" in assess
+    assert "if: always()" in verify
+
+
+def test_evidence_exit_0_continues(tmp_path):
+    done = _run_evidence(tmp_path, 0)
+    assert done["continued"] is True, done.get("error")
+    assert done["outputs"] == {"evidence-exit": "0"}
+    assert "livingproof_sim_mujoco.evidence" in done["calls"]
+
+
+def test_evidence_exit_1_stops_before_verify(tmp_path):
+    """A hard failure never reaches verify. The Actions ``needs:`` edge is the same rule."""
+    done = _run_evidence(tmp_path, 1)
+    assert done["continued"] is False
+    assert "exit 1" in done["error"]
+    assert "verify_hallway.py" not in done["calls"]
+    assert not (done["robot"] / "artifacts").exists()
+
+
+def test_evidence_exit_4_verify_prints_the_summary_then_fails(tmp_path):
+    """Exit 4 leaves the manifest in place. Verify prints the finding, writes it, then exits 4.
+
+    The fixture trials are inconclusive, so the repeated-outcome grade is
+    INSUFFICIENT_EVIDENCE. The finding stays test-system.
+    """
+    done = _run_evidence(tmp_path, 4, _produced(tmp_path / "produced"))
+    assert done["continued"] is True, done.get("error")
+    assert done["outputs"]["evidence-exit"] == "4"
+    manifest = done["robot"] / "artifacts" / "evidence" / "stock" / "manifest.json"
+    recorded = json.loads(manifest.read_text())
+    assert recorded["format"] == "livingproof-hallway-evidence/2.0.0"
+    assert recorded["trials"]["reproducibility"]["finding"]["kind"] == "test-system"
+    assert recorded["trials"]["reproducibility"]["finding"]["name"] == "reproducibility"
+    work = tmp_path / "verifier"
+    work.mkdir()
+    shutil.copytree(manifest.parent, work / "evidence")
+    verified = _run_verify(work)
+    assert verified.returncode == 4, verified.stderr
+    assert "test-system reproducibility:" in verified.stdout
+    assert _FINDING["detail"] in verified.stdout
+    assert "exiting 4" in verified.stderr
+    grade = verified.stdout.splitlines()[0]
+    assert grade.endswith(": INSUFFICIENT_EVIDENCE")
+    report = json.loads((work / "verified" / "verification.json").read_text())
+    assert report["summary"]["grade"] == "INSUFFICIENT_EVIDENCE"
+    assert report["summary"]["aggregation"]["id"] == "repeated-outcome"
+    assert report["summary"]["k"] is None
+    assert report["findings"][0]["kind"] == "test-system"
+    assert report["findings"][0]["name"] == "reproducibility"
+    assert [trial["status"] for trial in report["trials"]] == ["INSUFFICIENT_EVIDENCE"] * 3
+    bundle = json.loads((work / "verified" / "bundle" / "manifest.json").read_text())
+    assert bundle["results"][0]["provenance"]["findings"][0]["kind"] == "test-system"
+    assert bundle["results"][0]["original_result"]["status"] == "INSUFFICIENT_EVIDENCE"

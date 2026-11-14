@@ -347,9 +347,13 @@ evidence finding, copied. `reproducibility.differing` lists each evidence repeat
 `index`, `sha256`, `trajectory_sha256` and `outcome` where the evidence stored that field,
 so the repeats that differ can be seen. The finding is also copied onto the verification
 result (`findings`) and into each bundle result's provenance. It is a test-system finding.
-It is not a robot FAIL. A missing or unreadable observation is still
-`INSUFFICIENT_EVIDENCE` for that trial. The reporter bundle schema only allows `PASS`,
-`FAIL` and `INSUFFICIENT_EVIDENCE` as assessment statuses.
+It is not a robot FAIL. `livingproof-sim-mujoco` v2.0.0 exits 4 after writing that
+finding. The scenario workflow still runs verify, which prints this summary and then
+exits 4. That exit leaves the repeated-outcome grade above in place. Seeded runs, and
+evidence 2.0.0 runs with `compared: false`, stay k-of-N with the Wilson 95% interval
+and exit 0. A missing or unreadable observation is still `INSUFFICIENT_EVIDENCE` for
+that trial. The reporter bundle schema only allows `PASS`, `FAIL` and
+`INSUFFICIENT_EVIDENCE` as assessment statuses.
 
 Result ids stay `{configuration}-seed-NN`. For format 2.0.0, NN is the trial index. The
 pinned reporter matches a video link by a result id ending in `-seed-NN` and rejects any
@@ -474,6 +478,22 @@ the evidence through `livingproof_sim_mujoco.evidence`; no robot Taskfile target
 let a cross-robot workflow call it once per robot. `python3 -m capability_verifier.repin
 --root ROBOT_REPO --check` (or `runner=vX.Y.Z verifier=… reporter=…`) replaces the robot
 repositories' `tools/repin.py`.
+
+`livingproof-sim-mujoco` v2.0.0 writes the evidence manifest and exits 4 when identical
+trials disagree. That exit is the test-system reproducibility finding above. The evidence
+step records the process exit and branches on it. Exit 0 continues. Exit 4 continues
+into verify, because the manifest is complete. Any other non-zero exit fails the evidence
+job, and verify does not run (`needs: [plan, evidence]`, with no job-level `if:`). Verify
+prints the summary, including `test-system reproducibility: ...`, writes
+`verification.json` and the bundle, then exits 4 when a test-system finding is present.
+The verify job fails after that record is written. The `verified-*` upload uses
+`if: always()`, so the files remain. The report job and the pull-request comment run
+when `needs.verify.result == 'success'`, so they stay idle for that finding. A run with
+no test-system finding exits 0, including a capability `FAIL`, which stays the recorded
+result. Exit 4 leaves the repeated-outcome grade in place: disagreeing repeats are
+`FAIL` when a recorded result is `FAIL`, and `INSUFFICIENT_EVIDENCE` otherwise. Seeded
+runs, and evidence 2.0.0 runs with `compared: false`, stay k-of-N (`k-of-n-wilson95`
+1.0.0) with the Wilson 95% interval and exit 0.
 
 The `media` job (on by default, `media: false` to skip) runs `livingproof_sim_mujoco.media`:
 an MCAP file for every trial and a video for the first PASS and the first FAIL trial, each

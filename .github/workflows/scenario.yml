@@ -18,9 +18,12 @@
 # and the sha256 of the robot file it replaced, or that the robot commit has no lock. When the
 # input is empty and the robot commit has verification.lock.json, that file stays the only
 # source (the v1.18.0 path). Nothing is pinned in this file.
-# A capability FAIL is the result, not a CI failure. One call = one robot lock, so a
-# cross-robot compare fans out by calling walk-hallway.yml once per robot repository and
-# merging the verified-* bundles it uploads.
+# A capability FAIL is the result, not a CI failure. Evidence exit 4 means
+# livingproof-sim-mujoco wrote the manifest and identical trials disagreed. That step
+# continues, verify prints the summary, and verify then exits 4. Any other non-zero
+# evidence exit fails that job, so verify does not run. Exit 4 is the test-system
+# finding. One call = one robot lock, so a cross-robot compare fans out by calling
+# walk-hallway.yml once per robot repository and merging the verified-* bundles it uploads.
 #
 # Robot repository contract: pins.json, tests/, and a pyproject.toml with the runner source
 # and `[tool.livingproof] adapter = "<module>:<object>"` (a livingproof_sim_mujoco.evidence
@@ -354,9 +357,27 @@ jobs:
           print("ref=" + tomllib.load(open("pyproject.toml", "rb"))["tool"]["livingproof"]["adapter"])
           PY
       - name: Evidence (observations only, no grade)
+        # Exit 4 is a completed test-system finding: the manifest is already written,
+        # so this step succeeds and verify runs. Any other non-zero exit fails the step.
         env:
           ADAPTER: ${{ steps.adapter.outputs.ref }}
-        run: uv run --no-sync python -m livingproof_sim_mujoco.evidence "$ADAPTER" "$CONFIGURATION" "artifacts/evidence/$CONFIGURATION"
+        run: |
+          set +e
+          uv run --no-sync python -m livingproof_sim_mujoco.evidence "$ADAPTER" "$CONFIGURATION" "artifacts/evidence/$CONFIGURATION"
+          code=$?
+          set -e
+          if [ -n "${GITHUB_OUTPUT:-}" ]; then
+            echo "evidence-exit=$code" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$code" -eq 0 ]; then
+            exit 0
+          fi
+          if [ "$code" -eq 4 ]; then
+            echo "evidence exit 4: trials disagreed; the manifest carries a test-system finding; continuing to verify" >&2
+            exit 0
+          fi
+          echo "evidence failed (exit $code); verify will not run" >&2
+          exit "$code"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -397,6 +418,9 @@ jobs:
           name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
           path: evidence
       - name: Assess every trial (bundle 1.1.0 also carries the verifier's decisions)
+        # Prints the summary and writes the files, then exits 4 when a test-system
+        # finding is present. A grade with no finding exits 0. The upload below keeps
+        # the written record when this step fails.
         env:
           BUNDLE_VERSION: ${{ needs.plan.outputs.bundle-version }}
         run: |
