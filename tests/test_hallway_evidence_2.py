@@ -104,12 +104,18 @@ def test_evidence_2_0_0_grades_every_identical_trial(tmp_path):
     lines = hallway.summary_lines(result)
     assert lines[0] == f"{statement}: {hallway.INSUFFICIENT}"
     assert [line for line in lines[1:]] == [
-        "  trial  1 INSUFFICIENT_EVIDENCE: "
-        "observation max_abs_lateral disagrees with its trace (trial 1)",
-        "  trial  2 INSUFFICIENT_EVIDENCE: "
-        "observation max_abs_lateral disagrees with its trace (trial 2)",
-        "  trial  3 INSUFFICIENT_EVIDENCE: "
-        "observation max_abs_lateral disagrees with its trace (trial 3)",
+        (
+            "  trial  1 INSUFFICIENT_EVIDENCE: "
+            "observation max_abs_lateral disagrees with its trace (trial 1)"
+        ),
+        (
+            "  trial  2 INSUFFICIENT_EVIDENCE: "
+            "observation max_abs_lateral disagrees with its trace (trial 2)"
+        ),
+        (
+            "  trial  3 INSUFFICIENT_EVIDENCE: "
+            "observation max_abs_lateral disagrees with its trace (trial 3)"
+        ),
     ]
     assert result["findings"] == []
     assert "findings" not in summary
@@ -378,8 +384,10 @@ def test_one_trial_is_not_a_comparison(tmp_path):
         f"0/1 trials PASS (needs 1), Wilson 95% [{low:.4f}, {high:.4f}]: {hallway.INSUFFICIENT}"
     )
     assert lines[1:] == [
-        "  trial  1 INSUFFICIENT_EVIDENCE: "
-        "observation max_abs_lateral disagrees with its trace (trial 1)"
+        (
+            "  trial  1 INSUFFICIENT_EVIDENCE: "
+            "observation max_abs_lateral disagrees with its trace (trial 1)"
+        )
     ]
     assert result["findings"] == []
 
@@ -526,6 +534,7 @@ def _cli(manifest, out):
             str(manifest),
             str(out),
         ],
+        check=False,
         cwd=Path(__file__).parents[1],
         env=env,
         capture_output=True,

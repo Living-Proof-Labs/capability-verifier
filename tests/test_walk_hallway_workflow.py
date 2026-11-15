@@ -1035,6 +1035,7 @@ def _run_verify(work: Path):
     script = definition.step(WORKFLOW, "Assess every trial")
     return subprocess.run(
         ["bash", "-e", "-c", script],
+        check=False,
         cwd=work,
         env=env,
         capture_output=True,
@@ -1149,7 +1150,12 @@ def _run_assess_stub(work: Path, code: int):
     env["BUNDLE_VERSION"] = "1.1.0"
     script = definition.step(WORKFLOW, "Assess every trial")
     done = subprocess.run(
-        ["bash", "-e", "-c", script], cwd=work, env=env, capture_output=True, text=True
+        ["bash", "-e", "-c", script],
+        check=False,
+        cwd=work,
+        env=env,
+        capture_output=True,
+        text=True,
     )
     return done, calls.read_text()
 
@@ -1301,6 +1307,7 @@ def _run_refs(robot: Path, source: str):
     env.pop("PYTHONPATH", None)
     done = subprocess.run(
         ["bash", "-eo", "pipefail", "-c", _step("Refs from verification.lock.json")],
+        check=False,
         cwd=robot,
         env=env,
         capture_output=True,
@@ -1414,8 +1421,10 @@ def _venv_markers(root: Path, package_marker: str, dependency_marker: str) -> No
             [
                 str(py),
                 "-c",
-                "import site\n"
-                "print(next(p for p in site.getsitepackages() if p.endswith('site-packages')))\n",
+                (
+                    "import site\n"
+                    "print(next(p for p in site.getsitepackages() if p.endswith('site-packages')))\n"
+                ),
             ],
             text=True,
         ).strip()
@@ -1462,6 +1471,7 @@ def _run_plan_pin(work: Path, *, installed_commit: str, git_commit: str):
     _pin_env(env, tag=_PIN_TAG, commit=_PIN_COMMIT, git_commit=git_commit)
     return subprocess.run(
         ["bash", "-eo", "pipefail", "-c", _step("Every ref is a released tag")],
+        check=False,
         cwd=work,
         env=env,
         capture_output=True,
@@ -1497,6 +1507,7 @@ def _run_scenario(
     _pin_env(env, tag=tag, commit=commit, git_commit=git_commit)
     done = subprocess.run(
         ["bash", "-eo", "pipefail", "-c", _step("Scenario evaluator, one result file per trial")],
+        check=False,
         cwd=work,
         env=env,
         capture_output=True,

@@ -31,8 +31,12 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from . import hallway
-from .specs_ref import SPECS as SPECS  # noqa: F401  re-exported for result specs
-from .specs_ref import accepted_reference, contract_problem, reported_contract
+from .specs_ref import (
+    SPECS,  # noqa: F401  re-exported; callers read evaluate.SPECS
+    accepted_reference,
+    contract_problem,
+    reported_contract,
+)
 
 PASS, FAIL, INSUFFICIENT = hallway.PASS, hallway.FAIL, hallway.INSUFFICIENT
 INCOMPATIBLE = "INCOMPATIBLE"
