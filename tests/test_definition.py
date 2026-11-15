@@ -793,6 +793,59 @@ def test_v2_check_refuses_a_robot_tree_that_drifted(tmp_path, thin_robot, mutate
         d.check(path, tmp_path / "w2")
 
 
+def test_reused_work_refuses_a_configuration_the_commit_does_not_have(tmp_path, thin_robot):
+    """A second checkout of the same commit must not keep a tracked configuration edit.
+
+    Otherwise a reused ``--work`` directory can match a lock sha256 that the pinned
+    commit does not contain, and the check passes.
+    """
+    path = _definition(tmp_path)
+    lock = _write_v2(path, _v2_lock(thin_robot, path))
+    work = tmp_path / "work"
+    assert d.check(path, work) == lock
+    entry = lock["configurations"][0]
+    config = work / "robot" / entry["path"]
+    committed = config.read_bytes()
+    edited = committed.replace(b'"version": "1.1.0"', b'"version": "9.9.9"')
+    assert edited != committed
+    config.write_bytes(edited)
+    drifted = json.loads(json.dumps(lock))
+    drifted["configurations"][0]["sha256"] = d.sha256(edited)
+    _write_v2(path, drifted)
+    with pytest.raises(SystemExit, match="sha256 is"):
+        d.check(path, work)
+    assert config.read_bytes() == committed
+
+
+def test_reused_work_records_the_robot_lock_sha(tmp_path, thin_robot):
+    """A second local run records the robot's lock, not the previous caller-derived file."""
+    robot_bytes = b'{"format":"livingproof-verification-lock/1.0.0","owner":"robot"}\n'
+    (thin_robot / "verification.lock.json").write_bytes(robot_bytes)
+    _git(thin_robot, "add", "-A")
+    _git(thin_robot, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "lock")
+    path = _definition(tmp_path)
+    lock = _write_v2(path, _v2_lock(thin_robot, path))
+    work = tmp_path / "work"
+    robot = work / "robot"
+    caller = d.lock_path(path)
+    assert d.check(path, work) == lock
+    assert (robot / "verification.lock.json").read_bytes() == robot_bytes
+    assert d.prepare_evidence_inputs(lock, robot, caller) == {"EVIDENCE_SOURCE": "caller"}
+    first = json.loads((robot / "verification.lock.json").read_text())
+    robot_sha = d.sha256(robot_bytes)
+    derived_sha = d.sha256((robot / "verification.lock.json").read_bytes())
+    assert first["overridden_robot_lock"]["sha256"] == robot_sha
+    assert derived_sha != robot_sha
+    assert d.check(path, work) == lock
+    assert d.prepare_evidence_inputs(lock, robot, caller) == {"EVIDENCE_SOURCE": "caller"}
+    recorded = json.loads((robot / "verification.lock.json").read_text())["overridden_robot_lock"][
+        "sha256"
+    ]
+    assert recorded == robot_sha, (
+        f"recorded {recorded}, robot lock {robot_sha}, previous caller-derived file {derived_sha}"
+    )
+
+
 def test_v2_refuses_a_configuration_path_that_leaves_the_robot(tmp_path, thin_robot, monkeypatch):
     path = _definition(tmp_path)
     lock = _v2_lock(thin_robot, path)
