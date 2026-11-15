@@ -1217,10 +1217,82 @@ def _refs_tree(robot: Path) -> None:
     (robot / "caller-verification.lock.json").write_text(json.dumps(body("e" * 40)))
 
 
+# The verifier runtime has no jq. This reader covers the filters that step uses,
+# so the caller-path assertion does not depend on a host jq.
+_JQ_STUB = """#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+cleaned = []
+i = 0
+while i < len(args):
+    if args[i] in ("-c", "-r", "-n", "-C", "-e"):
+        i += 1
+        continue
+    if args[i] == "--argjson":
+        i += 3
+        continue
+    cleaned.append(args[i])
+    i += 1
+files = [item for item in cleaned if item.endswith(".json")]
+filt = next((item for item in cleaned if item not in files), "")
+doc = json.loads(Path(files[-1]).read_text()) if files else {}
+
+
+def emit(value):
+    if isinstance(value, (list, dict)):
+        print(json.dumps(value, separators=(",", ":")))
+    else:
+        print("" if value is None else value)
+
+
+evaluators = (doc.get("evaluators") or {}).get("livingproof-evaluator-scenario") or {}
+verifier = (doc.get("releases") or {}).get("verifier") or {}
+reporter = (doc.get("releases") or {}).get("reporter") or {}
+if "configurations[].name" in filt:
+    emit([item["name"] for item in doc.get("configurations") or []])
+elif "].commit" in filt:
+    emit(evaluators.get("commit", ""))
+elif "].repository" in filt:
+    emit(evaluators.get("repository", ""))
+elif "].tag" in filt:
+    emit(evaluators.get("tag", ""))
+elif "verifier.repository" in filt:
+    emit(verifier.get("repository", ""))
+elif "verifier.commit" in filt:
+    emit(verifier.get("commit", ""))
+elif "verifier.tag" in filt:
+    emit(str(verifier.get("tag", "")).removeprefix("v"))
+elif "if .image" in filt:
+    if verifier.get("image"):
+        tag = str(verifier.get("tag", "")).removeprefix("v")
+        emit(f"{verifier['image']}:{tag}@{verifier['digest']}")
+    else:
+        emit("")
+elif "reporter" in filt:
+    tag = str(reporter.get("tag", "")).removeprefix("v")
+    emit(f"{reporter['image']}:{tag}@{reporter['digest']}")
+elif ".scenario" in filt:
+    emit(doc.get("scenario") or "")
+elif ".world.id" in filt:
+    emit((doc.get("world") or {}).get("id") or "")
+else:
+    emit("")
+"""
+
+
 def _run_refs(robot: Path, source: str):
     _refs_tree(robot)
     output = robot / "github-output.txt"
+    bindir = robot / "bin"
+    bindir.mkdir()
+    jq = bindir / "jq"
+    jq.write_text(_JQ_STUB)
+    jq.chmod(0o755)
     env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}{env.get('PATH', '')}"
     env["GITHUB_OUTPUT"] = str(output)
     env["ONLY"] = ""
     env["EVIDENCE_SOURCE"] = source

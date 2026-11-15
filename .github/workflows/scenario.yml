@@ -203,16 +203,10 @@ jobs:
           ONLY: ${{ inputs.configurations }}
           EVIDENCE_SOURCE: ${{ steps.evidence-inputs.outputs.source || steps.robot-lock.outputs.source }}
         run: |
-          all=$(jq -c '[.configurations[].name]' verification.lock.json)
-          if [ -n "$ONLY" ]; then
-            configurations=$(jq -cn --argjson all "$all" --argjson only "$ONLY" \
-              'if ($only - $all) == [] then $only else error("not in the lock: \($only - $all)") end')
-          else
-            configurations=$all
-          fi
           # Evaluator pins live on the selected lock. The caller copy keeps the 0.2.0
           # evaluators field. A caller-verification.lock.json committed in the robot
-          # repository is not a verification-lock input.
+          # repository is not a verification-lock input. Refuse it before jq: the
+          # verifier runtime that replays this step does not install jq.
           pin=verification.lock.json
           if [ -f caller-verification.lock.json ]; then
             if [ "${EVIDENCE_SOURCE:-}" != "caller" ]; then
@@ -220,6 +214,13 @@ jobs:
               exit 1
             fi
             pin=caller-verification.lock.json
+          fi
+          all=$(jq -c '[.configurations[].name]' verification.lock.json)
+          if [ -n "$ONLY" ]; then
+            configurations=$(jq -cn --argjson all "$all" --argjson only "$ONLY" \
+              'if ($only - $all) == [] then $only else error("not in the lock: \($only - $all)") end')
+          else
+            configurations=$all
           fi
           echo "scenario: $(jq -r '.scenario // empty' verification.lock.json)"
           echo "world: $(jq -r '.world.id // empty' verification.lock.json)"
