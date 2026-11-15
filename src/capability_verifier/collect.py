@@ -24,7 +24,7 @@ def collect(bundle: dict, directory: Path) -> dict:
     match are appended whole and are not merged with each other.
     """
     if not isinstance(bundle, dict) or not isinstance(bundle.get("results"), list):
-        raise ValueError("bundle is missing results")
+        raise TypeError("bundle is missing results")
     directory = Path(directory)
     documents = []
     if directory.is_dir():
@@ -53,7 +53,7 @@ def collect(bundle: dict, directory: Path) -> dict:
             entries = []
             result["evaluator_results"] = entries
         if not isinstance(entries, list):
-            raise ValueError(f"result {trial_id!r} evaluator_results is not a list")
+            raise TypeError(f"result {trial_id!r} evaluator_results is not a list")
         entries.append(document)
     return bundle
 

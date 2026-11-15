@@ -149,7 +149,7 @@ def structured_failures(assessment: dict) -> list:
     details = assessment["provenance"].get("details", {})
     items = details.get("failures", []) if isinstance(details, dict) else None
     if not isinstance(items, list):
-        raise ValueError(f"Invalid structured failures in {assessment['id']}")
+        raise TypeError(f"Invalid structured failures in {assessment['id']}")
     for f in items:
         ok = (
             isinstance(f, dict)
