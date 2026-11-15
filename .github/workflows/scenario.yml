@@ -193,12 +193,15 @@ jobs:
           COPY_CALLER_LOCK: "1"
         run: |
           sh workflow-src/.github/scripts/write_evidence_inputs.sh robot caller "$VERIFICATION_LOCK" workflow-src >> "$GITHUB_OUTPUT"
-          rm -rf caller workflow-src
+          # Keep workflow-src: the evaluator pin check below imports this
+          # workflow's code, not the locked verifier, which may be older.
+          rm -rf caller
       - name: Refs from verification.lock.json
         id: lock
         working-directory: robot
         env:
           ONLY: ${{ inputs.configurations }}
+          EVIDENCE_SOURCE: ${{ steps.evidence-inputs.outputs.source || steps.robot-lock.outputs.source }}
         run: |
           all=$(jq -c '[.configurations[].name]' verification.lock.json)
           if [ -n "$ONLY" ]; then
@@ -208,9 +211,14 @@ jobs:
             configurations=$all
           fi
           # Evaluator pins live on the selected lock. The caller copy keeps the 0.2.0
-          # evaluators field; a robot verification.lock.json is used when that copy is absent.
+          # evaluators field. A caller-verification.lock.json committed in the robot
+          # repository is not a verification-lock input.
           pin=verification.lock.json
           if [ -f caller-verification.lock.json ]; then
+            if [ "${EVIDENCE_SOURCE:-}" != "caller" ]; then
+              echo "caller-verification.lock.json is committed in the robot repository; pass verification-lock or remove that file" >&2
+              exit 1
+            fi
             pin=caller-verification.lock.json
           fi
           echo "scenario: $(jq -r '.scenario // empty' verification.lock.json)"
@@ -280,11 +288,26 @@ jobs:
       - name: Every ref is a released tag
         env:
           EVIDENCE_SOURCE: ${{ steps.evidence-inputs.outputs.source || steps.robot-lock.outputs.source }}
+          EVALUATOR_REPOSITORY: ${{ steps.lock.outputs.evaluator-repository }}
+          EVALUATOR_COMMIT: ${{ steps.lock.outputs.evaluator-commit }}
+          EVALUATOR_TAG: ${{ steps.lock.outputs.evaluator-tag }}
         run: |
           if [ "$EVIDENCE_SOURCE" = "caller" ]; then
             python3 verifier/src/capability_verifier/repin.py --root robot --lock caller-verification.lock.json --check
           else
             python3 verifier/src/capability_verifier/repin.py --root robot --check
+          fi
+          if [ -n "${EVALUATOR_COMMIT:-}" ]; then
+            if [ -d workflow-src/src ]; then
+              pin_src=workflow-src/src
+            else
+              pin_src=verifier/src
+            fi
+            PYTHONPATH="$pin_src" python3 -m capability_verifier.evaluator_pin \
+              --repository "$EVALUATOR_REPOSITORY" \
+              --tag "$EVALUATOR_TAG" \
+              --commit "$EVALUATOR_COMMIT" \
+              --verifier verifier
           fi
   evidence:
     needs: plan
@@ -506,15 +529,48 @@ jobs:
           ref: ${{ needs.plan.outputs.evaluator-commit }}
           path: evaluator
           persist-credentials: false
+      - name: Workflow source for the evaluator pin
+        if: needs.plan.outputs.evaluator-commit != ''
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: workflow-src
+          persist-credentials: false
       - name: Scenario evaluator, one result file per trial
         env:
+          EVALUATOR_REPOSITORY: ${{ needs.plan.outputs.evaluator-repository }}
           EVALUATOR_COMMIT: ${{ needs.plan.outputs.evaluator-commit }}
+          EVALUATOR_TAG: ${{ needs.plan.outputs.evaluator-tag }}
         run: |
           # The tool is the one in the verifier checkout named by the selected lock.
           # The package import is that lock's evaluator pin when it has one; a robot
           # lock with no evaluators field keeps the package from that verifier checkout.
+          # evaluator/src is imported ahead of either environment's installed copy, and
+          # the checkout's own dependencies are installed before that import.
           if [ -n "$EVALUATOR_COMMIT" ]; then
-            PYTHONPATH="evaluator/src:src" uv run --no-sync python tools/run_scenario_evaluator.py \
+            if [ -d workflow-src/src ]; then
+              pin_src=workflow-src/src
+            else
+              pin_src=src
+            fi
+            PYTHONPATH="$pin_src" python3 -m capability_verifier.evaluator_pin \
+              --repository "$EVALUATOR_REPOSITORY" \
+              --tag "$EVALUATOR_TAG" \
+              --commit "$EVALUATOR_COMMIT" \
+              --verifier .
+            uv sync --locked --directory evaluator
+            eval_site=$(evaluator/.venv/bin/python -c 'import site; print(next(p for p in site.getsitepackages() if p.endswith("site-packages")))')
+            export PYTHONPATH="evaluator/src:${eval_site}:src"
+            imported=$(uv run --no-sync python -c 'import livingproof_evaluator_scenario as package; print(package.__file__)')
+            case "$imported" in
+              */evaluator/src/livingproof_evaluator_scenario/*) ;;
+              *)
+                echo "livingproof_evaluator_scenario imported from ${imported}, not evaluator/src" >&2
+                exit 1
+                ;;
+            esac
+            uv run --no-sync python tools/run_scenario_evaluator.py \
               evidence/manifest.json evaluator-results/livingproof-scenario
           else
             PYTHONPATH=src uv run --no-sync python tools/run_scenario_evaluator.py \

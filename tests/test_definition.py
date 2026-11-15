@@ -657,22 +657,49 @@ def _release(commit, *, image=None):
     return ref
 
 
+def _offline_evaluator_tag(repository, tag):
+    if repository == _EVALUATOR_REPO and tag == "v1.0.0":
+        return EVALUATOR_COMMIT
+    raise SystemExit(f"{repository} has no tag {tag}; release it first")
+
+
 @pytest.fixture
 def thin_robot(tmp_path, monkeypatch):
-    """A robot commit with adapter, robot.json and configuration files, and no lock file."""
+    """A robot commit with adapter, robot.json and configuration files, and no lock file.
+
+    The verifier commit the 0.2.0 lock names is a local repository whose
+    pyproject and uv.lock install the lock's evaluator pin.
+    """
     base = tmp_path / "git"
     repo = base / "Org" / "robot.git"
     shutil.copytree(THIN, repo)
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "add", "-A")
     _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+    verifier = base / "Living-Proof-Labs" / "example.git"
+    verifier.mkdir(parents=True)
+    _git(verifier, "init", "-q", "-b", "main")
+    (verifier / "pyproject.toml").write_text(_verifier_pyproject("v1.0.0"))
+    (verifier / "uv.lock").write_text(_verifier_uv_lock("v1.0.0", EVALUATOR_COMMIT))
+    _git(verifier, "add", "-A")
+    _git(verifier, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "evaluator pin")
     monkeypatch.setattr(d, "GITHUB", f"file://{base}")
+    monkeypatch.setattr(
+        "capability_verifier.evaluator_pin.resolve_evaluator_tag", _offline_evaluator_tag
+    )
     return repo
 
 
 def _v2_lock(repo, definition):
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    verifier_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo.parents[1] / "Living-Proof-Labs" / "example.git",
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
     profile = json.loads((repo / "robot.json").read_text())
     versions = {"stock": "1.1.0", "playground": "1.0.0"}
@@ -704,7 +731,7 @@ def _v2_lock(repo, definition):
             "specs": _release("a" * 40),
             "runner": _release("b" * 40),
             "verifier": _release(
-                "c" * 40, image="ghcr.io/living-proof-labs/capability-verifier-hallway"
+                verifier_commit, image="ghcr.io/living-proof-labs/capability-verifier-hallway"
             ),
             "reporter": _release(
                 "d" * 40, image="ghcr.io/living-proof-labs/livingproof-capability-report"

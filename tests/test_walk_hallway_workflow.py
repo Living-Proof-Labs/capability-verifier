@@ -96,6 +96,18 @@ def test_current_pins_keep_the_robot_lock_and_a_caller_lock_overrides_it():
         "else\n"
         "  python3 verifier/src/capability_verifier/repin.py --root robot --check\n"
         "fi\n"
+        'if [ -n "${EVALUATOR_COMMIT:-}" ]; then\n'
+        "  if [ -d workflow-src/src ]; then\n"
+        "    pin_src=workflow-src/src\n"
+        "  else\n"
+        "    pin_src=verifier/src\n"
+        "  fi\n"
+        '  PYTHONPATH="$pin_src" python3 -m capability_verifier.evaluator_pin \\\n'
+        '    --repository "$EVALUATOR_REPOSITORY" \\\n'
+        '    --tag "$EVALUATOR_TAG" \\\n'
+        '    --commit "$EVALUATOR_COMMIT" \\\n'
+        "    --verifier verifier\n"
+        "fi\n"
     )
     writer_if = (
         "${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}"
@@ -190,10 +202,9 @@ def _plan_outputs(robot):
         '(.tag | ltrimstr("v")) + "@" + .digest else "" end\' verification.lock.json'
     ) in script
     assert "pin=verification.lock.json" in script
-    assert (
-        "if [ -f caller-verification.lock.json ]; then\n  pin=caller-verification.lock.json\nfi\n"
-        in script
-    )
+    assert 'if [ "${EVIDENCE_SOURCE:-}" != "caller" ]; then' in script
+    assert "committed in the robot repository" in script
+    assert "pin=caller-verification.lock.json" in script
     for field in ("repository", "commit", "tag"):
         assert (
             f'jq -r \'(.evaluators // {{}})["livingproof-evaluator-scenario"].{field} // empty\' "$pin"'
@@ -1227,6 +1238,7 @@ def _run_refs(robot: Path, source: str):
 
 def test_a_committed_caller_lock_is_rejected_on_the_robot_path(tmp_path):
     """No verification-lock input must not read a caller lock committed in the robot."""
+    assert "EVIDENCE_SOURCE:" in _step_head("Refs from verification.lock.json")
     rejected, _output = _run_refs(tmp_path / "robot-path", "robot")
     assert rejected.returncode != 0, rejected.stderr
     assert "committed in the robot repository" in rejected.stderr
