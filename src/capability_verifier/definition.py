@@ -148,12 +148,16 @@ def git(*args, cwd=None) -> str:
 
 
 def checkout(repository: str, ref: str, dest: Path) -> str:
-    """Fetch only ``ref`` of ``repository`` into ``dest`` (detached); return the commit."""
+    """Fetch only ``ref`` of ``repository`` into ``dest`` (detached); return the commit.
+
+    A reused ``dest`` is forced onto that commit. Tracked edits are discarded,
+    and untracked files other than ``.venv`` are removed.
+    """
     if not (dest / ".git").exists():
         dest.mkdir(parents=True, exist_ok=True)
         git("init", "-q", cwd=dest)
     git("fetch", "-q", "--depth", "1", f"{GITHUB}/{repository}.git", ref, cwd=dest)
-    git("checkout", "-q", "--detach", "FETCH_HEAD", cwd=dest)
+    git("checkout", "-q", "-f", "--detach", "FETCH_HEAD", cwd=dest)
     git("clean", "-qfdx", "-e", ".venv", cwd=dest)
     return git("rev-parse", "HEAD", cwd=dest)
 
