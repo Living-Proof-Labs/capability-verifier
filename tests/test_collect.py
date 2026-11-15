@@ -100,7 +100,12 @@ def _health(trial_id):
     }
 
 
-def _write(root, artifact, name, documents):
+def _limits(bundle_dir):
+    bundle = json.loads((bundle_dir / "manifest.json").read_text(encoding="utf-8"))
+    return bundle["results"][0]["provenance"]["thresholds"]
+
+
+def _write(root, artifact, name, documents, thresholds=None):
     directory = root / artifact / name
     directory.mkdir(parents=True)
     for document in documents:
@@ -108,6 +113,10 @@ def _write(root, artifact, name, documents):
         (directory / f"{trial_id}.json").write_text(
             json.dumps(document, indent=2) + "\n", encoding="utf-8"
         )
+    if thresholds is not None:
+        from livingproof_evaluator_scenario.result import thresholds_bytes
+
+        (directory / "thresholds.json").write_bytes(thresholds_bytes(thresholds))
 
 
 def _html(bundle_dir):
@@ -130,6 +139,7 @@ def test_a_second_evaluator_artifact_adds_a_mark_without_a_collector_change(tmp_
         "evaluator-results-livingproof-scenario-playground",
         "livingproof-scenario",
         scenario,
+        _limits(bundle_dir),
     )
     bundle = json.loads((bundle_dir / "manifest.json").read_text(encoding="utf-8"))
     collect(bundle, downloads)
@@ -148,6 +158,7 @@ def test_a_second_evaluator_artifact_adds_a_mark_without_a_collector_change(tmp_
         "evaluator-results-livingproof-scenario-playground",
         "livingproof-scenario",
         scenario,
+        _limits(bundle_dir),
     )
     _write(
         both_downloads,
@@ -181,9 +192,9 @@ def test_scenario_package_pin_is_a_released_tag():
     text = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
     match = EVALUATOR_PIN.search(text)
     assert match, "declared evaluator pin must be a full released vX.Y.Z tag"
-    assert match.group("tag") == "v1.2.0"
+    assert match.group("tag") == "v1.2.1"
     assert "9c82a0b" not in text
-    assert importlib.metadata.version("livingproof-evaluator-scenario") == "1.2.0"
+    assert importlib.metadata.version("livingproof-evaluator-scenario") == "1.2.1"
 
 
 LOCK_SOURCE = re.compile(
@@ -238,8 +249,8 @@ def test_two_configurations_keep_their_own_entries_and_grades(tmp_path):
     shutil.copytree(STOCK, stock)
     play_docs = _scenario_documents(playground)
     stock_docs = _scenario_documents(stock)
-    assert play_docs[0]["evaluator"]["version"] == "1.2.0"
-    assert stock_docs[0]["evaluator"]["version"] == "1.2.0"
+    assert play_docs[0]["evaluator"]["version"] == "1.2.1"
+    assert stock_docs[0]["evaluator"]["version"] == "1.2.1"
     assert play_docs[0]["evaluator"]["display_name"] == "Scenario"
     assert play_docs[0]["descriptor"]["title"] == "Scenario"
     assert play_docs[0]["descriptor"]["short_title"] == "Scenario"
@@ -249,12 +260,14 @@ def test_two_configurations_keep_their_own_entries_and_grades(tmp_path):
         "evaluator-results-livingproof-scenario-playground",
         "livingproof-scenario",
         play_docs,
+        _limits(playground),
     )
     _write(
         downloads,
         "evaluator-results-livingproof-scenario-stock",
         "livingproof-scenario",
         stock_docs,
+        _limits(stock),
     )
     _write(
         downloads,
