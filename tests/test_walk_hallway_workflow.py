@@ -96,6 +96,18 @@ def test_current_pins_keep_the_robot_lock_and_a_caller_lock_overrides_it():
         "else\n"
         "  python3 verifier/src/capability_verifier/repin.py --root robot --check\n"
         "fi\n"
+        'if [ -n "${EVALUATOR_COMMIT:-}" ]; then\n'
+        "  if [ -d workflow-src/src ]; then\n"
+        "    pin_src=workflow-src/src\n"
+        "  else\n"
+        "    pin_src=verifier/src\n"
+        "  fi\n"
+        '  PYTHONPATH="$pin_src" python3 -m capability_verifier.evaluator_pin \\\n'
+        '    --repository "$EVALUATOR_REPOSITORY" \\\n'
+        '    --tag "$EVALUATOR_TAG" \\\n'
+        '    --commit "$EVALUATOR_COMMIT" \\\n'
+        "    --verifier verifier\n"
+        "fi\n"
     )
     writer_if = (
         "${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}"
@@ -190,10 +202,9 @@ def _plan_outputs(robot):
         '(.tag | ltrimstr("v")) + "@" + .digest else "" end\' verification.lock.json'
     ) in script
     assert "pin=verification.lock.json" in script
-    assert (
-        "if [ -f caller-verification.lock.json ]; then\n  pin=caller-verification.lock.json\nfi\n"
-        in script
-    )
+    assert 'if [ "${EVIDENCE_SOURCE:-}" != "caller" ]; then' in script
+    assert "committed in the robot repository" in script
+    assert "pin=caller-verification.lock.json" in script
     for field in ("repository", "commit", "tag"):
         assert (
             f'jq -r \'(.evaluators // {{}})["livingproof-evaluator-scenario"].{field} // empty\' "$pin"'
@@ -1166,3 +1177,409 @@ def test_assess_exits_0_when_an_older_verifier_returns_0_and_trials_agree(tmp_pa
     done, calls = _run_assess_stub(work, 0)
     assert done.returncode == 0, done.stderr
     assert "verify_hallway.py" in calls
+
+
+def _step_head(name: str) -> str:
+    block = WORKFLOW[WORKFLOW.index(f"- name: {name}") :]
+    return block[: block.index("run: |")]
+
+
+def _refs_tree(robot: Path) -> None:
+    robot.mkdir(parents=True)
+    verifier = {
+        "repository": "Example/verifier",
+        "tag": "v1.16.1",
+        "commit": "a" * 40,
+        "image": "ghcr.io/example/hallway",
+        "digest": "sha256:" + "1" * 64,
+    }
+    reporter = {
+        "image": "ghcr.io/example/reporter",
+        "tag": "v3.3.1",
+        "digest": "sha256:" + "2" * 64,
+    }
+    configurations = [{"name": "stock"}]
+
+    def body(commit):
+        return {
+            "configurations": configurations,
+            "releases": {"verifier": verifier, "reporter": reporter},
+            "evaluators": {
+                "livingproof-evaluator-scenario": {
+                    "repository": "Example/evaluator",
+                    "tag": "v1.2.3",
+                    "commit": commit,
+                }
+            },
+        }
+
+    (robot / "verification.lock.json").write_text(json.dumps(body("f" * 40)))
+    (robot / "caller-verification.lock.json").write_text(json.dumps(body("e" * 40)))
+
+
+# The verifier runtime has no jq. This reader covers the filters that step uses,
+# so the caller-path assertion does not depend on a host jq.
+_JQ_STUB = """#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+cleaned = []
+i = 0
+while i < len(args):
+    if args[i] in ("-c", "-r", "-n", "-C", "-e"):
+        i += 1
+        continue
+    if args[i] == "--argjson":
+        i += 3
+        continue
+    cleaned.append(args[i])
+    i += 1
+files = [item for item in cleaned if item.endswith(".json")]
+filt = next((item for item in cleaned if item not in files), "")
+doc = json.loads(Path(files[-1]).read_text()) if files else {}
+
+
+def emit(value):
+    if isinstance(value, (list, dict)):
+        print(json.dumps(value, separators=(",", ":")))
+    else:
+        print("" if value is None else value)
+
+
+evaluators = (doc.get("evaluators") or {}).get("livingproof-evaluator-scenario") or {}
+verifier = (doc.get("releases") or {}).get("verifier") or {}
+reporter = (doc.get("releases") or {}).get("reporter") or {}
+if "configurations[].name" in filt:
+    emit([item["name"] for item in doc.get("configurations") or []])
+elif "].commit" in filt:
+    emit(evaluators.get("commit", ""))
+elif "].repository" in filt:
+    emit(evaluators.get("repository", ""))
+elif "].tag" in filt:
+    emit(evaluators.get("tag", ""))
+elif "verifier.repository" in filt:
+    emit(verifier.get("repository", ""))
+elif "verifier.commit" in filt:
+    emit(verifier.get("commit", ""))
+elif "verifier.tag" in filt:
+    emit(str(verifier.get("tag", "")).removeprefix("v"))
+elif "if .image" in filt:
+    if verifier.get("image"):
+        tag = str(verifier.get("tag", "")).removeprefix("v")
+        emit(f"{verifier['image']}:{tag}@{verifier['digest']}")
+    else:
+        emit("")
+elif "reporter" in filt:
+    tag = str(reporter.get("tag", "")).removeprefix("v")
+    emit(f"{reporter['image']}:{tag}@{reporter['digest']}")
+elif ".scenario" in filt:
+    emit(doc.get("scenario") or "")
+elif ".world.id" in filt:
+    emit((doc.get("world") or {}).get("id") or "")
+else:
+    emit("")
+"""
+
+
+def _run_refs(robot: Path, source: str):
+    _refs_tree(robot)
+    output = robot / "github-output.txt"
+    bindir = robot / "bin"
+    bindir.mkdir()
+    jq = bindir / "jq"
+    jq.write_text(_JQ_STUB)
+    jq.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}{env.get('PATH', '')}"
+    env["GITHUB_OUTPUT"] = str(output)
+    env["ONLY"] = ""
+    env["EVIDENCE_SOURCE"] = source
+    env.pop("PYTHONPATH", None)
+    done = subprocess.run(
+        ["bash", "-eo", "pipefail", "-c", _step("Refs from verification.lock.json")],
+        cwd=robot,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    text = output.read_text() if output.is_file() else ""
+    return done, text
+
+
+def test_a_committed_caller_lock_is_rejected_on_the_robot_path(tmp_path):
+    """No verification-lock input must not read a caller lock committed in the robot."""
+    assert "EVIDENCE_SOURCE:" in _step_head("Refs from verification.lock.json")
+    rejected, _output = _run_refs(tmp_path / "robot-path", "robot")
+    assert rejected.returncode != 0, rejected.stderr
+    assert "committed in the robot repository" in rejected.stderr
+    unset, _output = _run_refs(tmp_path / "unset", "")
+    assert unset.returncode != 0, unset.stderr
+    assert "committed in the robot repository" in unset.stderr
+    accepted, outputs = _run_refs(tmp_path / "caller-path", "caller")
+    assert accepted.returncode == 0, accepted.stderr
+    assert f"evaluator-commit={'e' * 40}" in outputs
+    assert f"evaluator-commit={'f' * 40}" not in outputs
+
+
+def test_the_plan_job_receives_the_evaluator_tag():
+    """The tag read from the lock is an input of the step that enforces it."""
+    assert "steps.lock.outputs.evaluator-tag" in _step_head("Every ref is a released tag")
+
+
+def test_the_scenario_evaluator_job_receives_the_evaluator_tag():
+    assert "needs.plan.outputs.evaluator-tag" in _step_head(
+        "Scenario evaluator, one result file per trial"
+    )
+
+
+_PIN_REPO = "Living-Proof-Labs/livingproof-evaluator-scenario"
+_PIN_TAG = "v1.2.0"
+_PIN_COMMIT = "c0b11bf0e3b555638baa064214793bae125e5a8b"
+
+_EVALUATOR_UV_STUB = """#!/bin/sh
+echo "$*" >> "$CALLS"
+if [ "$1" = sync ]; then
+  python3 -m venv evaluator/.venv
+  site=$(evaluator/.venv/bin/python -c 'import site; print(next(p for p in site.getsitepackages() if p.endswith("site-packages")))')
+  mkdir -p "$site/livingproof_scenario_parameters"
+  printf '%s\\n' 'MARKER = "evaluator-deps"' > "$site/livingproof_scenario_parameters/__init__.py"
+  exit 0
+fi
+if [ "$1" = run ]; then
+  shift
+  if [ "$1" = --no-sync ]; then
+    shift
+  fi
+  if [ "$1" = python ]; then
+    shift
+  fi
+  if [ -x .venv/bin/python ]; then
+    exec .venv/bin/python "$@"
+  fi
+  exec python3 "$@"
+fi
+exit 0
+"""
+
+_GIT_STUB = """#!/bin/sh
+if [ "$1" = ls-remote ]; then
+  printf '%s\\trefs/tags/%s^{}\\n' "$GIT_TAG_COMMIT" "$GIT_TAG_NAME"
+  exit 0
+fi
+echo "unexpected git $*" >&2
+exit 1
+"""
+
+
+def _write_executable(path: Path, text: str) -> None:
+    path.write_text(text)
+    path.chmod(0o755)
+
+
+def _installed_pin(root: Path, tag: str, commit: str) -> None:
+    dependency = f"livingproof-evaluator-scenario @ git+https://github.com/{_PIN_REPO}.git@{tag}"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text(
+        "[project]\n"
+        'name = "capability-verifier"\n'
+        'version = "0.0.0"\n'
+        "dependencies = [\n"
+        f'  "{dependency}",\n'
+        "]\n"
+    )
+    source = f"https://github.com/{_PIN_REPO}.git?rev={tag}#{commit}"
+    (root / "uv.lock").write_text(
+        "[[package]]\n"
+        'name = "livingproof-evaluator-scenario"\n'
+        'version = "1.2.0"\n'
+        f'source = {{ git = "{source}" }}\n'
+    )
+
+
+def _marker_package(directory: Path, name: str, marker: str) -> None:
+    package = directory / name
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "__init__.py").write_text(f'MARKER = "{marker}"\n')
+
+
+def _venv_markers(root: Path, package_marker: str, dependency_marker: str) -> None:
+    subprocess.run(["python3", "-m", "venv", str(root / ".venv")], check=True)
+    py = root / ".venv" / "bin" / "python"
+    site = Path(
+        subprocess.check_output(
+            [
+                str(py),
+                "-c",
+                "import site\n"
+                "print(next(p for p in site.getsitepackages() if p.endswith('site-packages')))\n",
+            ],
+            text=True,
+        ).strip()
+    )
+    _marker_package(site, "livingproof_evaluator_scenario", package_marker)
+    _marker_package(site, "livingproof_scenario_parameters", dependency_marker)
+
+
+def _evaluator_tool(root: Path) -> None:
+    tools = root / "tools"
+    tools.mkdir(parents=True, exist_ok=True)
+    (tools / "run_scenario_evaluator.py").write_text(
+        "import livingproof_evaluator_scenario as package\n"
+        "import livingproof_scenario_parameters as dependency\n"
+        "print('package-marker', package.MARKER)\n"
+        "print('dependency-marker', dependency.MARKER)\n"
+        "print('package', package.__file__)\n"
+        "print('dependency', dependency.__file__)\n"
+    )
+
+
+def _pin_env(env: dict, *, tag: str, commit: str, git_commit: str) -> None:
+    env["EVALUATOR_REPOSITORY"] = _PIN_REPO
+    env["EVALUATOR_TAG"] = tag
+    env["EVALUATOR_COMMIT"] = commit
+    env["GIT_TAG_NAME"] = tag
+    env["GIT_TAG_COMMIT"] = git_commit
+    env.pop("PYTHONPATH", None)
+
+
+def _run_plan_pin(work: Path, *, installed_commit: str, git_commit: str):
+    verifier = work / "verifier"
+    _installed_pin(verifier, _PIN_TAG, installed_commit)
+    repin = verifier / "src" / "capability_verifier"
+    repin.mkdir(parents=True)
+    (repin / "repin.py").write_text("raise SystemExit(0)\n")
+    (work / "workflow-src").symlink_to(Path(__file__).parents[1])
+    bindir = work / "bin"
+    bindir.mkdir()
+    _write_executable(bindir / "git", _GIT_STUB)
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
+    env["EVIDENCE_SOURCE"] = "robot"
+    _pin_env(env, tag=_PIN_TAG, commit=_PIN_COMMIT, git_commit=git_commit)
+    return subprocess.run(
+        ["bash", "-eo", "pipefail", "-c", _step("Every ref is a released tag")],
+        cwd=work,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_scenario(
+    work: Path,
+    *,
+    tag: str,
+    commit: str,
+    installed_tag: str,
+    installed_commit: str,
+    git_commit: str,
+    checkout: bool,
+):
+    _installed_pin(work, installed_tag, installed_commit)
+    _venv_markers(work, "stale", "verifier-deps")
+    _evaluator_tool(work)
+    if checkout:
+        _marker_package(work / "evaluator" / "src", "livingproof_evaluator_scenario", "checkout")
+    (work / "workflow-src").symlink_to(Path(__file__).parents[1])
+    bindir = work / "bin"
+    bindir.mkdir()
+    _write_executable(bindir / "uv", _EVALUATOR_UV_STUB)
+    _write_executable(bindir / "git", _GIT_STUB)
+    calls = work / "calls.txt"
+    calls.write_text("")
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
+    env["CALLS"] = str(calls)
+    _pin_env(env, tag=tag, commit=commit, git_commit=git_commit)
+    done = subprocess.run(
+        ["bash", "-eo", "pipefail", "-c", _step("Scenario evaluator, one result file per trial")],
+        cwd=work,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    return done, calls.read_text()
+
+
+def test_the_plan_refuses_an_evaluator_the_verifier_does_not_resolve(tmp_path):
+    """The plan fails when uv.lock resolved a different commit than the lock."""
+    done = _run_plan_pin(tmp_path / "plan", installed_commit="a" * 40, git_commit=_PIN_COMMIT)
+    assert done.returncode != 0, done.stderr
+    assert "the verifier resolves" in done.stderr
+
+
+def test_scenario_evaluator_refuses_a_tag_that_is_not_the_pinned_commit(tmp_path):
+    done, _calls = _run_scenario(
+        tmp_path / "tag",
+        tag=_PIN_TAG,
+        commit=_PIN_COMMIT,
+        installed_tag=_PIN_TAG,
+        installed_commit=_PIN_COMMIT,
+        git_commit="b" * 40,
+        checkout=True,
+    )
+    assert done.returncode != 0, done.stdout + done.stderr
+    assert "not the locked commit" in done.stderr
+
+
+def test_scenario_evaluator_refuses_a_pin_with_no_tag(tmp_path):
+    done, _calls = _run_scenario(
+        tmp_path / "notag",
+        tag="",
+        commit=_PIN_COMMIT,
+        installed_tag=_PIN_TAG,
+        installed_commit=_PIN_COMMIT,
+        git_commit=_PIN_COMMIT,
+        checkout=True,
+    )
+    assert done.returncode != 0, done.stdout + done.stderr
+    assert "tag is required" in done.stderr
+
+
+def test_scenario_evaluator_refuses_an_installed_pin_that_differs(tmp_path):
+    done, _calls = _run_scenario(
+        tmp_path / "installed",
+        tag=_PIN_TAG,
+        commit=_PIN_COMMIT,
+        installed_tag=_PIN_TAG,
+        installed_commit="a" * 40,
+        git_commit=_PIN_COMMIT,
+        checkout=True,
+    )
+    assert done.returncode != 0, done.stdout + done.stderr
+    assert "the verifier resolves" in done.stderr
+
+
+def test_scenario_evaluator_rejects_a_site_packages_import(tmp_path):
+    """A stale copy in the verifier environment must not run when the checkout is missing it."""
+    done, _calls = _run_scenario(
+        tmp_path / "stale",
+        tag=_PIN_TAG,
+        commit=_PIN_COMMIT,
+        installed_tag=_PIN_TAG,
+        installed_commit=_PIN_COMMIT,
+        git_commit=_PIN_COMMIT,
+        checkout=False,
+    )
+    assert done.returncode != 0, done.stdout + done.stderr
+    assert "not evaluator/src" in done.stderr
+
+
+def test_scenario_evaluator_imports_the_checkout_and_its_own_dependencies(tmp_path):
+    """The import is evaluator/src, and dependencies come from that checkout's install."""
+    done, calls = _run_scenario(
+        tmp_path / "checkout",
+        tag=_PIN_TAG,
+        commit=_PIN_COMMIT,
+        installed_tag=_PIN_TAG,
+        installed_commit=_PIN_COMMIT,
+        git_commit=_PIN_COMMIT,
+        checkout=True,
+    )
+    assert done.returncode == 0, done.stderr
+    assert "package-marker checkout" in done.stdout
+    assert "dependency-marker evaluator-deps" in done.stdout
+    assert "package " + str(tmp_path / "checkout" / "evaluator" / "src") in done.stdout
+    assert "sync --locked --directory evaluator" in calls

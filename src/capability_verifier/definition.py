@@ -25,7 +25,9 @@ different sha256 or different releases. ``0.2.0`` owns releases (specs, runner, 
 reporter digest), plan, world, configuration sha256s and the
 ``livingproof-evaluator-scenario`` package pin. At the locked commit it compares each
 configuration file's sha256, the ``[tool.livingproof]`` adapter string in ``pyproject.toml``,
-and the configuration names in ``robot.json``. It does not read a robot
+and the configuration names in ``robot.json``. It compares that evaluator pin with the
+tag the locked verifier requests and the commit that verifier's lock resolves, and the
+tag must resolve to the locked commit. It does not read a robot
 ``verification.lock.json``.
 
 ``run`` checks the lock, checks out the robot at the locked commit and the verifier at the
@@ -60,7 +62,7 @@ import tomllib
 
 import yaml
 
-from capability_verifier import evidence_lock
+from capability_verifier import evaluator_pin, evidence_lock
 from capability_verifier.repin import DIGEST, TAG
 
 FORMAT = "livingproof-verification-lock/0.1.0"
@@ -556,8 +558,10 @@ def check(definition: Path, work: Path, workflow: Path | None = None) -> dict:
     if repository_ok and not SHA.fullmatch(r["commit"]):
         problems.append("robot.commit is not a full commit sha")
     elif repository_ok and lock["format"] == FORMAT_V2:
-        # 0.2.0 owns releases. Compare the robot tree, not a robot verification.lock.json.
+        # 0.2.0 owns releases. Compare the robot tree, not a robot verification.lock.json,
+        # and compare the evaluator pin with the verifier checkout that installs it.
         problems.extend(pinned_robot_problems(lock, work / "robot"))
+        problems.extend(evaluator_install_problems(lock, work / "verifier"))
     elif repository_ok:
         raw = show(r["repository"], r["commit"], r["lock"]["path"], work / "robot")
         if sha256(raw) != r["lock"]["sha256"]:
@@ -746,6 +750,14 @@ def pinned_robot_problems(lock: dict, dest: Path) -> list[str]:
     return problems
 
 
+def evaluator_install_problems(lock: dict, dest: Path) -> list[str]:
+    """The locked evaluator pin against the verifier checkout that ``uv sync`` installs."""
+    pin = lock["evaluators"]["livingproof-evaluator-scenario"]
+    verifier = lock["releases"]["verifier"]
+    checkout(verifier["repository"], verifier["commit"], dest)
+    return evaluator_pin.evaluator_pin_problems(pin["repository"], pin["tag"], pin["commit"], dest)
+
+
 def prepare_evidence_inputs(lock: dict, robot: Path, caller_lock: Path) -> dict:
     """Env for the plan steps.
 
@@ -791,7 +803,12 @@ def run(definition: Path, out: Path, *, reporter: str = "docker") -> dict:
     # plan job: the configurations must be in the lock, every ref a released tag.
     evidence_env = prepare_evidence_inputs(lock, robot, lock_path(definition))
     only = json.dumps(lock["robot"]["configurations"])
-    sh(step(wf, "Refs from verification.lock.json"), robot, {**gh, "ONLY": only}, work / "r.out")
+    sh(
+        step(wf, "Refs from verification.lock.json"),
+        robot,
+        {**gh, "ONLY": only, **evidence_env},
+        work / "r.out",
+    )
     sh(step(wf, "Every ref is a released tag"), work, {**gh, **evidence_env})
     plan = sh(
         f"uv run --no-project --with packaging==26.3 -- bash -e <<'LP'\n"
