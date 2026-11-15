@@ -13,6 +13,8 @@ Start here; these links open the relevant section in this manual.
   interpret each coordinate and the separate failure/missing-evidence controls.
 - [Download and reproduce report bundles](../README.md#download-and-reproduce-demonstration-runs):
   use the released reporter with the complete archived run.
+- [Read the verification locks](locks.md): the robot lock `livingproof-verification-lock/1.0.0`,
+  the caller locks `0.1.0` and `0.2.0`, and the checks that refuse a mismatched pin.
 
 Related reading: [reporter manual](https://docs.livingprooflabs.com/livingproof-capability-report/)
 and [capability specification manual](https://docs.livingprooflabs.com/robot-capability-specs/).
