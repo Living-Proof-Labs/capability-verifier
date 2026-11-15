@@ -1,11 +1,12 @@
 {
   "repository": "https://github.com/Living-Proof-Labs/robot-capability-specs",
-  "tag": "v1.9.0",
-  "commit": "d677bd9770e60a6d42ea597966799e119dc7dd18",
+  "tag": "v2.2.0",
+  "commit": "23bec516bda29be7b26555286cbf2e8217ac5c81",
   "revision": "0.1.0",
   "capability": "walk-hallway",
   "files": {
-    "specs/scenarios/walk-hallway/walk-hallway.feature": "bc7a202fc678423d8d300d259d890e86d3f1d1066bb978e633ec4ac26429c6c8",
-    "specs/scenarios/walk-hallway/description.json": "74413a9e7e00d722af5ac63a511d3d7df7619381addf244693af965253eb239c"
+    "specs/scenarios/walk-hallway/walk-hallway.feature": "5566a50ef75b07bc6aad05b3e2a716fe73f0eb8a129cde233abb091f9205921d",
+    "specs/scenarios/walk-hallway/description.json": "788bcd6345dad4d262ea14fc346d8883933b790f4991302f01d6eee84f52ff21",
+    "specs/scenarios/walk-hallway/parameters.json": "9226aa6bc0e577863bdc210514e7e7c3a7edc32f49c4f7b46aa7249837f08b3d"
   }
 }

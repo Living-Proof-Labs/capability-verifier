@@ -1,9 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """The reusable walk-hallway workflow: callable, lock-driven, renderer is the reporter image."""
 
+import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
-WORKFLOW = (Path(__file__).parents[1] / ".github/workflows/walk-hallway.yml").read_text()
+from capability_verifier import definition
+
+WORKFLOW = (Path(__file__).parents[1] / ".github/workflows/scenario.yml").read_text()
+WRAPPER = (Path(__file__).parents[1] / ".github/workflows/walk-hallway.yml").read_text()
 STEPS = "\n".join(line for line in WORKFLOW.splitlines() if not line.lstrip().startswith("#"))
 
 
@@ -88,6 +95,18 @@ def test_current_pins_keep_the_robot_lock_and_a_caller_lock_overrides_it():
         f"--lock {evidence_lock.CALLER_LOCK_NAME} --check\n"
         "else\n"
         "  python3 verifier/src/capability_verifier/repin.py --root robot --check\n"
+        "fi\n"
+        'if [ -n "${EVALUATOR_COMMIT:-}" ]; then\n'
+        "  if [ -d workflow-src/src ]; then\n"
+        "    pin_src=workflow-src/src\n"
+        "  else\n"
+        "    pin_src=verifier/src\n"
+        "  fi\n"
+        '  PYTHONPATH="$pin_src" python3 -m capability_verifier.evaluator_pin \\\n'
+        '    --repository "$EVALUATOR_REPOSITORY" \\\n'
+        '    --tag "$EVALUATOR_TAG" \\\n'
+        '    --commit "$EVALUATOR_COMMIT" \\\n'
+        "    --verifier verifier\n"
         "fi\n"
     )
     writer_if = (
@@ -184,10 +203,9 @@ def _plan_outputs(robot):
         '(.tag | ltrimstr("v")) + "@" + .digest else "" end\' verification.lock.json'
     ) in script
     assert "pin=verification.lock.json" in script
-    assert (
-        "if [ -f caller-verification.lock.json ]; then\n  pin=caller-verification.lock.json\nfi\n"
-        in script
-    )
+    assert 'if [ "${EVIDENCE_SOURCE:-}" != "caller" ]; then' in script
+    assert "committed in the robot repository" in script
+    assert "pin=caller-verification.lock.json" in script
     for field in ("repository", "commit", "tag"):
         assert (
             f'jq -r \'(.evaluators // {{}})["livingproof-evaluator-scenario"].{field} // empty\' "$pin"'
@@ -447,6 +465,80 @@ def test_scenario_evaluator_is_a_parallel_job_and_the_report_collects_by_pattern
     assert extracted + "\n" == source
 
 
+# The verify job's catalog step. fetch_hallway_specs.py reads hallway-specs.lock.json
+# in the verifier checkout and checks the tag and file hashes. No other command.
+_HALLWAY_CATALOG_STEP = {
+    "name": "Scenario catalog from the verifier's own lock",
+    "run": "uv run --no-sync python tools/fetch_hallway_specs.py",
+}
+
+
+def _tools_that_read_the_hallway_catalog():
+    """Tool scripts that read the checkout fetch_hallway_specs.py writes."""
+    root = Path(__file__).parents[1] / "tools"
+    found = []
+    for path in sorted(root.glob("*.py")):
+        if path.name == "fetch_hallway_specs.py":
+            continue
+        text = path.read_text()
+        if (
+            ".specs-hallway" in text
+            or "load_parameters(" in text
+            or "from capability_verifier.hallway import thresholds" in text
+        ):
+            found.append(path.name)
+    return tuple(found)
+
+
+def test_every_job_that_reads_hallway_specs_fetches_them_first():
+    """A job that reads the locked catalog fetches it before that read.
+
+    run_scenario_evaluator.py calls hallway.thresholds, which reads
+    .specs-hallway/specs/scenarios/walk-hallway/parameters.json.
+    verify_hallway.py reads that same checkout. v1.20.1 runs scenario-evaluator
+    without fetch_hallway_specs.py, so the parameter file is missing.
+    """
+    import yaml
+
+    tools = _tools_that_read_the_hallway_catalog()
+    assert "run_scenario_evaluator.py" in tools
+    assert "verify_hallway.py" in tools
+    workflows = Path(__file__).parents[1] / ".github" / "workflows"
+    readers = []
+    for path in sorted(workflows.glob("*.yml")):
+        document = yaml.safe_load(path.read_text())
+        jobs = document.get("jobs") if isinstance(document, dict) else None
+        if not isinstance(jobs, dict):
+            continue
+        for job_id, job in jobs.items():
+            steps = job.get("steps") or []
+            runs = [step.get("run") if isinstance(step.get("run"), str) else "" for step in steps]
+            reading = [i for i, run in enumerate(runs) if any(name in run for name in tools)]
+            if not reading:
+                continue
+            where = f"{path.name} job {job_id}"
+            readers.append(where)
+            fetching = [i for i, run in enumerate(runs) if "fetch_hallway_specs.py" in run]
+            assert fetching, f"{where} reads the hallway catalog and does not fetch it"
+            assert min(fetching) < min(reading), f"{where} fetches the catalog after reading it"
+            assert steps[min(fetching)] == _HALLWAY_CATALOG_STEP, where
+            assert "permissions" not in job, where
+            checkout = next(
+                step
+                for step in steps[: min(fetching)]
+                if str(step.get("uses", "")).startswith("actions/checkout@")
+                and step.get("with", {}).get("repository")
+                == "${{ needs.plan.outputs.verifier-repository }}"
+            )
+            assert checkout["with"]["ref"] == "${{ needs.plan.outputs.verifier-commit }}"
+            assert checkout["with"]["persist-credentials"] is False
+            assert "path" not in checkout["with"]
+    assert readers == [
+        "scenario.yml job verify",
+        "scenario.yml job scenario-evaluator",
+    ]
+
+
 def test_report_collects_with_media_on_and_with_media_off():
     """The collector is in report, so a skipped media job still stores evaluator entries."""
     media = WORKFLOW.split("\n  media:\n", 1)[1].split("\n  report:\n", 1)[0]
@@ -695,17 +787,18 @@ def test_evidence_verify_and_media_run_in_the_locked_hallway_image():
     assert STEPS.count("if: needs.plan.outputs.verifier-image == ''") == 6
 
 
-# Reporter 3.4.0 release assets. Duration cells are filled only when render's input is the
-# bundle manifest, so this pins that release rather than whatever reporter happens to be installed.
+# Reporter 3.6.0, the release livingproof-verification pins. Duration cells are filled
+# only when render's input is the bundle manifest. 3.4.0's markdown multiplies the
+# stored Wilson bounds, so it cannot render a compared-repeat run whose bounds are null.
 _REPORTER_RELEASE = (
-    "https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.4.0"
+    "https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.6.0"
 )
 _REPORTER_WHEELS = {
     "livingproof_common-1.0.0-py3-none-any.whl": (
         "8b7795748b54eeb89610f3716245f45db48ac0474465a5abbf974e7075c1476c"
     ),
-    "livingproof_capability_report-3.4.0-py3-none-any.whl": (
-        "d688aa86dd4e5fd603587e41e1f494358e58117e311bf1b2ee17b6e55095c496"
+    "livingproof_capability_report-3.6.0-py3-none-any.whl": (
+        "c600c502f6e8722c358264cf9f104bba759188334e6329821b463fbaab862824"
     ),
 }
 # Three trials, four scenario steps. Distinct values so a shared placeholder cannot pass.
@@ -726,8 +819,8 @@ def _download_wheel(dest, name):
     return target
 
 
-def _reporter_3_4_0(tmp_path):
-    """Install the pinned reporter 3.4.0 wheels and return the directory that holds the CLI."""
+def _reporter_3_6_0(tmp_path):
+    """Install the pinned reporter 3.6.0 wheels and return the directory that holds the CLI."""
     import shutil
     import subprocess
     import sys
@@ -757,6 +850,16 @@ def _bundle_with_varied_durations(tmp_path, monkeypatch):
     evidence = tmp_path / "evidence"
     shutil.copytree(Path(__file__).parent / "fixtures" / "hallway" / "evidence-2.0.0", evidence)
     manifest = json.loads((evidence / "manifest.json").read_text())
+    # The committed trace steps farther from the route than its stored maximum.
+    # This render only needs a gradable trial, so the copy's trace stays inside that maximum.
+    for trial in manifest["trials"]["results"]:
+        path = evidence / trial["path"]
+        observation = json.loads(path.read_text())
+        for sample in observation["trace"]["samples"]:
+            sample[2] = 0.0
+        body = (json.dumps(observation) + "\n").encode()
+        path.write_bytes(body)
+        trial["sha256"] = hashlib.sha256(body).hexdigest()
     for trial in manifest["trials"]["results"]:
         path = evidence / trial["path"]
         observation = json.loads(path.read_text())
@@ -817,7 +920,7 @@ def test_rendered_html_shows_each_trial_duration(tmp_path, monkeypatch):
         + "\n"
     )
     env = dict(os.environ)
-    env["PATH"] = f"{_reporter_3_4_0(tmp_path)}{os.pathsep}{env['PATH']}"
+    env["PATH"] = f"{_reporter_3_6_0(tmp_path)}{os.pathsep}{env['PATH']}"
     subprocess.run(
         ["bash", "-e", "-c", _step("Validate, then render")], cwd=job, env=env, check=True
     )
@@ -825,6 +928,9 @@ def test_rendered_html_shows_each_trial_duration(tmp_path, monkeypatch):
     cells = re.findall(r"<td data-label='Duration'><span class='cell-value'>([^<]*)</span>", html)
     assert cells == _DURATION_CELLS
     assert "—" not in cells
+    # The run interval is null, so v3.6.0 draws no confidence range. Step rings still
+    # count the stored trials; that count is the reporter follow-up, not this render.
+    assert "95% confidence range" not in html
     subprocess.run(
         [
             "livingproof-capability-report",
@@ -842,3 +948,640 @@ def test_rendered_html_shows_each_trial_duration(tmp_path, monkeypatch):
     assert (job / "reports" / "from-report-json.md").read_text() == (
         job / "reports" / "report.md"
     ).read_text()
+
+
+_EVIDENCE = Path(__file__).parent / "fixtures" / "hallway" / "evidence-2.0.0"
+_FINDING = {
+    "kind": "test-system",
+    "name": "reproducibility",
+    "detail": (
+        "Identical trials disagreed on trajectory hash or outcome. "
+        "This is a test-system reproducibility finding, not a robot FAIL."
+    ),
+    "trajectory_sha256": ["a" * 64, "b" * 64],
+    "outcomes": ["crossed_exit", "crossed_exit"],
+}
+_UV_STUB = """#!/usr/bin/env python3
+import os, shutil, sys
+from pathlib import Path
+args = sys.argv[1:]
+Path(os.environ["CALLS"]).open("a").write(" ".join(args) + "\\n")
+if "livingproof_sim_mujoco.evidence" not in args:
+    sys.exit("uv stub expected the evidence command, got: " + " ".join(args))
+code = int(os.environ["EVIDENCE_EXIT"])
+if code == 4:
+    dest = Path(args[-1])
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(os.environ["EVIDENCE_FIXTURE"], dest)
+raise SystemExit(code)
+"""
+
+
+def _produced(dest: Path) -> Path:
+    """Simulated livingproof-sim-mujoco 2.0.0 evidence with a reproducibility finding."""
+    shutil.copytree(_EVIDENCE, dest)
+    manifest = json.loads((dest / "manifest.json").read_text())
+    manifest["trials"]["reproducibility"] = {
+        "compared": True,
+        "identical": False,
+        "finding": _FINDING,
+    }
+    (dest / "manifest.json").write_text(json.dumps(manifest) + "\n")
+    return dest
+
+
+def _run_evidence(tmp_path, code, fixture=None):
+    """Run the evidence step the way ``definition.run`` does. Verify is separate."""
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    stub = bindir / "uv"
+    stub.write_text(_UV_STUB)
+    stub.chmod(0o755)
+    calls = tmp_path / "calls.txt"
+    calls.write_text("")
+    env = {
+        "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
+        "CALLS": str(calls),
+        "EVIDENCE_EXIT": str(code),
+        "ADAPTER": "robot.adapter:ROBOT",
+        "CONFIGURATION": "stock",
+    }
+    if fixture is not None:
+        env["EVIDENCE_FIXTURE"] = str(fixture)
+    script = definition.step(WORKFLOW, "Evidence (observations only")
+    try:
+        outputs = definition.sh(script, robot, env, tmp_path / "github-output.txt")
+    except definition.DefinitionError as err:
+        return {"continued": False, "error": str(err), "calls": calls.read_text(), "robot": robot}
+    return {"continued": True, "outputs": outputs, "calls": calls.read_text(), "robot": robot}
+
+
+def _run_verify(work: Path):
+    """Run the assess step under ``bash -e``, which is how ``definition.sh`` runs it."""
+    root = Path(__file__).parents[1]
+    for name in ("src", "tools", "pyproject.toml", "uv.lock", "hallway-specs.lock.json", ".venv"):
+        target = root / name
+        if target.exists():
+            (work / name).symlink_to(target)
+    env = os.environ.copy()
+    env["BUNDLE_VERSION"] = "1.1.0"
+    if not env.get("LIVINGPROOF_VERIFIER_VERSION"):
+        env["LIVINGPROOF_VERIFIER_VERSION"] = "dev"
+    if not env.get("SOURCE_COMMIT"):
+        env["SOURCE_COMMIT"] = "0" * 40
+    script = definition.step(WORKFLOW, "Assess every trial")
+    return subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=work,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_evidence_branches_on_the_exit_code_and_verify_needs_that_job():
+    root = Path(__file__).parents[1]
+    evidence = WORKFLOW.split("\n  evidence:\n", 1)[1].split("\n  verify:\n", 1)[0]
+    verify = WORKFLOW.split("\n  verify:\n", 1)[1].split("\n  scenario-evaluator:\n", 1)[0]
+    head = verify.split("    steps:\n", 1)[0]
+    script = definition.step(WORKFLOW, "Evidence (observations only")
+    assess = definition.step(WORKFLOW, "Assess every trial")
+    same = definition.step(
+        definition.procedure_text(root, "walk-hallway"), "Evidence (observations only"
+    )
+    assert same == script
+    assert "continue-on-error" not in evidence
+    assert "set +e" in script and "code=$?" in script
+    assert 'if [ "$code" -eq 4 ]' in script
+    assert "continuing to verify" in script
+    assert "verify will not run" in script
+    assert 'exit "$code"' in script
+    assert 'python -m livingproof_sim_mujoco.evidence "$ADAPTER"' in script
+    assert "without a test-system reproducibility finding" in script
+    assert "needs: [plan, evidence]" in head
+    assert "\n    if:" not in head
+    assert "set +e" in assess
+    assert 'if [ "$code" -ne 0 ]' in assess
+    assert 'exit "$code"' in assess
+    assert "finding is on the record; exiting 4" in assess
+    assert "verify_hallway.py" in assess
+    assert "if: always()" in verify
+
+
+def test_evidence_exit_0_continues(tmp_path):
+    done = _run_evidence(tmp_path, 0)
+    assert done["continued"] is True, done.get("error")
+    assert done["outputs"] == {"evidence-exit": "0"}
+    assert "livingproof_sim_mujoco.evidence" in done["calls"]
+
+
+def test_evidence_exit_1_stops_before_verify(tmp_path):
+    """A hard failure never reaches verify. The Actions ``needs:`` edge is the same rule."""
+    done = _run_evidence(tmp_path, 1)
+    assert done["continued"] is False
+    assert "exit 1" in done["error"]
+    assert "verify_hallway.py" not in done["calls"]
+    assert not (done["robot"] / "artifacts").exists()
+
+
+def test_evidence_exit_4_verify_prints_the_summary_then_fails(tmp_path):
+    """Exit 4 leaves the manifest in place. Verify prints the finding, writes it, then exits 4.
+
+    The fixture trials are inconclusive, so the repeated-outcome grade is
+    INSUFFICIENT_EVIDENCE. The finding stays test-system.
+    """
+    done = _run_evidence(tmp_path, 4, _produced(tmp_path / "produced"))
+    assert done["continued"] is True, done.get("error")
+    assert done["outputs"]["evidence-exit"] == "4"
+    manifest = done["robot"] / "artifacts" / "evidence" / "stock" / "manifest.json"
+    recorded = json.loads(manifest.read_text())
+    assert recorded["format"] == "livingproof-hallway-evidence/2.0.0"
+    assert recorded["trials"]["reproducibility"]["finding"]["kind"] == "test-system"
+    assert recorded["trials"]["reproducibility"]["finding"]["name"] == "reproducibility"
+    work = tmp_path / "verifier"
+    work.mkdir()
+    shutil.copytree(manifest.parent, work / "evidence")
+    verified = _run_verify(work)
+    assert verified.returncode == 4, verified.stderr
+    assert "test-system reproducibility:" in verified.stdout
+    assert _FINDING["detail"] in verified.stdout
+    assert "exiting 4" in verified.stderr
+    grade = verified.stdout.splitlines()[0]
+    assert grade.endswith(": INSUFFICIENT_EVIDENCE")
+    report = json.loads((work / "verified" / "verification.json").read_text())
+    assert report["summary"]["grade"] == "INSUFFICIENT_EVIDENCE"
+    assert report["summary"]["aggregation"]["id"] == "repeated-outcome"
+    assert report["summary"]["k"] is None
+    assert report["findings"][0]["kind"] == "test-system"
+    assert report["findings"][0]["name"] == "reproducibility"
+    assert [trial["status"] for trial in report["trials"]] == ["INSUFFICIENT_EVIDENCE"] * 3
+    bundle = json.loads((work / "verified" / "bundle" / "manifest.json").read_text())
+    assert bundle["results"][0]["provenance"]["findings"][0]["kind"] == "test-system"
+    assert bundle["results"][0]["original_result"]["status"] == "INSUFFICIENT_EVIDENCE"
+
+
+def test_evidence_exit_4_without_a_finding_stops(tmp_path):
+    """Exit 4 with no test-system finding is a failed evidence step. Verify is not run."""
+    done = _run_evidence(tmp_path, 4, _EVIDENCE)
+    assert done["continued"] is False
+    assert "exit 4" in done["error"]
+    manifest = done["robot"] / "artifacts" / "evidence" / "stock" / "manifest.json"
+    recorded = json.loads(manifest.read_text())
+    assert recorded["trials"]["reproducibility"]["finding"] is None
+
+
+def _run_assess_stub(work: Path, code: int):
+    """Run the assess script with ``uv`` exiting ``code``, as an older verifier would."""
+    bindir = work / "bin"
+    bindir.mkdir()
+    stub = bindir / "uv"
+    stub.write_text('#!/bin/sh\necho "$*" >> "$CALLS"\nexit "$STUB_EXIT"\n')
+    stub.chmod(0o755)
+    calls = work / "calls.txt"
+    calls.write_text("")
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
+    env["CALLS"] = str(calls)
+    env["STUB_EXIT"] = str(code)
+    env["BUNDLE_VERSION"] = "1.1.0"
+    script = definition.step(WORKFLOW, "Assess every trial")
+    done = subprocess.run(
+        ["bash", "-e", "-c", script], cwd=work, env=env, capture_output=True, text=True
+    )
+    return done, calls.read_text()
+
+
+def test_an_older_verifier_exit_0_still_fails_verify_when_the_finding_is_present(tmp_path):
+    """The workflow gate, not the locked verifier, fails the job after a disagreement."""
+    work = tmp_path / "verifier"
+    shutil.copytree(_produced(tmp_path / "produced"), work / "evidence")
+    done, calls = _run_assess_stub(work, 0)
+    assert done.returncode == 4, done.stderr
+    assert "finding is on the record; exiting 4" in done.stderr
+    assert "verify_hallway.py" in calls
+
+
+def test_assess_keeps_a_nonzero_exit_from_the_verifier(tmp_path):
+    work = tmp_path / "verifier"
+    shutil.copytree(_produced(tmp_path / "produced"), work / "evidence")
+    done, calls = _run_assess_stub(work, 2)
+    assert done.returncode == 2, done.stderr
+    assert "on the record" not in done.stderr
+    assert "verify_hallway.py" in calls
+
+
+def test_assess_exits_0_when_an_older_verifier_returns_0_and_trials_agree(tmp_path):
+    work = tmp_path / "verifier"
+    shutil.copytree(_EVIDENCE, work / "evidence")
+    done, calls = _run_assess_stub(work, 0)
+    assert done.returncode == 0, done.stderr
+    assert "verify_hallway.py" in calls
+
+
+def _step_head(name: str) -> str:
+    block = WORKFLOW[WORKFLOW.index(f"- name: {name}") :]
+    return block[: block.index("run: |")]
+
+
+def _refs_tree(robot: Path) -> None:
+    robot.mkdir(parents=True)
+    verifier = {
+        "repository": "Example/verifier",
+        "tag": "v1.16.1",
+        "commit": "a" * 40,
+        "image": "ghcr.io/example/hallway",
+        "digest": "sha256:" + "1" * 64,
+    }
+    reporter = {
+        "image": "ghcr.io/example/reporter",
+        "tag": "v3.3.1",
+        "digest": "sha256:" + "2" * 64,
+    }
+    configurations = [{"name": "stock"}]
+
+    def body(commit):
+        return {
+            "configurations": configurations,
+            "releases": {"verifier": verifier, "reporter": reporter},
+            "evaluators": {
+                "livingproof-evaluator-scenario": {
+                    "repository": "Example/evaluator",
+                    "tag": "v1.2.3",
+                    "commit": commit,
+                }
+            },
+        }
+
+    (robot / "verification.lock.json").write_text(json.dumps(body("f" * 40)))
+    (robot / "caller-verification.lock.json").write_text(json.dumps(body("e" * 40)))
+
+
+# The verifier runtime has no jq. This reader covers the filters that step uses,
+# so the caller-path assertion does not depend on a host jq.
+_JQ_STUB = """#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+cleaned = []
+i = 0
+while i < len(args):
+    if args[i] in ("-c", "-r", "-n", "-C", "-e"):
+        i += 1
+        continue
+    if args[i] == "--argjson":
+        i += 3
+        continue
+    cleaned.append(args[i])
+    i += 1
+files = [item for item in cleaned if item.endswith(".json")]
+filt = next((item for item in cleaned if item not in files), "")
+doc = json.loads(Path(files[-1]).read_text()) if files else {}
+
+
+def emit(value):
+    if isinstance(value, (list, dict)):
+        print(json.dumps(value, separators=(",", ":")))
+    else:
+        print("" if value is None else value)
+
+
+evaluators = (doc.get("evaluators") or {}).get("livingproof-evaluator-scenario") or {}
+verifier = (doc.get("releases") or {}).get("verifier") or {}
+reporter = (doc.get("releases") or {}).get("reporter") or {}
+if "configurations[].name" in filt:
+    emit([item["name"] for item in doc.get("configurations") or []])
+elif "].commit" in filt:
+    emit(evaluators.get("commit", ""))
+elif "].repository" in filt:
+    emit(evaluators.get("repository", ""))
+elif "].tag" in filt:
+    emit(evaluators.get("tag", ""))
+elif "verifier.repository" in filt:
+    emit(verifier.get("repository", ""))
+elif "verifier.commit" in filt:
+    emit(verifier.get("commit", ""))
+elif "verifier.tag" in filt:
+    emit(str(verifier.get("tag", "")).removeprefix("v"))
+elif "if .image" in filt:
+    if verifier.get("image"):
+        tag = str(verifier.get("tag", "")).removeprefix("v")
+        emit(f"{verifier['image']}:{tag}@{verifier['digest']}")
+    else:
+        emit("")
+elif "reporter" in filt:
+    tag = str(reporter.get("tag", "")).removeprefix("v")
+    emit(f"{reporter['image']}:{tag}@{reporter['digest']}")
+elif ".scenario" in filt:
+    emit(doc.get("scenario") or "")
+elif ".world.id" in filt:
+    emit((doc.get("world") or {}).get("id") or "")
+else:
+    emit("")
+"""
+
+
+def _run_refs(robot: Path, source: str):
+    _refs_tree(robot)
+    output = robot / "github-output.txt"
+    bindir = robot / "bin"
+    bindir.mkdir()
+    jq = bindir / "jq"
+    jq.write_text(_JQ_STUB)
+    jq.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}{env.get('PATH', '')}"
+    env["GITHUB_OUTPUT"] = str(output)
+    env["ONLY"] = ""
+    env["EVIDENCE_SOURCE"] = source
+    env.pop("PYTHONPATH", None)
+    done = subprocess.run(
+        ["bash", "-eo", "pipefail", "-c", _step("Refs from verification.lock.json")],
+        cwd=robot,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    text = output.read_text() if output.is_file() else ""
+    return done, text
+
+
+def test_a_committed_caller_lock_is_rejected_on_the_robot_path(tmp_path):
+    """No verification-lock input must not read a caller lock committed in the robot."""
+    assert "EVIDENCE_SOURCE:" in _step_head("Refs from verification.lock.json")
+    rejected, _output = _run_refs(tmp_path / "robot-path", "robot")
+    assert rejected.returncode != 0, rejected.stderr
+    assert "committed in the robot repository" in rejected.stderr
+    unset, _output = _run_refs(tmp_path / "unset", "")
+    assert unset.returncode != 0, unset.stderr
+    assert "committed in the robot repository" in unset.stderr
+    accepted, outputs = _run_refs(tmp_path / "caller-path", "caller")
+    assert accepted.returncode == 0, accepted.stderr
+    assert f"evaluator-commit={'e' * 40}" in outputs
+    assert f"evaluator-commit={'f' * 40}" not in outputs
+
+
+def test_the_plan_job_receives_the_evaluator_tag():
+    """The tag read from the lock is an input of the step that enforces it."""
+    assert "steps.lock.outputs.evaluator-tag" in _step_head("Every ref is a released tag")
+
+
+def test_the_scenario_evaluator_job_receives_the_evaluator_tag():
+    assert "needs.plan.outputs.evaluator-tag" in _step_head(
+        "Scenario evaluator, one result file per trial"
+    )
+
+
+_PIN_REPO = "Living-Proof-Labs/livingproof-evaluator-scenario"
+_PIN_TAG = "v1.2.0"
+_PIN_COMMIT = "c0b11bf0e3b555638baa064214793bae125e5a8b"
+
+_EVALUATOR_UV_STUB = """#!/bin/sh
+echo "$*" >> "$CALLS"
+if [ "$1" = sync ]; then
+  python3 -m venv evaluator/.venv
+  site=$(evaluator/.venv/bin/python -c 'import site; print(next(p for p in site.getsitepackages() if p.endswith("site-packages")))')
+  mkdir -p "$site/livingproof_scenario_parameters"
+  printf '%s\\n' 'MARKER = "evaluator-deps"' > "$site/livingproof_scenario_parameters/__init__.py"
+  exit 0
+fi
+if [ "$1" = run ]; then
+  shift
+  if [ "$1" = --no-sync ]; then
+    shift
+  fi
+  if [ "$1" = python ]; then
+    shift
+  fi
+  if [ -x .venv/bin/python ]; then
+    exec .venv/bin/python "$@"
+  fi
+  exec python3 "$@"
+fi
+exit 0
+"""
+
+_GIT_STUB = """#!/bin/sh
+if [ "$1" = ls-remote ]; then
+  printf '%s\\trefs/tags/%s^{}\\n' "$GIT_TAG_COMMIT" "$GIT_TAG_NAME"
+  exit 0
+fi
+echo "unexpected git $*" >&2
+exit 1
+"""
+
+
+def _write_executable(path: Path, text: str) -> None:
+    path.write_text(text)
+    path.chmod(0o755)
+
+
+def _installed_pin(root: Path, tag: str, commit: str) -> None:
+    dependency = f"livingproof-evaluator-scenario @ git+https://github.com/{_PIN_REPO}.git@{tag}"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text(
+        "[project]\n"
+        'name = "capability-verifier"\n'
+        'version = "0.0.0"\n'
+        "dependencies = [\n"
+        f'  "{dependency}",\n'
+        "]\n"
+    )
+    source = f"https://github.com/{_PIN_REPO}.git?rev={tag}#{commit}"
+    (root / "uv.lock").write_text(
+        "[[package]]\n"
+        'name = "livingproof-evaluator-scenario"\n'
+        'version = "1.2.0"\n'
+        f'source = {{ git = "{source}" }}\n'
+    )
+
+
+def _marker_package(directory: Path, name: str, marker: str) -> None:
+    package = directory / name
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "__init__.py").write_text(f'MARKER = "{marker}"\n')
+
+
+def _venv_markers(root: Path, package_marker: str, dependency_marker: str) -> None:
+    subprocess.run(["python3", "-m", "venv", str(root / ".venv")], check=True)
+    py = root / ".venv" / "bin" / "python"
+    site = Path(
+        subprocess.check_output(
+            [
+                str(py),
+                "-c",
+                "import site\n"
+                "print(next(p for p in site.getsitepackages() if p.endswith('site-packages')))\n",
+            ],
+            text=True,
+        ).strip()
+    )
+    _marker_package(site, "livingproof_evaluator_scenario", package_marker)
+    _marker_package(site, "livingproof_scenario_parameters", dependency_marker)
+
+
+def _evaluator_tool(root: Path) -> None:
+    tools = root / "tools"
+    tools.mkdir(parents=True, exist_ok=True)
+    (tools / "run_scenario_evaluator.py").write_text(
+        "import livingproof_evaluator_scenario as package\n"
+        "import livingproof_scenario_parameters as dependency\n"
+        "print('package-marker', package.MARKER)\n"
+        "print('dependency-marker', dependency.MARKER)\n"
+        "print('package', package.__file__)\n"
+        "print('dependency', dependency.__file__)\n"
+    )
+
+
+def _pin_env(env: dict, *, tag: str, commit: str, git_commit: str) -> None:
+    env["EVALUATOR_REPOSITORY"] = _PIN_REPO
+    env["EVALUATOR_TAG"] = tag
+    env["EVALUATOR_COMMIT"] = commit
+    env["GIT_TAG_NAME"] = tag
+    env["GIT_TAG_COMMIT"] = git_commit
+    env.pop("PYTHONPATH", None)
+
+
+def _run_plan_pin(work: Path, *, installed_commit: str, git_commit: str):
+    verifier = work / "verifier"
+    _installed_pin(verifier, _PIN_TAG, installed_commit)
+    repin = verifier / "src" / "capability_verifier"
+    repin.mkdir(parents=True)
+    (repin / "repin.py").write_text("raise SystemExit(0)\n")
+    (work / "workflow-src").symlink_to(Path(__file__).parents[1])
+    bindir = work / "bin"
+    bindir.mkdir()
+    _write_executable(bindir / "git", _GIT_STUB)
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
+    env["EVIDENCE_SOURCE"] = "robot"
+    _pin_env(env, tag=_PIN_TAG, commit=_PIN_COMMIT, git_commit=git_commit)
+    return subprocess.run(
+        ["bash", "-eo", "pipefail", "-c", _step("Every ref is a released tag")],
+        cwd=work,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_scenario(
+    work: Path,
+    *,
+    tag: str,
+    commit: str,
+    installed_tag: str,
+    installed_commit: str,
+    git_commit: str,
+    checkout: bool,
+):
+    _installed_pin(work, installed_tag, installed_commit)
+    _venv_markers(work, "stale", "verifier-deps")
+    _evaluator_tool(work)
+    if checkout:
+        _marker_package(work / "evaluator" / "src", "livingproof_evaluator_scenario", "checkout")
+    (work / "workflow-src").symlink_to(Path(__file__).parents[1])
+    bindir = work / "bin"
+    bindir.mkdir()
+    _write_executable(bindir / "uv", _EVALUATOR_UV_STUB)
+    _write_executable(bindir / "git", _GIT_STUB)
+    calls = work / "calls.txt"
+    calls.write_text("")
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
+    env["CALLS"] = str(calls)
+    _pin_env(env, tag=tag, commit=commit, git_commit=git_commit)
+    done = subprocess.run(
+        ["bash", "-eo", "pipefail", "-c", _step("Scenario evaluator, one result file per trial")],
+        cwd=work,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    return done, calls.read_text()
+
+
+def test_the_plan_refuses_an_evaluator_the_verifier_does_not_resolve(tmp_path):
+    """The plan fails when uv.lock resolved a different commit than the lock."""
+    done = _run_plan_pin(tmp_path / "plan", installed_commit="a" * 40, git_commit=_PIN_COMMIT)
+    assert done.returncode != 0, done.stderr
+    assert "the verifier resolves" in done.stderr
+
+
+def test_scenario_evaluator_refuses_a_tag_that_is_not_the_pinned_commit(tmp_path):
+    done, _calls = _run_scenario(
+        tmp_path / "tag",
+        tag=_PIN_TAG,
+        commit=_PIN_COMMIT,
+        installed_tag=_PIN_TAG,
+        installed_commit=_PIN_COMMIT,
+        git_commit="b" * 40,
+        checkout=True,
+    )
+    assert done.returncode != 0, done.stdout + done.stderr
+    assert "not the locked commit" in done.stderr
+
+
+def test_scenario_evaluator_refuses_a_pin_with_no_tag(tmp_path):
+    done, _calls = _run_scenario(
+        tmp_path / "notag",
+        tag="",
+        commit=_PIN_COMMIT,
+        installed_tag=_PIN_TAG,
+        installed_commit=_PIN_COMMIT,
+        git_commit=_PIN_COMMIT,
+        checkout=True,
+    )
+    assert done.returncode != 0, done.stdout + done.stderr
+    assert "tag is required" in done.stderr
+
+
+def test_scenario_evaluator_refuses_an_installed_pin_that_differs(tmp_path):
+    done, _calls = _run_scenario(
+        tmp_path / "installed",
+        tag=_PIN_TAG,
+        commit=_PIN_COMMIT,
+        installed_tag=_PIN_TAG,
+        installed_commit="a" * 40,
+        git_commit=_PIN_COMMIT,
+        checkout=True,
+    )
+    assert done.returncode != 0, done.stdout + done.stderr
+    assert "the verifier resolves" in done.stderr
+
+
+def test_scenario_evaluator_rejects_a_site_packages_import(tmp_path):
+    """A stale copy in the verifier environment must not run when the checkout is missing it."""
+    done, _calls = _run_scenario(
+        tmp_path / "stale",
+        tag=_PIN_TAG,
+        commit=_PIN_COMMIT,
+        installed_tag=_PIN_TAG,
+        installed_commit=_PIN_COMMIT,
+        git_commit=_PIN_COMMIT,
+        checkout=False,
+    )
+    assert done.returncode != 0, done.stdout + done.stderr
+    assert "not evaluator/src" in done.stderr
+
+
+def test_scenario_evaluator_imports_the_checkout_and_its_own_dependencies(tmp_path):
+    """The import is evaluator/src, and dependencies come from that checkout's install."""
+    done, calls = _run_scenario(
+        tmp_path / "checkout",
+        tag=_PIN_TAG,
+        commit=_PIN_COMMIT,
+        installed_tag=_PIN_TAG,
+        installed_commit=_PIN_COMMIT,
+        git_commit=_PIN_COMMIT,
+        checkout=True,
+    )
+    assert done.returncode == 0, done.stderr
+    assert "package-marker checkout" in done.stdout
+    assert "dependency-marker evaluator-deps" in done.stdout
+    assert "package " + str(tmp_path / "checkout" / "evaluator" / "src") in done.stdout
+    assert "sync --locked --directory evaluator" in calls

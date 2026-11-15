@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 import threading
 from functools import partial
 from html.parser import HTMLParser
@@ -13,6 +14,75 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 SITE = Path(__file__).resolve().parents[2] / "artifacts/docs/html"
+GITHUB_API = re.compile(r"^https://api\.github\.com/")
+GITHUB_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "github"
+GITHUB_REPO = "/repos/Living-Proof-Labs/capability-verifier"
+GITHUB_RELEASE = f"{GITHUB_REPO}/releases/latest"
+
+
+def github_fixture_body(url):
+    path = urlsplit(url).path.rstrip("/")
+    if path == GITHUB_RELEASE:
+        name = "releases-latest.json"
+    elif path == GITHUB_REPO:
+        name = "repo.json"
+    else:
+        # Keep an unexpected GitHub API path on the fixture path too.
+        return b"{}"
+    return (GITHUB_FIXTURES / name).read_bytes()
+
+
+def install_github_stub(target, status=200):
+    """Fulfill api.github.com from local fixtures without opening a network connection."""
+
+    def handle(route):
+        route.fulfill(
+            status=status,
+            body=github_fixture_body(route.request.url),
+            headers={
+                "access-control-allow-origin": "*",
+                "content-type": "application/json; charset=utf-8",
+            },
+        )
+
+    target.route(GITHUB_API, handle)
+
+
+def manual_asset_errors(page):
+    failed = []
+
+    def record(response):
+        # GitHub API responses are not the manual. Errors for the manual's own assets still count.
+        if urlsplit(response.url).hostname == "api.github.com":
+            return
+        if response.status >= 400:
+            failed.append(response.url)
+
+    page.on("response", record)
+    return failed
+
+
+def exercise_navigation_search_and_assets(page, base):
+    failed = manual_asset_errors(page)
+    page.goto(base)
+    page.get_by_role("link", name="Scenarios and results", exact=True).first.click()
+    page.wait_for_url("**/scenarios.html")
+    assert page.locator("h1").inner_text().rstrip("¶") == "Scenarios and results"
+    page.goto(base)
+    page.locator(".md-search__button").click()
+    search = page.get_by_role("combobox", name="Search")
+    search.fill("provenance")
+    result = page.locator("a[role=option]").first
+    result.wait_for(state="visible")
+    result.click()
+    page.wait_for_timeout(300)
+    return failed
+
+
+def open_page(context):
+    page = context.new_page()
+    page.set_default_timeout(10000)
+    return page
 
 
 class Links(HTMLParser):
@@ -81,37 +151,85 @@ def browser_page():
         if os.environ.get("DOCS_BROWSER_EXECUTABLE"):
             options["executable_path"] = os.environ["DOCS_BROWSER_EXECUTABLE"]
         browser = engine.chromium.launch(**options)
-        page = browser.new_page()
-        page.set_default_timeout(10000)
-        yield page, f"http://127.0.0.1:{server.server_port}/capability-verifier/"
+        context = browser.new_context()
+        install_github_stub(context)
+        page = open_page(context)
+        yield page, f"http://127.0.0.1:{server.server_port}/capability-verifier/", context
         browser.close()
     server.shutdown()
     thread.join()
 
 
-def test_navigation_search_and_assets(browser_page):
-    page, base = browser_page
-    failed = []
+def test_github_api_responses_come_from_fixtures(browser_page):
+    _page, base, context = browser_page
+    page = open_page(context)
+    github = []
     page.on(
-        "response", lambda response: failed.append(response.url) if response.status >= 400 else None
+        "response",
+        lambda response: github.append(response)
+        if urlsplit(response.url).hostname == "api.github.com"
+        else None,
     )
-    page.goto(base)
-    page.get_by_role("link", name="Scenarios and results", exact=True).first.click()
-    page.wait_for_url("**/scenarios.html")
-    assert page.locator("h1").inner_text().rstrip("¶") == "Scenarios and results"
-    page.goto(base)
-    page.locator(".md-search__button").click()
-    search = page.get_by_role("combobox", name="Search")
-    search.fill("provenance")
-    result = page.locator("a[role=option]").first
-    result.wait_for(state="visible")
-    result.click()
-    page.wait_for_timeout(300)
-    assert not failed
+    try:
+        page.goto(base)
+        version = json.loads((GITHUB_FIXTURES / "releases-latest.json").read_text())["tag_name"]
+        facts = page.locator(".md-source__fact--version")
+        facts.first.wait_for()
+        assert set(facts.all_inner_texts()) == {version}
+        bodies = {urlsplit(response.url).path.rstrip("/"): response.body() for response in github}
+        assert set(bodies) == {GITHUB_REPO, GITHUB_RELEASE}
+        assert bodies[GITHUB_REPO] == (GITHUB_FIXTURES / "repo.json").read_bytes()
+        assert bodies[GITHUB_RELEASE] == (GITHUB_FIXTURES / "releases-latest.json").read_bytes()
+    finally:
+        page.close()
+
+
+def test_navigation_search_and_assets(browser_page):
+    page, base, _context = browser_page
+    assert exercise_navigation_search_and_assets(page, base) == []
+
+
+def test_github_api_403_404_and_5xx_do_not_fail_asset_check(browser_page):
+    _page, base, context = browser_page
+    for status in (403, 404, 500):
+        isolated = context.browser.new_context()
+        install_github_stub(isolated, status=status)
+        page = open_page(isolated)
+        observed = []
+
+        def record(response, seen=observed):
+            if urlsplit(response.url).hostname == "api.github.com":
+                seen.append(response.status)
+
+        page.on("response", record)
+        try:
+            failed = exercise_navigation_search_and_assets(page, base)
+        finally:
+            isolated.close()
+        assert failed == [], (status, failed)
+        assert observed, status
+        assert set(observed) == {status}, (status, observed)
+
+
+def test_missing_manual_stylesheet_fails_asset_check(browser_page):
+    _page, base, context = browser_page
+    isolated = context.browser.new_context()
+    install_github_stub(isolated)
+    page = open_page(isolated)
+    page.route(
+        "**/assets/brand.css",
+        lambda route: route.fulfill(status=404, content_type="text/css", body=""),
+    )
+    try:
+        failed = exercise_navigation_search_and_assets(page, base)
+    finally:
+        isolated.close()
+    assert failed
+    assert all(urlsplit(url).path.endswith("/assets/brand.css") for url in failed)
 
 
 def test_themes_and_mobile_navigation(browser_page):
-    page, base = browser_page
+    page, base, _context = browser_page
     page.goto(base)
     page.locator('label[title="Switch to light mode"]').click()
     page.locator('label[title="Switch to dark mode"]').click()
@@ -162,7 +280,7 @@ def test_shared_discovery_and_preserved_bookmarks():
 
 
 def test_nested_keyboard_discovery_and_deep_link_reload(browser_page):
-    page, base = browser_page
+    page, base, _context = browser_page
     page.set_viewport_size({"width": 1280, "height": 900})
     page.goto(base + "docs/documentation.html#publication-pending-delivery")
     page.reload()

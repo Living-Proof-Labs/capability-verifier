@@ -285,8 +285,8 @@ must be new; move prior artifacts aside before repeating a local export.
 
 `capability_verifier.hallway` assesses each `livingproof-hallway-observation/1.0.0` or `/2.0.0` trial with
 four deterministic evaluators: `hallway-exit-reached`, `hallway-lateral-limit`,
-`hallway-wall-contact` and `hallway-fall`. It judges each trial with `all-required-v1`, then
-aggregates k of N with a Wilson 95% interval. Each rationale names the check, the time and the
+`hallway-wall-contact` and `hallway-fall`. It judges each trial with `all-required-v1`. Seeded trials then aggregate k of N with a
+Wilson 95% interval. Compared repeats are one outcome; see Accepted hallway evidence. Each rationale names the check, the time and the
 limit, and the time (2 decimals). Evidence 1.0.0 also names the seed, for example
 `lateral 0.62 m > 0.49 m at 10.26 s (seed 7)` or `wall contact depth 0.03 m at 4.50 s (seed 2)`.
 Evidence 2.0.0 names the trial index in that sentence, for example `(trial 2)`. Lengths gain
@@ -312,17 +312,51 @@ it is not a `KeyError`.
   (1 through N). `trials.reproducibility` is `compared`, `identical` and `finding`. When the
   identical trials disagree, `finding` is `{kind: "test-system", name: "reproducibility", ...}`.
 
-The same k-of-N aggregator grades both. Format 2.0.0 has no required-pass count, and the
-trials are identical repeats of the nominal pose, so the threshold used for that format is
-N: every trial has to pass. That is the existing aggregator with one input filled in, not a
-new grading policy. The per-trial evaluators are unchanged. A reproducibility finding is
-copied onto the verification result (`findings`) and into each bundle result's provenance.
-It is a test-system finding. It is not a robot FAIL, and it does not change the grade. A
-missing or unreadable observation is still `INSUFFICIENT_EVIDENCE` for that trial. If none
-of the planned trials complete, k-of-N with threshold N grades the run
-`INSUFFICIENT_EVIDENCE`. Reclassifying those trials as a test-system `ERROR` status, and
-dropping them from N, belongs to the later grading-policy change. The reporter bundle schema
-only allows `PASS`, `FAIL` and `INSUFFICIENT_EVIDENCE` as assessment statuses.
+Format 1.0.0, and a 2.0.0 record with `compared: false` (a single trial, or a run that was
+not a comparison), keep the k-of-N grade and the Wilson 95% interval. `trials.count` is
+unchanged. The per-trial evaluators are unchanged.
+
+When `trials.reproducibility.compared` is true, those repeats are not graded as independent
+samples. `k`, `n`, `required_passes` and the Wilson bounds are null: not a success rate and
+not a numeric interval. The keys stay, because livingproof-capability-report v3.4.0 through
+v3.6.0 (and current main) raise if they are missing. The aggregation id for that assessment
+is `repeated-outcome` 1.0.0. Seeded runs stay `k-of-n-wilson95` 1.0.0 with real counts.
+`result_ids` still names every repeat.
+
+Identical repeats (`identical: true` and `finding: null`), with every recorded result
+sharing one status and with that many results as `trials.count`, are that one status plus:
+
+```json
+"reproducibility": {
+  "compared": true,
+  "identical": true,
+  "repeats": "<trials.count>",
+  "agreeing": "<trials.count>",
+  "statement": "<trials.count> of <trials.count> repeats agree",
+  "finding": null
+}
+```
+
+`repeats` and `agreeing` are the evidence `trials.count`. The rationale is the statement.
+No number is added.
+
+Repeats that disagree (`identical: false`) are a reproducibility finding, not a success
+rate. The run grade is `INSUFFICIENT_EVIDENCE`, including when a recorded trial is
+`FAIL`. The specs' run-assessment grades are `PASS`, `FAIL`, `INSUFFICIENT_EVIDENCE`,
+and `INCOMPATIBLE`. `INSUFFICIENT_EVIDENCE` is the defined grade for a run that is not
+a robot verdict. The summary line is `repeats differ: INSUFFICIENT_EVIDENCE`. The
+finding detail is printed on its own `test-system reproducibility:` line.
+`reproducibility.finding` is the evidence finding, copied. `reproducibility.differing`
+lists each evidence repeat's `index`, `sha256`, `trajectory_sha256` and `outcome` where
+the evidence stored that field, so the repeats that differ can be seen. The finding is
+also copied onto the verification result (`findings`) and into each bundle result's
+provenance. It is a test-system finding. A failed trial stays a failed trial. The run
+is not a robot `PASS` or `FAIL`. `livingproof-sim-mujoco` v2.0.0 exits 4 after writing
+that finding. The scenario workflow still runs verify, which prints this summary and
+then exits 4. Seeded runs, and evidence 2.0.0 runs with `compared: false`, stay k-of-N
+with the Wilson 95% interval and exit 0. A missing or unreadable observation is still
+`INSUFFICIENT_EVIDENCE` for that trial. The reporter bundle schema only allows `PASS`,
+`FAIL` and `INSUFFICIENT_EVIDENCE` as assessment statuses.
 
 Result ids stay `{configuration}-seed-NN`. For format 2.0.0, NN is the trial index. The
 pinned reporter matches a video link by a result id ending in `-seed-NN` and rejects any
@@ -347,22 +381,39 @@ inside the exit segment (|y| <= half the world's `clear_width`, read from the tr
 cannot be read, or an end the format does not define, is INSUFFICIENT. Any other observation
 format is refused: every evaluator reports INSUFFICIENT. Any wall contact still fails.
 
-`hallway-specs.lock.json` pins the catalog. While it says `"tag": "UNRELEASED"`,
-`HALLWAY_SPECS_SOURCE` must name a local checkout that holds the locked commit. A release
-changes only the `"tag"` line (and `"commit"` if the release commit differs).
+`hallway-specs.lock.json` pins the catalog by tag. The reference is `v2.2.0`.
+The commit in that file is the commit the tag resolved to, recorded as evidence.
+While the lock says `"tag": "UNRELEASED"`, `HALLWAY_SPECS_SOURCE` must name a local
+checkout. A release changes the `"tag"` line. The fetch checks that tag, not the commit.
 
     PYTHONPATH=src python tools/verify_hallway.py <evidence>/manifest.json <out> [--prototype] [--bundle-version 1.1.0]
+    # exit 0: no test-system finding. exit 4: the finding was printed and the files were written.
+
+`verify_hallway.py` exits 4 only when the verifier that runs contains this change. A
+lock has to pin such a verifier for that tool exit. The scenario workflow's own script
+also exits 4 when the manifest carries the finding, including when an older locked
+verifier returns 0.
 
 `--bundle-version 1.1.0` adds the verifier's own grading to the bundle
 (`capability_verifier.evaluate`): each result carries a `decision` (status, reason,
 structured failures, assessor types, policy) and the bundle carries an `assessment`
-in the `livingproof-run-assessment/0.1` format from robot-capability-specs, with every
-decision and, per run, k of N, the Wilson 95% interval, the grade and its rationale.
-The rules are the ones capability report v1.10.0 applies: INCOMPATIBLE results make the
-run INCOMPATIBLE, and without a usable plan N is the recorded count and the grade is
-INSUFFICIENT_EVIDENCE. The default stays 1.0.0 because capability report 1.x accepts
-only that version. `tools/compare_assessment.py <bundle> <report.json>` checks a 1.1.0
-bundle against a report computed from the same evidence.
+in the `livingproof-run-assessment/0.1` format from robot-capability-specs. A seeded run
+carries k of N, the Wilson 95% interval, the grade and its rationale. A compared-repeat
+run carries the one grade, its rationale and the `reproducibility` block above. Its `k`,
+`n`, `required_passes` and Wilson bounds are null. For a seeded run the rules are the ones
+capability report v1.10.0 applies: INCOMPATIBLE results make the run INCOMPATIBLE, and
+without a usable plan N is the recorded count and the grade is INSUFFICIENT_EVIDENCE.
+The default stays 1.0.0 because capability report 1.x accepts only that version.
+`tools/compare_assessment.py <bundle> <report.json>` checks a 1.1.0 bundle against a
+report computed from the same evidence.
+
+livingproof-capability-report v3.6.0 is the same as current main on this read, and the
+same check is in v3.4.0, which this repository's duration render uses. `assessed.py`
+requires `k`, `n`, `required_passes` and `interval` and raises when a key is absent.
+Null values pass that check. `steps.py` `success_count` and `_confidence` then skip a
+non-number, so the rendered page has no success count and no 95% range. None of those
+versions reads `reproducibility`, so the page does not yet say that the repeats agree.
+That reporter change is separate from this verifier.
 
 Each 1.1.0 `decision` also names one `primary_failure` (a copy of one entry of `failures`, or
 `null` when nothing failed) and keeps every other failure in `secondary_failures`, so a reader
@@ -404,12 +455,14 @@ bundle bump; no grading decision reads them:
   `specs/scenarios/walk-hallway/description.json` (`livingproof-scenario-description/0.1`),
   copied unchanged with its `source` path, sha256 and catalog commit, once per bundle. It
   is written only when the catalog has the file, and refused if it names another scenario
-  revision or world; catalogs up to v1.8.0 have none; the lock pins v1.9.0, the first that does.
+  revision or world; catalogs up to v1.8.0 have none. The lock's tag is v2.2.0.
 
-## Reusable walk-hallway workflow (robot repositories)
+## Reusable scenario workflow (robot repositories)
 
-A robot repository's whole CI chain is one call. With no `verification-lock` input,
-every ref comes from that repository's `verification.lock.json`:
+`walk-hallway.yml` is a thin wrapper around `scenario.yml`. Existing callers keep
+the same inputs and outputs. The run reads the scenario and the world from the
+verification lock. With no `verification-lock` input, every ref comes from that
+repository's `verification.lock.json`:
 
 ```yaml
 jobs:
@@ -425,7 +478,9 @@ digest, the scenario-evaluator pin, the reporter, and the plan, world, configura
 evidence inputs. The job logs `EVIDENCE_SOURCE: caller` and the sha256 of the robot file
 it replaced. If the robot commit has no lock, the job logs that instead. Omitting the
 input leaves the robot file as the only source, which is what robot repositories that
-call this workflow themselves still rely on.
+call this workflow themselves still rely on. Every field, the `lock --check` failures,
+the evaluator tag and the refusal of a caller lock committed in the robot repository
+are in [Verification locks](docs/locks.md).
 
 The robot repository provides the lock, `pins.json`, `tests/` and a `pyproject.toml` with
 the runner source and `[tool.livingproof] adapter = "<module>:ROBOT"`. The workflow runs
@@ -434,6 +489,27 @@ the evidence through `livingproof_sim_mujoco.evidence`; no robot Taskfile target
 let a cross-robot workflow call it once per robot. `python3 -m capability_verifier.repin
 --root ROBOT_REPO --check` (or `runner=vX.Y.Z verifier=… reporter=…`) replaces the robot
 repositories' `tools/repin.py`.
+
+`livingproof-sim-mujoco` v2.0.0 writes the evidence manifest and exits 4 when identical
+trials disagree. That exit is the test-system reproducibility finding above. The evidence
+step records the process exit. Exit 0 continues. Exit 4 continues into verify only when
+`trials.reproducibility.finding` is present and its kind is `test-system`. Exit 4 without
+that finding fails the evidence job. Any other non-zero exit also fails it, and verify
+does not run (`needs: [plan, evidence]`, with no job-level `if:`). The assess step runs
+the locked verifier, which prints the summary and writes the files, then this workflow
+exits 4 when that finding is present. `verify_hallway.py` itself exits 4 only in a
+verifier that contains this change, so that tool exit needs a lock that pins such a
+verifier. `definition run` executes the scripts stored at the locked verifier commit, so
+its gate needs a lock that pins a verifier containing this change. A finding stops
+`definition run` at the first such configuration, after that summary is printed. Later
+configurations in the same definition are not started. The verify job fails after the
+record is written. The `verified-*` upload uses `if: always()`, so the files remain.
+The report job and the pull-request comment run when `needs.verify.result == 'success'`,
+so they stay idle for that finding. A run with no test-system finding exits 0, including
+a capability `FAIL`, which stays the recorded result. A disagreement is graded
+`INSUFFICIENT_EVIDENCE`, including when a trial is `FAIL`. Seeded runs, and evidence
+2.0.0 runs with `compared: false`, stay k-of-N (`k-of-n-wilson95` 1.0.0) with the
+Wilson 95% interval and exit 0.
 
 The `media` job (on by default, `media: false` to skip) runs `livingproof_sim_mujoco.media`:
 an MCAP file for every trial and a video for the first PASS and the first FAIL trial, each

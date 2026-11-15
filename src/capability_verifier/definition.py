@@ -24,7 +24,9 @@ different sha256 or different releases. ``0.2.0`` owns releases (specs, runner, 
 reporter digest), plan, world, configuration sha256s and the
 ``livingproof-evaluator-scenario`` package pin. At the locked commit it compares each
 configuration file's sha256, the ``[tool.livingproof]`` adapter string in ``pyproject.toml``,
-and the configuration names in ``robot.json``. It does not read a robot
+and the configuration names in ``robot.json``. It compares that evaluator pin with the
+tag the locked verifier requests and the commit that verifier's lock resolves, and the
+tag must resolve to the locked commit. It does not read a robot
 ``verification.lock.json``.
 
 ``run`` checks the lock, checks out the robot at the locked commit and the verifier at the
@@ -59,7 +61,7 @@ from pathlib import Path
 
 import yaml
 
-from capability_verifier import evidence_lock
+from capability_verifier import evaluator_pin, evidence_lock
 from capability_verifier.repin import DIGEST, TAG
 
 FORMAT = "livingproof-verification-lock/0.1.0"
@@ -147,12 +149,16 @@ def git(*args, cwd=None) -> str:
 
 
 def checkout(repository: str, ref: str, dest: Path) -> str:
-    """Fetch only ``ref`` of ``repository`` into ``dest`` (detached); return the commit."""
+    """Fetch only ``ref`` of ``repository`` into ``dest`` (detached); return the commit.
+
+    A reused ``dest`` is forced onto that commit. Tracked edits are discarded,
+    and untracked files other than ``.venv`` are removed.
+    """
     if not (dest / ".git").exists():
         dest.mkdir(parents=True, exist_ok=True)
         git("init", "-q", cwd=dest)
     git("fetch", "-q", "--depth", "1", f"{GITHUB}/{repository}.git", ref, cwd=dest)
-    git("checkout", "-q", "--detach", "FETCH_HEAD", cwd=dest)
+    git("checkout", "-q", "-f", "--detach", "FETCH_HEAD", cwd=dest)
     git("clean", "-qfdx", "-e", ".venv", cwd=dest)
     return git("rev-parse", "HEAD", cwd=dest)
 
@@ -551,8 +557,10 @@ def check(definition: Path, work: Path, workflow: Path | None = None) -> dict:
     if repository_ok and not SHA.fullmatch(r["commit"]):
         problems.append("robot.commit is not a full commit sha")
     elif repository_ok and lock["format"] == FORMAT_V2:
-        # 0.2.0 owns releases. Compare the robot tree, not a robot verification.lock.json.
+        # 0.2.0 owns releases. Compare the robot tree, not a robot verification.lock.json,
+        # and compare the evaluator pin with the verifier checkout that installs it.
         problems.extend(pinned_robot_problems(lock, work / "robot"))
+        problems.extend(evaluator_install_problems(lock, work / "verifier"))
     elif repository_ok:
         raw = show(r["repository"], r["commit"], r["lock"]["path"], work / "robot")
         if sha256(raw) != r["lock"]["sha256"]:
@@ -566,6 +574,62 @@ def check(definition: Path, work: Path, workflow: Path | None = None) -> dict:
     if problems:
         raise DefinitionError("\n".join(problems))
     return lock
+
+
+def called_workflow(text: str) -> str | None:
+    """Relative path when ``text`` is a one-job wrapper around a same-repository workflow.
+
+    ``./`` is the caller's repository. ``$/`` is the repository and revision of the
+    workflow that contains the call, which is what a caller in another repository
+    resolves. A ``@ref`` is not allowed on ``$/``. Both forms name a file in this
+    checkout.
+    """
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    jobs = doc.get("jobs")
+    if not isinstance(jobs, dict) or len(jobs) != 1:
+        return None
+    job = next(iter(jobs.values()))
+    if not isinstance(job, dict) or job.get("steps"):
+        return None
+    uses = job.get("uses")
+    if isinstance(uses, str) and uses.startswith("$/"):
+        path = uses[2:]
+        if "@" in path:
+            return None
+        return path
+    if isinstance(uses, str) and uses.startswith("./"):
+        return uses[2:]
+    return None
+
+
+def procedure_text(root: Path, procedure: str) -> str:
+    """Run scripts for ``procedure``, following one local wrapper."""
+    path = root / PROCEDURES[procedure]
+    text = path.read_text()
+    called = called_workflow(text)
+    if called is None:
+        return text
+    return (root / called).read_text()
+
+
+def first_step(workflow: str, names: tuple[str, ...]) -> str:
+    """The first of ``names`` that has a run script.
+
+    A lock can check out an older workflow whose catalog step is still named
+    ``Walk-hallway catalog``. The current workflow names it ``Scenario catalog``.
+    """
+    missing = None
+    for name in names:
+        try:
+            return step(workflow, name)
+        except DefinitionError as exc:
+            missing = exc
+    raise missing
 
 
 def step(workflow: str, name: str) -> str:
@@ -589,7 +653,7 @@ def step(workflow: str, name: str) -> str:
                 if body.startswith("run: "):
                     return body[5:] + "\n"
             break
-    raise DefinitionError(f"walk-hallway.yml has no step {name!r} with a run script")
+    raise DefinitionError(f"workflow has no step {name!r} with a run script")
 
 
 def sh(script: str, cwd: Path, env: dict, outputs: Path | None = None) -> dict:
@@ -685,6 +749,14 @@ def pinned_robot_problems(lock: dict, dest: Path) -> list[str]:
     return problems
 
 
+def evaluator_install_problems(lock: dict, dest: Path) -> list[str]:
+    """The locked evaluator pin against the verifier checkout that ``uv sync`` installs."""
+    pin = lock["evaluators"]["livingproof-evaluator-scenario"]
+    verifier = lock["releases"]["verifier"]
+    checkout(verifier["repository"], verifier["commit"], dest)
+    return evaluator_pin.evaluator_pin_problems(pin["repository"], pin["tag"], pin["commit"], dest)
+
+
 def prepare_evidence_inputs(lock: dict, robot: Path, caller_lock: Path) -> dict:
     """Env for the plan steps.
 
@@ -725,12 +797,17 @@ def run(definition: Path, out: Path, *, reporter: str = "docker") -> dict:
     v = lock["releases"]["verifier"]
     robot, verifier = work / "robot", work / "verifier"
     checkout(v["repository"], v["commit"], verifier)
-    wf = (verifier / PROCEDURES[lock["procedure"]]).read_text()
+    wf = procedure_text(verifier, lock["procedure"])
     gh = {"MUJOCO_GL": "osmesa", "PYOPENGL_PLATFORM": "osmesa"}
     # plan job: the configurations must be in the lock, every ref a released tag.
     evidence_env = prepare_evidence_inputs(lock, robot, lock_path(definition))
     only = json.dumps(lock["robot"]["configurations"])
-    sh(step(wf, "Refs from verification.lock.json"), robot, {**gh, "ONLY": only}, work / "r.out")
+    sh(
+        step(wf, "Refs from verification.lock.json"),
+        robot,
+        {**gh, "ONLY": only, **evidence_env},
+        work / "r.out",
+    )
     sh(step(wf, "Every ref is a released tag"), work, {**gh, **evidence_env})
     plan = sh(
         f"uv run --no-project --with packaging==26.3 -- bash -e <<'LP'\n"
@@ -744,7 +821,7 @@ def run(definition: Path, out: Path, *, reporter: str = "docker") -> dict:
     adapter = sh(step(wf, "Robot adapter from pyproject.toml"), robot, gh, work / "a.out")["ref"]
     sh(step(wf, "Robot and configuration profiles valid"), robot, {**gh, "ADAPTER": adapter})
     subprocess.run(["uv", "sync", "--locked", "-q"], cwd=verifier, check=True)
-    sh(step(wf, "Walk-hallway catalog"), verifier, gh)
+    sh(first_step(wf, ("Scenario catalog", "Walk-hallway catalog")), verifier, gh)
     bindir = reporter_shim(lock, reporter, work)
     summary = {"definition": definition.name, "bundle-version": bundle, "configurations": {}}
     for conf in lock["robot"]["configurations"]:

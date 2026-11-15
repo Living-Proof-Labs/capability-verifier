@@ -83,6 +83,7 @@ def build():
         "docs/documentation.md": "docs/documentation.md",
         "docs/matrix-validation.md": "docs/matrix-validation.md",
         "docs/guides.md": "docs/guides.md",
+        "docs/locks.md": "docs/locks.md",
         "docs/contributing.md": "docs/contributing.md",
         "docs/license.md": "docs/license.md",
     }

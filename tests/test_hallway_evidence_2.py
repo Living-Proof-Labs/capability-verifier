@@ -4,6 +4,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -15,7 +16,7 @@ from capability_verifier import evaluate, hallway
 
 FIXTURES = Path(__file__).parent / "fixtures" / "hallway"
 EVIDENCE = FIXTURES / "evidence-2.0.0"
-WORKFLOW = Path(__file__).parents[1] / ".github" / "workflows" / "walk-hallway.yml"
+WORKFLOW = Path(__file__).parents[1] / ".github" / "workflows" / "scenario.yml"
 FINDING = {
     "kind": "test-system",
     "name": "reproducibility",
@@ -81,16 +82,64 @@ def test_evidence_2_0_0_grades_every_identical_trial(tmp_path):
         "stock-seed-03",
     ]
     assert "seed" not in result["trials"][0]
-    assert all(t["status"] == hallway.PASS for t in result["trials"])
+    # The stored lateral value is inside the limit and the trace is not, so each
+    # trial is INSUFFICIENT_EVIDENCE. The repeats still agree with each other.
+    assert all(t["status"] == hallway.INSUFFICIENT for t in result["trials"])
     summary = result["summary"]
-    assert (summary["k"], summary["n"], summary["required_passes"], summary["grade"]) == (
-        3,
-        3,
-        3,
-        hallway.PASS,
-    )
+    count = _load()["trials"]["count"]
+    statement = f"{count} of {count} repeats agree"
+    assert summary["grade"] == hallway.INSUFFICIENT
+    assert summary["rationale"] == statement
+    assert summary["reproducibility"] == {
+        "compared": True,
+        "identical": True,
+        "repeats": count,
+        "agreeing": count,
+        "statement": statement,
+        "finding": None,
+    }
+    assert summary["k"] is None and summary["n"] is None
+    assert summary["required_passes"] is None and summary["wilson95"] == [None, None]
+    assert summary["aggregation"]["id"] == "repeated-outcome"
+    lines = hallway.summary_lines(result)
+    assert lines[0] == f"{statement}: {hallway.INSUFFICIENT}"
+    assert [line for line in lines[1:]] == [
+        "  trial  1 INSUFFICIENT_EVIDENCE: "
+        "observation max_abs_lateral disagrees with its trace (trial 1)",
+        "  trial  2 INSUFFICIENT_EVIDENCE: "
+        "observation max_abs_lateral disagrees with its trace (trial 2)",
+        "  trial  3 INSUFFICIENT_EVIDENCE: "
+        "observation max_abs_lateral disagrees with its trace (trial 3)",
+    ]
     assert result["findings"] == []
     assert "findings" not in summary
+
+
+def test_identical_repeats_are_one_bundle_outcome(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.15.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    spec = importlib.util.spec_from_file_location(
+        "verify_hallway_tool_identical", Path(__file__).parents[1] / "tools" / "verify_hallway.py"
+    )
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    tool.export(_copy(tmp_path), tmp_path / "verified", prototype=True, bundle_version="1.1.0")
+    bundle = json.loads((tmp_path / "verified" / "bundle" / "manifest.json").read_text())
+    report = json.loads((tmp_path / "verified" / "verification.json").read_text())
+    run = bundle["assessment"]["runs"][0]
+    count = _load()["trials"]["count"]
+    assert run["grade"] == report["summary"]["grade"] == hallway.INSUFFICIENT
+    assert run["reproducibility"] == report["summary"]["reproducibility"]
+    assert run["reproducibility"]["statement"] == f"{count} of {count} repeats agree"
+    assert len(run["result_ids"]) == count
+    assert run["k"] is None and run["n"] is None and run["required_passes"] is None
+    assert run["interval"] == {
+        "method": "wilson",
+        "level": 0.95,
+        "lower": None,
+        "upper": None,
+    }
+    assert bundle["assessment"]["aggregation"] == {"id": "repeated-outcome", "version": "1.0.0"}
 
 
 def test_a_reproducibility_finding_is_not_a_robot_fail(tmp_path):
@@ -109,15 +158,29 @@ def test_a_reproducibility_finding_is_not_a_robot_fail(tmp_path):
     }
     (dest / "manifest.json").write_text(json.dumps(manifest) + "\n")
     result = hallway.verify(dest / "manifest.json")
-    assert result["summary"]["grade"] == hallway.PASS
+    summary = result["summary"]
+    assert summary["grade"] != hallway.PASS
+    assert summary["grade"] == hallway.INSUFFICIENT
+    assert summary["k"] is None and summary["n"] is None
+    assert summary["required_passes"] is None and summary["wilson95"] == [None, None]
+    assert summary["reproducibility"]["compared"] is True
+    assert summary["reproducibility"]["identical"] is False
+    assert summary["reproducibility"]["finding"] == FINDING
+    assert summary["reproducibility"]["repeats"] == manifest["trials"]["count"]
+    assert "agreeing" not in summary["reproducibility"]
+    assert "statement" not in summary["reproducibility"]
+    assert [row["index"] for row in summary["reproducibility"]["differing"]] == [
+        trial["index"] for trial in manifest["trials"]["results"]
+    ]
+    assert summary["reproducibility"]["differing"][1]["sha256"] == digest
+    text = "\n".join(hallway.summary_lines(result))
+    assert "Wilson" not in text and "/" not in text.splitlines()[0]
+    assert any(line.startswith("test-system reproducibility:") for line in text.splitlines())
     assert result["findings"] == [FINDING]
-    assert result["summary"]["findings"] == [FINDING]
-    assert any(
-        line.startswith("test-system reproducibility:") for line in hallway.summary_lines(result)
-    )
+    assert summary["findings"] == [FINDING]
 
 
-def test_a_robot_fail_stays_a_robot_fail_beside_the_finding(tmp_path):
+def test_a_failed_trial_stays_failed_and_the_run_is_not_a_robot_fail(tmp_path):
     dest = tmp_path / "evidence"
     shutil.copytree(EVIDENCE, dest)
     digest = _rewrite(
@@ -133,13 +196,21 @@ def test_a_robot_fail_stays_a_robot_fail_beside_the_finding(tmp_path):
     }
     (dest / "manifest.json").write_text(json.dumps(manifest) + "\n")
     result = hallway.verify(dest / "manifest.json")
-    assert result["summary"]["grade"] == hallway.FAIL
+    assert result["summary"]["grade"] == hallway.INSUFFICIENT
+    assert result["summary"]["grade"] != hallway.FAIL
+    assert result["summary"]["rationale"] == "repeats differ"
+    assert result["summary"]["k"] is None and result["summary"]["wilson95"] == [None, None]
+    assert result["summary"]["reproducibility"]["finding"]["kind"] == "test-system"
     assert result["findings"][0]["kind"] == "test-system"
     failed = result["trials"][1]
     assert failed["index"] == 2 and failed["status"] == hallway.FAIL
     assert failed["failures"][0]["seed"] == 2
     assert "(trial 2)" in failed["assessments"][1]["rationale"]
     assert "reproducibility" not in failed["assessments"][1]["rationale"]
+    text = "\n".join(hallway.summary_lines(result))
+    assert "not a robot FAIL.: FAIL" not in text
+    assert text.splitlines()[0] == f"repeats differ: {hallway.INSUFFICIENT}"
+    assert any(line.startswith("test-system reproducibility:") for line in text.splitlines())
 
 
 def test_no_completed_trial_is_insufficient_evidence(tmp_path):
@@ -147,9 +218,40 @@ def test_no_completed_trial_is_insufficient_evidence(tmp_path):
     for trial in path.parent.glob("trials/*.json"):
         trial.unlink()
     result = hallway.verify(path)
+    count = _load()["trials"]["count"]
+    statement = f"{count} of {count} repeats agree"
     assert all(t["status"] == hallway.INSUFFICIENT for t in result["trials"])
     assert result["summary"]["grade"] == hallway.INSUFFICIENT
     assert result["summary"]["grade"] != hallway.FAIL
+    # Every recorded result is the same status, so the compared-repeat rule
+    # labels the run as that one outcome, not a k-of-N missing-measurement rate.
+    assert result["summary"]["rationale"] == statement
+    assert result["summary"]["k"] is None and result["summary"]["wilson95"] == [None, None]
+    assert result["summary"]["reproducibility"]["statement"] == statement
+
+
+def test_a_missing_repeat_of_an_inconsistent_trace_still_agrees(tmp_path):
+    """The stored lateral value disagrees with the trace, so every trial is inconclusive.
+
+    A missing file is the same status. The repeats still agree, and the grade is not a
+    robot FAIL and not a pass rate.
+    """
+    path = _copy(tmp_path)
+    (path.parent / "trials" / "trial-02.json").unlink()
+    result = hallway.verify(path)
+    summary = result["summary"]
+    count = _load()["trials"]["count"]
+    statement = f"{count} of {count} repeats agree"
+    assert [t["status"] for t in result["trials"]] == [hallway.INSUFFICIENT] * count
+    assert summary["grade"] == hallway.INSUFFICIENT
+    assert summary["grade"] != hallway.PASS
+    assert summary["k"] is None and summary["n"] is None
+    assert summary["wilson95"] == [None, None]
+    assert summary["rationale"] == statement
+    assert summary["reproducibility"]["agreeing"] == count
+    lines = hallway.summary_lines(result)
+    assert "Wilson" not in lines[0] and "/" not in lines[0]
+    assert lines[0].startswith(statement)
 
 
 def test_evidence_2_0_0_exports_the_finding_without_changing_the_grade(tmp_path, monkeypatch):
@@ -179,16 +281,27 @@ def test_evidence_2_0_0_exports_the_finding_without_changing_the_grade(tmp_path,
     )
     report = json.loads((tmp_path / "verified" / "verification.json").read_text())
     bundle = json.loads((tmp_path / "verified" / "bundle" / "manifest.json").read_text())
-    assert report["summary"]["grade"] == hallway.PASS
+    assert report["summary"]["grade"] == hallway.INSUFFICIENT
+    assert report["summary"]["k"] is None and report["summary"]["wilson95"] == [None, None]
     assert report["findings"] == [FINDING]
     assert bundle["results"][0]["provenance"]["findings"] == [FINDING]
+    assert bundle["results"][0]["provenance"]["reproducibility"]["identical"] is False
     assert bundle["results"][0]["original_result"] == {
-        "status": hallway.PASS,
+        "status": hallway.INSUFFICIENT,
         "index": 1,
         "seed": 1,
     }
-    assert bundle["assessment"]["runs"][0]["grade"] == hallway.PASS
-    assert bundle["assessment"]["runs"][0]["required_passes"] == 3
+    run = bundle["assessment"]["runs"][0]
+    assert run["grade"] == hallway.INSUFFICIENT
+    assert run["k"] is None and run["n"] is None and run["required_passes"] is None
+    assert run["interval"] == {
+        "method": "wilson",
+        "level": 0.95,
+        "lower": None,
+        "upper": None,
+    }
+    assert run["reproducibility"]["finding"] == FINDING
+    assert bundle["assessment"]["aggregation"]["id"] == "repeated-outcome"
 
 
 @pytest.mark.parametrize(
@@ -246,16 +359,28 @@ def test_one_trial_is_not_a_comparison(tmp_path):
     manifest["trials"]["results"] = manifest["trials"]["results"][:1]
     manifest["trials"]["reproducibility"] = {"compared": False, "identical": None, "finding": None}
     result = hallway.verify(_copy(tmp_path, manifest))
-    assert result["summary"]["grade"] == hallway.PASS
+    assert result["summary"]["grade"] == hallway.INSUFFICIENT
     assert (
         result["summary"]["k"],
         result["summary"]["n"],
         result["summary"]["required_passes"],
     ) == (
-        1,
+        0,
         1,
         1,
     )
+    assert result["summary"]["wilson95"] == hallway.wilson(0, 1)
+    assert result["summary"]["aggregation"] == {"id": "k-of-n-wilson95", "version": "1.0.0"}
+    assert "reproducibility" not in result["summary"]
+    low, high = result["summary"]["wilson95"]
+    lines = hallway.summary_lines(result)
+    assert lines[0] == (
+        f"0/1 trials PASS (needs 1), Wilson 95% [{low:.4f}, {high:.4f}]: {hallway.INSUFFICIENT}"
+    )
+    assert lines[1:] == [
+        "  trial  1 INSUFFICIENT_EVIDENCE: "
+        "observation max_abs_lateral disagrees with its trace (trial 1)"
+    ]
     assert result["findings"] == []
 
 
@@ -322,3 +447,182 @@ def test_evidence_2_plan_is_the_same_threshold_the_bundle_aggregator_uses():
     )
     assert (grade, n) == (hallway.FAIL, 3)
     assert "needs 3" in rationale
+
+
+def _trace_inside_stored_maximum(tmp_path, manifest=None):
+    """A copy whose trace stays inside the stored maximum, so evaluator v1.2.0 grades it.
+
+    The committed trace steps farther from the route than its stored maximum, which
+    evaluator v1.2.0 reports as INSUFFICIENT_EVIDENCE. This copy keeps the v1.19.0
+    repeat checks about repeats, not about that disagreement.
+    """
+    path = _copy(tmp_path, manifest)
+    document = json.loads(path.read_text())
+
+    def on_route(obs):
+        for sample in obs["trace"]["samples"]:
+            sample[2] = 0.0
+
+    for trial in document["trials"]["results"]:
+        trial["sha256"] = _rewrite(path.parent / trial["path"], on_route)
+    path.write_text(json.dumps(document, indent=2) + "\n")
+    return path
+
+
+def test_v1_19_0_identical_repeats_are_one_pass_outcome(tmp_path):
+    result = hallway.verify(_trace_inside_stored_maximum(tmp_path))
+    count = _load()["trials"]["count"]
+    statement = f"{count} of {count} repeats agree"
+    assert [t["status"] for t in result["trials"]] == [hallway.PASS] * count
+    summary = result["summary"]
+    assert summary["grade"] == hallway.PASS
+    assert summary["rationale"] == statement
+    assert summary["reproducibility"]["agreeing"] == count
+    assert summary["k"] is None and summary["n"] is None
+    assert summary["aggregation"]["id"] == "repeated-outcome"
+    assert hallway.summary_lines(result) == [f"{statement}: {hallway.PASS}"]
+
+
+def test_v1_19_0_missing_repeat_is_a_mismatched_comparison(tmp_path):
+    path = _trace_inside_stored_maximum(tmp_path)
+    (path.parent / "trials" / "trial-02.json").unlink()
+    result = hallway.verify(path)
+    summary = result["summary"]
+    assert [t["status"] for t in result["trials"]] == [
+        hallway.PASS,
+        hallway.INSUFFICIENT,
+        hallway.PASS,
+    ]
+    assert summary["grade"] == hallway.INSUFFICIENT
+    assert summary["k"] is None and summary["n"] is None
+    assert summary["wilson95"] == [None, None]
+    assert summary["rationale"] == "recorded results do not match the evidence comparison"
+    assert "agreeing" not in summary["reproducibility"]
+    assert hallway.summary_lines(result)[0].startswith(
+        "recorded results do not match the evidence comparison"
+    )
+
+
+def _tool():
+    spec = importlib.util.spec_from_file_location(
+        "verify_hallway_tool_exit", Path(__file__).parents[1] / "tools" / "verify_hallway.py"
+    )
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    return tool
+
+
+def _cli(manifest, out):
+    env = os.environ.copy()
+    env["LIVINGPROOF_VERIFIER_VERSION"] = "1.15.2"
+    env["SOURCE_COMMIT"] = "0" * 40
+    env["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
+    return subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).parents[1] / "tools" / "verify_hallway.py"),
+            "--bundle-version",
+            "1.1.0",
+            str(manifest),
+            str(out),
+        ],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _with_finding(tmp_path):
+    dest = tmp_path / "evidence"
+    shutil.copytree(EVIDENCE, dest)
+    manifest = json.loads((dest / "manifest.json").read_text())
+    manifest["trials"]["reproducibility"] = {
+        "compared": True,
+        "identical": False,
+        "finding": FINDING,
+    }
+    path = dest / "manifest.json"
+    path.write_text(json.dumps(manifest) + "\n")
+    return path
+
+
+def test_verify_exits_0_when_the_repeats_agree(tmp_path):
+    """An agreeing repeated-outcome run is a result. It does not fail verify."""
+    done = _cli(_copy(tmp_path), tmp_path / "verified")
+    assert done.returncode == 0, done.stderr
+    assert "test-system reproducibility:" not in done.stdout
+    assert "exiting 4" not in done.stderr
+    report = json.loads((tmp_path / "verified" / "verification.json").read_text())
+    assert report["findings"] == []
+    assert report["summary"]["aggregation"]["id"] == "repeated-outcome"
+    assert report["summary"]["k"] is None
+
+
+def test_verify_reports_the_finding_then_exits_4(tmp_path):
+    """Disagreeing repeats stay repeated-outcome, and the finding fails verify after the summary."""
+    out = tmp_path / "verified"
+    done = _cli(_with_finding(tmp_path), out)
+    assert done.returncode == 4, done.stderr
+    assert "test-system reproducibility:" in done.stdout
+    assert FINDING["detail"] in done.stdout
+    assert "exiting 4" in done.stderr
+    grade = done.stdout.splitlines()[0]
+    assert grade.endswith(f": {hallway.INSUFFICIENT}")
+    assert grade.startswith("test-system") is False
+    report = json.loads((out / "verification.json").read_text())
+    assert report["summary"]["grade"] == hallway.INSUFFICIENT
+    assert report["summary"]["aggregation"]["id"] == "repeated-outcome"
+    assert report["summary"]["k"] is None and report["summary"]["wilson95"] == [None, None]
+    assert report["findings"] == [FINDING]
+    assert [t["status"] for t in report["trials"]] == [hallway.INSUFFICIENT] * 3
+    bundle = json.loads((out / "bundle" / "manifest.json").read_text())
+    assert bundle["results"][0]["provenance"]["findings"][0]["kind"] == "test-system"
+    assert bundle["results"][0]["original_result"]["status"] == hallway.INSUFFICIENT
+    assert bundle["assessment"]["aggregation"]["id"] == "repeated-outcome"
+
+
+def test_job_exit_follows_the_finding():
+    tool = _tool()
+    assert tool.job_exit({"summary": {"grade": hallway.PASS}}) == 0
+    assert tool.job_exit({"findings": [], "summary": {"grade": hallway.FAIL}}) == 0
+    assert tool.job_exit({"findings": [FINDING], "summary": {"grade": hallway.INSUFFICIENT}}) == 4
+    with pytest.raises(SystemExit, match="not test-system") as caught:
+        tool.job_exit({"findings": [{"kind": "FAIL", "name": "robot", "detail": "fell"}]})
+    assert caught.value.code == "finding kind is not test-system: 'robot'"
+
+
+def test_passing_trials_that_disagree_exit_4_and_are_not_graded_pass(tmp_path):
+    """Observations that pass stay PASS. The run is repeated-outcome and the process exits 4."""
+    path = _trace_inside_stored_maximum(tmp_path)
+    document = json.loads(path.read_text())
+    document["trials"]["reproducibility"] = {
+        "compared": True,
+        "identical": False,
+        "finding": FINDING,
+    }
+    path.write_text(json.dumps(document) + "\n")
+    out = tmp_path / "verified"
+    done = _cli(path, out)
+    assert done.returncode == 4, done.stderr
+    assert "test-system reproducibility:" in done.stdout
+    report = json.loads((out / "verification.json").read_text())
+    count = _load()["trials"]["count"]
+    assert [trial["status"] for trial in report["trials"]] == [hallway.PASS] * count
+    assert report["summary"]["grade"] == hallway.INSUFFICIENT
+    assert report["summary"]["aggregation"]["id"] == "repeated-outcome"
+    assert report["findings"] == [FINDING]
+
+
+def test_v1_19_0_one_trial_is_k_of_n(tmp_path):
+    manifest = _load()
+    manifest["plan"]["trials"]["count"] = 1
+    manifest["trials"]["count"] = 1
+    manifest["trials"]["results"] = manifest["trials"]["results"][:1]
+    manifest["trials"]["reproducibility"] = {"compared": False, "identical": None, "finding": None}
+    result = hallway.verify(_trace_inside_stored_maximum(tmp_path, manifest))
+    summary = result["summary"]
+    assert summary["grade"] == hallway.PASS
+    assert (summary["k"], summary["n"], summary["required_passes"]) == (1, 1, 1)
+    assert summary["aggregation"] == {"id": "k-of-n-wilson95", "version": "1.0.0"}
+    assert "reproducibility" not in summary

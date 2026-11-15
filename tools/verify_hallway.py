@@ -3,11 +3,15 @@
 
     python tools/verify_hallway.py <evidence>/manifest.json <out> [--prototype]
 
-Writes ``<out>/verification.json`` (per-trial assessments and the k/N summary) and
+Writes ``<out>/verification.json`` (per-trial assessments and the run summary) and
 ``<out>/bundle/`` (``manifest.json`` plus ``evidence/``) for
 livingproof-capability-report. The bundle schema accepts only released catalog tags;
 with an UNRELEASED hallway lock the export refuses unless ``--prototype`` is given,
 which writes the placeholder tag ``v0.0.0`` and says so in every result's provenance.
+
+Exit 0: the assessment is written and there is no test-system finding. Exit 4: the
+assessment is written, the summary has printed the finding, and the process exits 4
+so the verify job fails. Exit 4 is that finding. A robot grade with no finding is exit 0.
 """
 
 import argparse
@@ -17,6 +21,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -242,6 +247,10 @@ def _export(
             "simulator": evidence.get("environment"),
             "summary": result["summary"],
         }
+        if evidence.get("format") == hallway.EVIDENCE_V2:
+            # The evidence record, copied. The run assessment reads it and does not recompute it.
+            provenance["reproducibility"] = evidence["trials"]["reproducibility"]
+            provenance["repeat_records"] = evidence["trials"]["results"]
         if missing:
             provenance["missing_evidence"] = missing
         if result.get("findings"):
@@ -315,6 +324,24 @@ def _export(
     return result
 
 
+def job_exit(result: dict) -> int:
+    """0 when the assessment has no test-system finding, else 4.
+
+    Call this only after the summary has been printed and the files have been
+    written. 4 means the finding is on the record and the verify job fails.
+    It is the finding. A robot grade stays in the summary. A finding of any other
+    kind is refused.
+    """
+    findings = result.get("findings") or []
+    if not findings:
+        return 0
+    bad = [f for f in findings if f.get("kind") != "test-system"]
+    if bad:
+        names = ", ".join(repr(f.get("name")) for f in bad)
+        raise SystemExit(f"finding kind is not test-system: {names}")
+    return 4
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("manifest", type=Path)
@@ -335,3 +362,10 @@ if __name__ == "__main__":
     except ProducerError as e:
         raise SystemExit(f"cannot label the bundle producer: {e}") from None
     print("\n".join(hallway.summary_lines(r)))
+    code = job_exit(r)
+    if code:
+        print(
+            "test-system finding reported; exiting 4. The robot grade above is unchanged.",
+            file=sys.stderr,
+        )
+        raise SystemExit(code)

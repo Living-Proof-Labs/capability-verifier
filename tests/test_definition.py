@@ -13,6 +13,7 @@ from capability_verifier import definition as d
 
 ROOT = Path(__file__).parents[1]
 WORKFLOW = (ROOT / ".github/workflows/walk-hallway.yml").read_text()
+IMPLEMENTATION = (ROOT / ".github/workflows/scenario.yml").read_text()
 RELEASES = {
     "verifier": {
         "repository": "Living-Proof-Labs/capability-verifier",
@@ -351,21 +352,31 @@ def test_definition_is_validated(tmp_path, text, message):
         ("Setup (locked environment", "uv sync --locked"),
         ("Robot adapter from pyproject.toml", '["tool"]["livingproof"]["adapter"]'),
         ("Evidence (observations only", "livingproof_sim_mujoco.evidence"),
-        ("Walk-hallway catalog", "fetch_hallway_specs.py"),
+        ("Scenario catalog", "fetch_hallway_specs.py"),
         ("Assess every trial", "verify_hallway.py"),
         ("Validate, then render", "livingproof-capability-report render"),
     ],
 )
 def test_run_executes_the_reusable_workflow_steps_not_a_copy(name, needle):
     # Every step run() uses exists in this commit's walk-hallway.yml, with its script.
-    script = d.step(WORKFLOW, name)
+    script = d.step(IMPLEMENTATION, name)
     assert needle in script
     assert "${{" not in script  # inputs reach the scripts through env, as in CI
 
 
 def test_missing_step_is_an_error():
     with pytest.raises(SystemExit, match="no step"):
-        d.step(WORKFLOW, "Nonexistent step")
+        d.step(IMPLEMENTATION, "Nonexistent step")
+
+
+def test_an_older_catalog_step_name_still_runs():
+    """Locks that check out an older workflow still name the catalog step Walk-hallway."""
+    old = IMPLEMENTATION.replace(
+        "Scenario catalog from the verifier's own lock",
+        "Walk-hallway catalog from the verifier's own lock",
+    )
+    script = d.first_step(old, ("Scenario catalog", "Walk-hallway catalog"))
+    assert "fetch_hallway_specs.py" in script
 
 
 def test_livingproof_plugin_entry_point():
@@ -650,22 +661,49 @@ def _release(commit, *, image=None):
     return ref
 
 
+def _offline_evaluator_tag(repository, tag):
+    if repository == _EVALUATOR_REPO and tag == "v1.0.0":
+        return EVALUATOR_COMMIT
+    raise SystemExit(f"{repository} has no tag {tag}; release it first")
+
+
 @pytest.fixture
 def thin_robot(tmp_path, monkeypatch):
-    """A robot commit with adapter, robot.json and configuration files, and no lock file."""
+    """A robot commit with adapter, robot.json and configuration files, and no lock file.
+
+    The verifier commit the 0.2.0 lock names is a local repository whose
+    pyproject and uv.lock install the lock's evaluator pin.
+    """
     base = tmp_path / "git"
     repo = base / "Org" / "robot.git"
     shutil.copytree(THIN, repo)
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "add", "-A")
     _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+    verifier = base / "Living-Proof-Labs" / "example.git"
+    verifier.mkdir(parents=True)
+    _git(verifier, "init", "-q", "-b", "main")
+    (verifier / "pyproject.toml").write_text(_verifier_pyproject("v1.0.0"))
+    (verifier / "uv.lock").write_text(_verifier_uv_lock("v1.0.0", EVALUATOR_COMMIT))
+    _git(verifier, "add", "-A")
+    _git(verifier, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "evaluator pin")
     monkeypatch.setattr(d, "GITHUB", f"file://{base}")
+    monkeypatch.setattr(
+        "capability_verifier.evaluator_pin.resolve_evaluator_tag", _offline_evaluator_tag
+    )
     return repo
 
 
 def _v2_lock(repo, definition):
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    verifier_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo.parents[1] / "Living-Proof-Labs" / "example.git",
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
     profile = json.loads((repo / "robot.json").read_text())
     versions = {"stock": "1.1.0", "playground": "1.0.0"}
@@ -697,7 +735,7 @@ def _v2_lock(repo, definition):
             "specs": _release("a" * 40),
             "runner": _release("b" * 40),
             "verifier": _release(
-                "c" * 40, image="ghcr.io/living-proof-labs/capability-verifier-hallway"
+                verifier_commit, image="ghcr.io/living-proof-labs/capability-verifier-hallway"
             ),
             "reporter": _release(
                 "d" * 40, image="ghcr.io/living-proof-labs/livingproof-capability-report"
@@ -786,6 +824,59 @@ def test_v2_check_refuses_a_robot_tree_that_drifted(tmp_path, thin_robot, mutate
         d.check(path, tmp_path / "w2")
 
 
+def test_reused_work_refuses_a_configuration_the_commit_does_not_have(tmp_path, thin_robot):
+    """A second checkout of the same commit must not keep a tracked configuration edit.
+
+    Otherwise a reused ``--work`` directory can match a lock sha256 that the pinned
+    commit does not contain, and the check passes.
+    """
+    path = _definition(tmp_path)
+    lock = _write_v2(path, _v2_lock(thin_robot, path))
+    work = tmp_path / "work"
+    assert d.check(path, work) == lock
+    entry = lock["configurations"][0]
+    config = work / "robot" / entry["path"]
+    committed = config.read_bytes()
+    edited = committed.replace(b'"version": "1.1.0"', b'"version": "9.9.9"')
+    assert edited != committed
+    config.write_bytes(edited)
+    drifted = json.loads(json.dumps(lock))
+    drifted["configurations"][0]["sha256"] = d.sha256(edited)
+    _write_v2(path, drifted)
+    with pytest.raises(SystemExit, match="sha256 is"):
+        d.check(path, work)
+    assert config.read_bytes() == committed
+
+
+def test_reused_work_records_the_robot_lock_sha(tmp_path, thin_robot):
+    """A second local run records the robot's lock, not the previous caller-derived file."""
+    robot_bytes = b'{"format":"livingproof-verification-lock/1.0.0","owner":"robot"}\n'
+    (thin_robot / "verification.lock.json").write_bytes(robot_bytes)
+    _git(thin_robot, "add", "-A")
+    _git(thin_robot, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "lock")
+    path = _definition(tmp_path)
+    lock = _write_v2(path, _v2_lock(thin_robot, path))
+    work = tmp_path / "work"
+    robot = work / "robot"
+    caller = d.lock_path(path)
+    assert d.check(path, work) == lock
+    assert (robot / "verification.lock.json").read_bytes() == robot_bytes
+    assert d.prepare_evidence_inputs(lock, robot, caller) == {"EVIDENCE_SOURCE": "caller"}
+    first = json.loads((robot / "verification.lock.json").read_text())
+    robot_sha = d.sha256(robot_bytes)
+    derived_sha = d.sha256((robot / "verification.lock.json").read_bytes())
+    assert first["overridden_robot_lock"]["sha256"] == robot_sha
+    assert derived_sha != robot_sha
+    assert d.check(path, work) == lock
+    assert d.prepare_evidence_inputs(lock, robot, caller) == {"EVIDENCE_SOURCE": "caller"}
+    recorded = json.loads((robot / "verification.lock.json").read_text())["overridden_robot_lock"][
+        "sha256"
+    ]
+    assert recorded == robot_sha, (
+        f"recorded {recorded}, robot lock {robot_sha}, previous caller-derived file {derived_sha}"
+    )
+
+
 def test_v2_refuses_a_configuration_path_that_leaves_the_robot(tmp_path, thin_robot, monkeypatch):
     path = _definition(tmp_path)
     lock = _v2_lock(thin_robot, path)
@@ -859,3 +950,146 @@ def test_a_workflow_dispatch_preview_ref_is_ignored(tmp_path, robot):
     wf.write_text(wf.read_text().replace(f"ref: {commit}", "ref: ${{ inputs.preview-ref }}"))
     with pytest.raises(SystemExit, match="locked robot commit"):
         d.check(path, tmp_path / "w3", wf)
+
+
+_EVALUATOR_REPO = "Living-Proof-Labs/livingproof-evaluator-scenario"
+
+
+def _verifier_pyproject(tag: str) -> str:
+    dependency = (
+        f"livingproof-evaluator-scenario @ git+https://github.com/{_EVALUATOR_REPO}.git@{tag}"
+    )
+    return (
+        "[project]\n"
+        'name = "capability-verifier"\n'
+        'version = "0.0.0"\n'
+        "dependencies = [\n"
+        f'  "{dependency}",\n'
+        "]\n"
+    )
+
+
+def _verifier_uv_lock(tag: str, commit: str) -> str:
+    source = f"https://github.com/{_EVALUATOR_REPO}.git?rev={tag}#{commit}"
+    return (
+        "[[package]]\n"
+        'name = "livingproof-evaluator-scenario"\n'
+        'version = "1.0.0"\n'
+        f'source = {{ git = "{source}" }}\n'
+    )
+
+
+def _publish_verifier(
+    robot: Path, *, request_tag: str, resolved_tag: str, resolved_commit: str
+) -> str:
+    """Commit the verifier dependency pin ``check`` compares with the lock."""
+    repo = robot.parents[1] / "Living-Proof-Labs" / "example.git"
+    repo.mkdir(parents=True, exist_ok=True)
+    if not (repo / ".git").exists():
+        _git(repo, "init", "-q", "-b", "main")
+    (repo / "pyproject.toml").write_text(_verifier_pyproject(request_tag))
+    (repo / "uv.lock").write_text(_verifier_uv_lock(resolved_tag, resolved_commit))
+    _git(repo, "add", "-A")
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True, check=True
+    )
+    if status.stdout.strip():
+        _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "evaluator pin")
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def _lock_with_verifier_pin(
+    tmp_path,
+    thin_robot,
+    *,
+    request_tag: str,
+    resolved_tag: str,
+    resolved_commit: str,
+    lock_tag: str,
+    lock_commit: str,
+):
+    head = _publish_verifier(
+        thin_robot,
+        request_tag=request_tag,
+        resolved_tag=resolved_tag,
+        resolved_commit=resolved_commit,
+    )
+    path = _definition(tmp_path)
+    lock = _v2_lock(thin_robot, path)
+    lock["releases"]["verifier"]["commit"] = head
+    pin = lock["evaluators"]["livingproof-evaluator-scenario"]
+    pin["repository"] = _EVALUATOR_REPO
+    pin["tag"] = lock_tag
+    pin["commit"] = lock_commit
+    _write_v2(path, lock)
+    return path
+
+
+def _resolve_tag_as(monkeypatch, commit: str) -> None:
+    """Make the tag lookup return ``commit`` without calling GitHub."""
+
+    def resolve(repository, tag):
+        return commit
+
+    monkeypatch.setattr(d, "resolve_evaluator_tag", resolve, raising=False)
+    try:
+        from capability_verifier import evaluator_pin
+    except ImportError:
+        return
+    monkeypatch.setattr(evaluator_pin, "resolve_evaluator_tag", resolve)
+
+
+def test_v2_check_refuses_an_evaluator_the_verifier_does_not_request(
+    tmp_path, thin_robot, monkeypatch
+):
+    """The lock tag must be the tag the locked verifier's pyproject requests."""
+    path = _lock_with_verifier_pin(
+        tmp_path,
+        thin_robot,
+        request_tag="v9.9.9",
+        resolved_tag="v1.0.0",
+        resolved_commit=EVALUATOR_COMMIT,
+        lock_tag="v1.0.0",
+        lock_commit=EVALUATOR_COMMIT,
+    )
+    _resolve_tag_as(monkeypatch, EVALUATOR_COMMIT)
+    with pytest.raises(SystemExit, match="the verifier requests"):
+        d.check(path, tmp_path / "w2")
+
+
+def test_v2_check_refuses_an_evaluator_the_verifier_does_not_resolve(
+    tmp_path, thin_robot, monkeypatch
+):
+    """The lock commit must be the commit the locked verifier's uv.lock resolves."""
+    path = _lock_with_verifier_pin(
+        tmp_path,
+        thin_robot,
+        request_tag="v1.0.0",
+        resolved_tag="v1.0.0",
+        resolved_commit="a" * 40,
+        lock_tag="v1.0.0",
+        lock_commit=EVALUATOR_COMMIT,
+    )
+    _resolve_tag_as(monkeypatch, EVALUATOR_COMMIT)
+    with pytest.raises(SystemExit, match="the verifier resolves"):
+        d.check(path, tmp_path / "w2")
+
+
+def test_v2_check_refuses_an_evaluator_tag_that_is_not_the_locked_commit(
+    tmp_path, thin_robot, monkeypatch
+):
+    """The tag must resolve to the locked commit, not only match the file text."""
+    path = _lock_with_verifier_pin(
+        tmp_path,
+        thin_robot,
+        request_tag="v1.0.0",
+        resolved_tag="v1.0.0",
+        resolved_commit=EVALUATOR_COMMIT,
+        lock_tag="v1.0.0",
+        lock_commit=EVALUATOR_COMMIT,
+    )
+    _resolve_tag_as(monkeypatch, "b" * 40)
+    with pytest.raises(SystemExit, match="not the locked commit"):
+        d.check(path, tmp_path / "w2")
