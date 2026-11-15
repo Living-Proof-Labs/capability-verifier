@@ -1,0 +1,640 @@
+<span id="verification-locks"></span>
+
+# Verification locks
+
+A verification lock records the commits, release tags and hashes a walk-hallway
+run uses. Passing `lock --check` compares those records with the files and tags
+they name. That comparison is a pin check. It is not a capability result, and it
+is not robot certification.
+
+Two files carry locks, and they use different format strings. The version numbers
+are the format of each file.
+
+| Name | Format string | File |
+| --- | --- | --- |
+| Robot verification lock | `livingproof-verification-lock/1.0.0` | `verification.lock.json` in the robot repository |
+| Caller verification lock | `livingproof-verification-lock/0.1.0` | `<definition-stem>.lock.json` beside the definition. `lock` writes this format. |
+| Caller verification lock | `livingproof-verification-lock/0.2.0` | The path passed as `verification-lock`. A run copies that file to `caller-verification.lock.json`. `lock` in this repository writes a `0.1.0` file. |
+
+The robot lock is the document the runner already reads. `0.1.0` records the
+sha256 of that file and copies its `releases`. `0.2.0` carries the evidence
+fields itself, plus the scenario-evaluator pin. A caller run projects those
+evidence fields into a `1.0.0` document so the runner can read them, and records
+the replaced robot file's sha256 on that document.
+
+Hash fields, commits and image digests are written by the command that computes
+them. [Recorded hashes](#recorded-hashes) names each command and the check that
+rejects a value typed in by hand.
+
+## Spellings
+
+| Value | Spelling | Example of the shape |
+| --- | --- | --- |
+| Commit | 40 lowercase hexadecimal characters | `0123456789abcdef0123456789abcdef01234567` |
+| File sha256 | 64 lowercase hexadecimal characters, with no prefix | `definition.sha256`, `robot.lock.sha256`, `configurations[].sha256`, `world.sha256`, `overridden_robot_lock.sha256` |
+| Image digest | `sha256:` and then 64 lowercase hexadecimal characters | `releases.reporter.digest` |
+| Release tag | `v` and then `X.Y.Z` of digits | `v1.2.3` |
+| Repository | `OWNER/NAME` | `Living-Proof-Labs/capability-verifier` |
+| Scenario id | `name@version` | `walk-hallway@0.1.0` |
+| Configuration version | `X.Y.Z` of digits | `1.1.0` |
+
+An uppercase hash or commit fails the pattern check that applies to that field.
+A tag without the leading `v` fails where the tag pattern applies. `0.1.0`
+`read_lock` requires the verifier tag and commit keys to exist, and the pattern
+check for those two keys is the comparison of the whole `releases` object with
+the robot file, together with `repin --check` on that file. `0.2.0` `read_lock`
+applies the tag, commit, repository and digest patterns itself.
+
+## Robot verification lock
+
+`livingproof-sim-mujoco` reads `verification.lock.json` from the robot root.
+This repository's evidence writer builds that document from a `0.2.0` caller
+lock. The document's top-level keys are `format`, `scenario`, `releases`,
+`world`, `configurations` and `plan`, in that order. `format` is written as
+`livingproof-verification-lock/1.0.0`.
+
+`$comment` may sit on a robot file. It is left out of the evidence document.
+
+When a caller run replaces a robot file that was already there, the evidence
+document gains `overridden_robot_lock.path` (`verification.lock.json`) and
+`overridden_robot_lock.sha256` (the sha256 of the file before replacement).
+When the robot commit has no lock file, the log line is `robot commit has no verification.lock.json`
+and the document has no `overridden_robot_lock` object.
+
+The two robot files kept in this repository are
+`tests/fixtures/g1-862cf979-verification.lock.json` and
+`tests/fixtures/repin/verification.lock.json`. Together their leaves are:
+
+| Field | What the files hold |
+| --- | --- |
+| `format` | `livingproof-verification-lock/1.0.0` |
+| `scenario` | `walk-hallway@0.1.0` in both files |
+| `$comment` | A note. The evidence writer omits it. |
+| `releases.specs.repository` | `OWNER/NAME` |
+| `releases.specs.tag` | A `vX.Y.Z` tag |
+| `releases.specs.commit` | The commit that tag names |
+| `releases.runner.repository` | `OWNER/NAME` |
+| `releases.runner.tag` | A `vX.Y.Z` tag |
+| `releases.runner.commit` | The commit that tag names |
+| `releases.verifier.repository` | `OWNER/NAME` |
+| `releases.verifier.tag` | A `vX.Y.Z` tag |
+| `releases.verifier.commit` | The commit that tag names |
+| `releases.verifier.image` | Present on the G1 file: `ghcr.io/living-proof-labs/capability-verifier-hallway` |
+| `releases.verifier.digest` | Present on the G1 file, beside that image |
+| `releases.reporter.repository` | `OWNER/NAME` |
+| `releases.reporter.tag` | A `vX.Y.Z` tag |
+| `releases.reporter.commit` | The commit that tag names |
+| `releases.reporter.image` | `ghcr.io/living-proof-labs/livingproof-capability-report` in both files |
+| `releases.reporter.digest` | The registry digest beside that image |
+| `world.id` | `hallway-open` in both files |
+| `world.version` | `0.1.0` in both files |
+| `world.repository` | `OWNER/NAME` in both files |
+| `world.tag` | A tag in both files |
+| `world.commit` | A commit in both files |
+| `configurations[].name` | Configuration name |
+| `configurations[].version` | `X.Y.Z` |
+| `configurations[].path` | Path of the configuration file inside the robot repository |
+| `configurations[].sha256` | sha256 of that file |
+| `plan.command_speed` | A number in both files |
+| `plan.trials` | An integer in the repin fixture |
+| `plan.trials.count` | The trial count in the G1 fixture, where `plan.trials` is an object |
+| `plan.seeds[]` | The seed list in the repin fixture |
+| `plan.required_passes` | An integer in the repin fixture |
+
+`repin` also reads `releases.<name>.expected` while an entry is still
+`PENDING_RELEASE`. Filling that entry removes `expected`. The message is
+`releases.{name} is PENDING_RELEASE (expected {expected})`, and `{expected}`
+falls back to the words `a release tag` when the key is absent.
+
+The walk-hallway plan step reads these paths from `verification.lock.json`:
+`configurations[].name`, `scenario`, `world.id`, `releases.verifier.repository`,
+`releases.verifier.commit`, `releases.verifier.tag`, `releases.verifier.image`,
+`releases.verifier.digest`, `releases.reporter.image`, `releases.reporter.tag`
+and `releases.reporter.digest`. The evaluator pin is read from the selected pin
+file: `caller-verification.lock.json` when `EVIDENCE_SOURCE` is `caller`, and
+`verification.lock.json` otherwise. The paths are
+`evaluators.livingproof-evaluator-scenario.repository`,
+`evaluators.livingproof-evaluator-scenario.commit` and
+`evaluators.livingproof-evaluator-scenario.tag`. An empty result leaves the
+evaluator outputs empty. The robot fixtures in this repository have no
+`evaluators` object. A `0.2.0` caller lock has one, and the evidence document
+does not: the projection copies `scenario`, `releases`, `world`,
+`configurations` and `plan`, and the copied caller file keeps `evaluators`.
+
+## Caller verification lock 0.1.0
+
+`python3 -m capability_verifier.definition lock DEFINITION.toml` fetches the
+definition's robot ref, reads `verification.lock.json` at that commit, and
+writes `livingproof-verification-lock/0.1.0` to
+`<definition-stem>.lock.json`. The same entry point is
+`livingproof capability verify lock DEFINITION.toml`.
+
+| Field | Role |
+| --- | --- |
+| `format` | `livingproof-verification-lock/0.1.0` |
+| `definition.sha256` | sha256 of the definition file bytes |
+| `definition.path` | The definition file name. `lock` writes it. `lock --check` does not read it. |
+| `procedure` | `walk-hallway` |
+| `robot.repository` | `OWNER/NAME` from the definition |
+| `robot.ref` | The branch, tag or commit that was resolved. `lock` writes it. `lock --check` does not read it. |
+| `robot.commit` | The fetched commit. `lock --check` requires 40 lowercase hexadecimal characters. |
+| `robot.configurations` | The names from the definition. Each name must appear in the robot file's configuration list at lock time. |
+| `robot.lock.path` | `verification.lock.json` |
+| `robot.lock.sha256` | sha256 of that robot file's bytes |
+| `releases.verifier.repository` | Copied from the robot file. The key is required. |
+| `releases.verifier.tag` | Copied from the robot file. The key is required. |
+| `releases.verifier.commit` | Copied from the robot file. The key is required. |
+
+`releases` is the robot file's `releases` object, copied whole. Further release
+entries travel with it. `lock --check` requires `releases.verifier` and then
+requires the whole object to equal the robot file at `robot.commit`.
+
+`0.1.0` remains accepted by `lock --check`. A `0.1.0` file is not an evidence
+source: the evidence writer requires `0.2.0` for `plan`, `world` and
+configuration sha256s.
+
+## Caller verification lock 0.2.0
+
+`lock --check` and the workflow input `verification-lock` accept
+`livingproof-verification-lock/0.2.0`. This repository's `lock` command writes
+`0.1.0`. The required leaves below are what `read_lock` demands.
+
+| Field | Rule |
+| --- | --- |
+| `format` | `livingproof-verification-lock/0.2.0` |
+| `definition.sha256` | sha256 of the definition file. `lock --check` compares it with the file bytes. |
+| `definition.path` | Accepted. `lock --check` does not read it. |
+| `procedure` | `walk-hallway` |
+| `scenario` | `name@version`, for example `walk-hallway@0.1.0` |
+| `robot.repository` | `OWNER/NAME`. `lock --check` requires it to equal the definition. |
+| `robot.ref` | Accepted. `lock --check` does not read it. |
+| `robot.commit` | Required as a key. `lock --check` requires 40 lowercase hexadecimal characters, then checks out that commit. |
+| `robot.configurations` | A non-empty list of names. It must equal the definition. Every name must appear in `configurations`. |
+| `robot.adapter` | The non-empty `[tool.livingproof]` adapter string. `lock --check` compares it with `pyproject.toml` at the locked commit. |
+| `releases.specs.repository` | `OWNER/NAME` |
+| `releases.specs.tag` | `vX.Y.Z` |
+| `releases.specs.commit` | 40 lowercase hexadecimal characters |
+| `releases.runner.repository` | `OWNER/NAME` |
+| `releases.runner.tag` | `vX.Y.Z` |
+| `releases.runner.commit` | 40 lowercase hexadecimal characters |
+| `releases.verifier.repository` | `OWNER/NAME` |
+| `releases.verifier.tag` | `vX.Y.Z` |
+| `releases.verifier.commit` | 40 lowercase hexadecimal characters. `lock --check` checks out this commit and compares the evaluator pin with that tree. |
+| `releases.reporter.repository` | `OWNER/NAME` |
+| `releases.reporter.tag` | `vX.Y.Z` |
+| `releases.reporter.commit` | 40 lowercase hexadecimal characters |
+| `releases.reporter.image` | Required string. The run uses `image:tag@digest`. |
+| `releases.reporter.digest` | Required `sha256:` digest |
+| `world.id` | Non-empty string |
+| `world.version` | Non-empty string |
+| `world.sha256` | Optional. When present, 64 lowercase hexadecimal characters. `lock --check` checks that spelling and does not open a world file for it. |
+| `configurations[].name` | Non-empty string. Names are unique. |
+| `configurations[].version` | `X.Y.Z` |
+| `configurations[].path` | A relative path inside the robot repository. An absolute path, or a path that contains `..`, fails before any fetch. |
+| `configurations[].sha256` | 64 lowercase hexadecimal characters. `lock --check` compares it with the file at the locked commit. |
+| `plan.command_speed` | A JSON number. A boolean fails. |
+| `evaluators.livingproof-evaluator-scenario.repository` | `OWNER/NAME` |
+| `evaluators.livingproof-evaluator-scenario.tag` | `vX.Y.Z`. The tag must resolve to the locked commit. |
+| `evaluators.livingproof-evaluator-scenario.commit` | 40 lowercase hexadecimal characters |
+
+`releases.specs.digest`, `releases.runner.digest`, `releases.verifier.digest`
+and `evaluators.livingproof-evaluator-scenario.digest` are optional. A `digest`
+must match the `sha256:` spelling. `releases.specs.image`, `releases.runner.image`,
+`releases.verifier.image` and `evaluators.livingproof-evaluator-scenario.image`
+require the matching digest: an image alone fails with
+`{label}.digest must be a sha256 digest`. A digest alone, with a matching
+spelling, passes `read_lock`. `repin --check` compares a digest with the
+registry when the entry has `image`.
+
+`robot.json` configuration names must equal the `configurations` names in the
+same order. That list is the full `configurations` array, including entries the
+definition did not select. `robot.configurations` is the selected subset.
+
+A `0.2.0` `world` or `plan` object may carry further keys. The evidence
+projection copies the object whole. The published robot files carry
+`world.repository`, `world.tag`, `world.commit`, `plan.trials`,
+`plan.trials.count`, `plan.seeds[]` and `plan.required_passes`. `read_lock`
+accepts those keys and does not require them. `read_lock` requires
+`plan.command_speed`, `world.id` and `world.version`.
+
+<span id="lock-fields"></span>
+
+## Field inventory
+
+The tables above are this inventory. The test
+`tests/test_lock_format_docs.py` rebuilds it from `read_lock`, from `lock`, and
+from the two robot fixtures.
+
+<!-- lock-field-inventory -->
+
+```json
+{
+  "caller_0_1_0": {
+    "format": "livingproof-verification-lock/0.1.0",
+    "required": [
+      "definition.sha256",
+      "format",
+      "procedure",
+      "releases.verifier.commit",
+      "releases.verifier.repository",
+      "releases.verifier.tag",
+      "robot.commit",
+      "robot.configurations",
+      "robot.lock.path",
+      "robot.lock.sha256",
+      "robot.repository"
+    ],
+    "written_unchecked": [
+      "definition.path",
+      "robot.ref"
+    ]
+  },
+  "caller_0_2_0": {
+    "format": "livingproof-verification-lock/0.2.0",
+    "required": [
+      "configurations[].name",
+      "configurations[].path",
+      "configurations[].sha256",
+      "configurations[].version",
+      "definition.sha256",
+      "evaluators.livingproof-evaluator-scenario.commit",
+      "evaluators.livingproof-evaluator-scenario.repository",
+      "evaluators.livingproof-evaluator-scenario.tag",
+      "format",
+      "plan.command_speed",
+      "procedure",
+      "releases.reporter.commit",
+      "releases.reporter.digest",
+      "releases.reporter.image",
+      "releases.reporter.repository",
+      "releases.reporter.tag",
+      "releases.runner.commit",
+      "releases.runner.repository",
+      "releases.runner.tag",
+      "releases.specs.commit",
+      "releases.specs.repository",
+      "releases.specs.tag",
+      "releases.verifier.commit",
+      "releases.verifier.repository",
+      "releases.verifier.tag",
+      "robot.adapter",
+      "robot.commit",
+      "robot.configurations",
+      "robot.repository",
+      "scenario",
+      "world.id",
+      "world.version"
+    ],
+    "optional_digest": [
+      "evaluators.livingproof-evaluator-scenario.digest",
+      "releases.runner.digest",
+      "releases.specs.digest",
+      "releases.verifier.digest"
+    ],
+    "optional_image_requires_digest": [
+      "evaluators.livingproof-evaluator-scenario.image",
+      "releases.runner.image",
+      "releases.specs.image",
+      "releases.verifier.image"
+    ],
+    "optional_file_sha256": [
+      "world.sha256"
+    ],
+    "accepted_unchecked": [
+      "definition.path",
+      "robot.ref"
+    ]
+  },
+  "robot_1_0_0": {
+    "format": "livingproof-verification-lock/1.0.0",
+    "evidence_fields": [
+      "format",
+      "scenario",
+      "releases",
+      "world",
+      "configurations",
+      "plan"
+    ],
+    "not_copied": [
+      "$comment"
+    ],
+    "caller_run_adds": [
+      "overridden_robot_lock.path",
+      "overridden_robot_lock.sha256"
+    ],
+    "repin_optional": [
+      "releases.<name>.expected"
+    ],
+    "fixture_fields": [
+      "$comment",
+      "configurations[].name",
+      "configurations[].path",
+      "configurations[].sha256",
+      "configurations[].version",
+      "format",
+      "plan.command_speed",
+      "plan.required_passes",
+      "plan.seeds[]",
+      "plan.trials",
+      "plan.trials.count",
+      "releases.reporter.commit",
+      "releases.reporter.digest",
+      "releases.reporter.image",
+      "releases.reporter.repository",
+      "releases.reporter.tag",
+      "releases.runner.commit",
+      "releases.runner.repository",
+      "releases.runner.tag",
+      "releases.specs.commit",
+      "releases.specs.repository",
+      "releases.specs.tag",
+      "releases.verifier.commit",
+      "releases.verifier.digest",
+      "releases.verifier.image",
+      "releases.verifier.repository",
+      "releases.verifier.tag",
+      "scenario",
+      "world.commit",
+      "world.id",
+      "world.repository",
+      "world.tag",
+      "world.version"
+    ]
+  }
+}
+```
+
+## Writing a lock
+
+The definition file is `livingproof-verification-definition/0.1.0`. `lock` and
+`lock --check` read it first. It needs `format`, `id` (lowercase letters, digits
+and dashes), `procedure` (`walk-hallway`), `robot.repository`, `robot.ref` and
+a non-empty `robot.configurations` list.
+
+`lock` resolves `robot.ref` with `git fetch` of that ref and records
+`robot.commit`. It refuses a definition configuration that the robot file does
+not list: `{repository}@{commit12} has no configuration {names}`, where
+`{commit12}` is the first 12 characters of the commit. On success it prints
+`wrote {path}; review it before committing`.
+
+`repin` fills `PENDING_RELEASE` release entries on a robot lock, or on the
+caller lock when the workflow points `--lock` at `caller-verification.lock.json`:
+
+```sh
+python3 -m capability_verifier.repin --root ROBOT runner=vX.Y.Z verifier=vX.Y.Z reporter=vX.Y.Z
+python3 -m capability_verifier.repin --root ROBOT --check
+python3 -m capability_verifier.repin --root ROBOT --check --offline
+```
+
+Each `entry=vX.Y.Z` is resolved with `git ls-remote`. An annotated tag is peeled.
+A tag that does not exist is an error: `{repository} has no tag {tag}; release it first (tags are never invented)`.
+An entry with `image` also records `digest` from the registry manifest for
+`image:X.Y.Z` (the tag with the leading `v` removed). The digest lookup accepts
+`ghcr.io` images. Any other host fails with `{image}: only ghcr.io images are supported`.
+Pinning `runner` rewrites the `livingproof-sim-mujoco` source in `pyproject.toml`
+to that tag and runs `uv lock`. The change log ends with `uv.lock: regenerated by uv lock`.
+`--dry-run` prints the changes and leaves the files in place. With no
+`entry=vX.Y.Z` and no `--check`, the command exits with
+`name at least one entry=vX.Y.Z, or pass --check`.
+
+`repin --check` prints `NOT RELEASED: {problem}` for each problem and
+`{lock}: every ref is a released tag` when there are none. `--offline` skips the
+tag-to-commit lookup and the registry digest lookup. The problems it can report:
+
+- `releases.{name} is PENDING_RELEASE (expected {expected})`
+- `releases.{name} needs a vX.Y.Z tag and a full commit`
+- `releases.{name} has an image but no sha256 digest`
+- `releases.verifier.image is {image}, not ghcr.io/living-proof-labs/capability-verifier-hallway`
+- `pyproject.toml has a path-pinned dependency`
+- `pyproject.toml livingproof-sim-mujoco source is not tag {tag}: {body}`
+- `releases.{name}: cannot resolve {tag}: {error}`
+- `releases.{name}: {repository} tag {tag} is {resolved}, not the locked {recorded}`
+- `releases.{name}: cannot read {image}:{tag}: {error}`
+- `releases.{name}: {image}:{version} is {published}, not the locked {recorded}`
+- `{image}:{tag} is not published ({code}); release it first`
+- `{image}:{tag}: registry returned no sha256 digest`
+- `{name}={tag}: expected vX.Y.Z`
+- `unknown entry {name}; one of {names}`
+- `pyproject.toml has no [tool.uv.sources] livingproof-sim-mujoco line`
+
+The tag comparison treats a moved tag, a deleted tag, and a hand-edited commit
+as the same failure: the tag resolves to a commit other than the one in the lock.
+
+<span id="lock-check"></span>
+
+## What `lock --check` enforces
+
+```sh
+python3 -m capability_verifier.definition lock DEFINITION.toml --check
+python3 -m capability_verifier.definition lock DEFINITION.toml --check --workflow FILE
+python3 -m capability_verifier.definition lock DEFINITION.toml --check --work DIR
+```
+
+`--work` defaults to `artifacts/.lock-work`. `--check` re-resolves nothing. It
+uses the commit written in the lock, including when the definition's ref has
+moved on since locking. Success prints
+`{lockname}: robot {repository}@{commit12}, verifier {tag}: ok`, with the first
+12 characters of the commit.
+
+The checkout of a reused `--work` directory is `git checkout -f --detach FETCH_HEAD`,
+then `git clean -fdx -e .venv`. Tracked edits are discarded. Untracked files
+other than `.venv` are removed. The hash comparison reads the files at the
+pinned commit.
+
+Shared checks, for `0.1.0` and `0.2.0`:
+
+- The lock file is missing: `{path} is missing; run `lock {definition}` and review it`.
+- The lock is not a JSON object, or its `format` is neither `0.1.0` nor `0.2.0`.
+- A required key is missing, or a required object lacks a required child. Several `read_lock` problems are joined with `; ` and the line ends with `; re-run lock and review`.
+- `definition.sha256` differs from the definition file: `{name} changed since it was locked; re-run lock and review`.
+- `robot.repository` or `robot.configurations` differs from the definition: `{lockname}: robot.{key} {recorded} differs from {definition} ({current}); re-run lock and review`.
+- `robot.repository` fails `OWNER/NAME`: `{lockname}: robot.repository {value} is not OWNER/REPO`.
+- `robot.repository` matches the definition and `robot.commit` is not 40 lowercase hexadecimal characters: `robot.commit is not a full commit sha`.
+- `robot.repository` differs from the definition: the checker reports that edit and skips the checkout.
+
+When `robot.repository` matches the definition, `0.1.0` fetches `robot.lock.path`
+at `robot.commit`:
+
+- The file's sha256 differs: `{repository}@{commit12} lock differs from {lockname}`.
+- The sha256 matches and `releases` differs: `releases in {lockname} differ from the robot lock`.
+
+When `robot.repository` matches the definition, `0.2.0` fetches the robot tree
+and the verifier tree. That comparison reads the configuration files,
+`pyproject.toml` and `robot.json`. The robot `verification.lock.json` stays out
+of it. On the robot tree:
+
+- `{repository}@{commit}: {path} is missing`
+- `{repository}@{commit}: {path} sha256 is {actual}, not the locked {recorded}`
+- `{repository}@{commit}: pyproject.toml is missing`
+- `{repository}@{commit}: pyproject.toml has no [tool.livingproof] adapter string`
+- `{repository}@{commit}: [tool.livingproof] adapter is {actual}, not the locked {recorded}`
+- `{repository}@{commit}: robot.json is missing`
+- `{repository}@{commit}: robot.json configurations must be a list of objects with name`
+- `{repository}@{commit}: robot.json configuration names are {actual}, not the locked {recorded}`
+
+`0.2.0` shape failures from `read_lock`, before that fetch:
+
+- `scenario must be name@version (for example walk-hallway@0.1.0), got {value}`
+- `robot.adapter must be the [tool.livingproof] adapter string`
+- `robot.configurations must be a non-empty list of names`
+- `configurations must be a non-empty list`
+- `configurations[{index}] must be an object`
+- `configurations[{index}].name must be a string`
+- `configurations[{index}].version must be X.Y.Z`
+- `configurations[{index}].path must stay inside the robot repository`
+- `configurations[{index}].sha256 must be 64 hex characters`
+- `configuration names must be unique`
+- `robot.configurations {names} are not in configurations`
+- `plan.command_speed must be a number`
+- `world.{id|version} must be a string`
+- `world.sha256 must be 64 hex characters`
+- `{label} must be an object`
+- `{label}.repository must be OWNER/NAME`
+- `{label}.tag must be a vX.Y.Z release tag (got {value})`
+- `{label}.commit must be a full commit sha`
+- `{label}.digest must be a sha256 digest`
+- `{label}.image is required` for `releases.reporter` when `image` is missing or is not a string
+- `robot.lock must have path, sha256` on a `0.1.0` lock
+- `releases.verifier must have repository, tag, commit` on a `0.1.0` lock
+- `missing {key}`
+- `{key} must have {children}`, including `definition must have sha256`, `robot must have repository, commit, configurations, lock` (`0.1.0`), `robot must have repository, commit, configurations, adapter` (`0.2.0`), `releases must have verifier` (`0.1.0`), `releases must have specs, runner, verifier, reporter` (`0.2.0`), `plan must have command_speed`, `world must have id, version`, and `evaluators must have livingproof-evaluator-scenario`
+- `procedure must be one of ['walk-hallway']`
+- `format is not livingproof-verification-lock/0.1.0 or livingproof-verification-lock/0.2.0`
+- `{path}: not valid JSON ({error}); re-run lock and review`
+- `{path}: must be a JSON object; re-run lock and review`
+- `{path}: not valid TOML ({error})`
+- `{path}: no such definition`
+- `format must be 'livingproof-verification-definition/0.1.0'`
+- `id must be lower-case letters, digits and dashes`
+- `robot.repository must be OWNER/NAME`
+- `robot.ref is required (a branch, tag or commit)`
+
+`check()` reports its own problems on separate lines. `read_lock` joins its problems with `; ` and ends with `; re-run lock and review`.
+
+With `--workflow`, the job whose id equals the definition id must call
+`{verifier repository}/.github/workflows/walk-hallway.yml@{verifier commit}`.
+Owner and repository compare case-insensitively. The commit compares exactly.
+The job must pass the locked robot repository, the locked robot commit and the
+locked configurations. A commented-out pin does not count. Another job that
+calls the procedure fails unless its id is another definition beside this one.
+The messages:
+
+- `{workflow}: cannot be read as YAML ({error})`
+- `{workflow}: has no jobs`
+- `{workflow}: no job calls {target} for {repository} (job {id}); must call {pinned}`
+- `{path}: job {name}: calls the procedure, but job id {name} is no known definition; every procedure-calling job's id must be a definition`
+- `{path}: job {name}: must call {pinned} (calls {uses})`
+- `{path}: job {name}: must pass the locked robot repository {repository}`
+- `{path}: job {name}: must pass the locked robot commit {commit}`
+- `{path}: job {name}: must pass the locked configurations '{json}'`
+
+<span id="evaluator-tag"></span>
+
+## Evaluator tag
+
+On a `0.2.0` lock, `lock --check` checks out `releases.verifier` and compares
+`evaluators.livingproof-evaluator-scenario` with that tree. Three comparisons
+all have to hold:
+
+1. `pyproject.toml` requests `livingproof-evaluator-scenario` from the locked repository at the locked tag. The dependency text is `livingproof-evaluator-scenario @ git+https://github.com/{repository}[.git]@{tag}`.
+2. `uv.lock` resolves that package to the same repository, tag and commit. The source text is `https://github.com/{repository}[.git]?rev={tag}#{commit}`.
+3. The tag resolves, through `git ls-remote` with annotated tags peeled, to the locked commit.
+
+The messages, with the label `evaluators.livingproof-evaluator-scenario`:
+
+- `{label}: tag is required`
+- `{label}: the verifier pyproject.toml does not request livingproof-evaluator-scenario`
+- `{label}: the verifier requests {repository}@{tag}, not the locked {repository}@{tag}`
+- `{label}: the verifier uv.lock does not resolve livingproof-evaluator-scenario`
+- `{label}: the verifier resolves {repository}@{tag}#{commit}, not the locked {repository}@{tag}#{commit}`
+- `{label}: cannot resolve tag {tag} of {repository}: {error}`
+- `{label}: tag {tag} is {resolved}, not the locked commit {recorded}`
+
+`lock --check` reaches the tag-resolution line only after `read_lock` has
+accepted a `vX.Y.Z` tag. An empty tag fails earlier with
+`{label}.tag must be a vX.Y.Z release tag (got {value})`. The workflow can still
+pass an empty tag into the same comparison: the plan output `evaluator-tag` is
+the pin's tag, or empty when the selected file has no tag.
+
+The plan step `Every ref is a released tag` runs that comparison when
+`evaluator-commit` is non-empty. It imports `capability_verifier.evaluator_pin`
+from this workflow's source (`workflow-src/src`) when that checkout is present,
+and from the locked verifier checkout otherwise. The scenario-evaluator job
+receives `evaluator-tag` and repeats the comparison in the verifier checkout.
+It then runs `uv sync --locked` in the evaluator checkout, puts `evaluator/src`
+and that checkout's site-packages on `PYTHONPATH` ahead of the verifier tree,
+and imports `livingproof_evaluator_scenario`. The import has to land under
+`evaluator/src`. Otherwise the job exits 1 with
+`livingproof_evaluator_scenario imported from {path}, not evaluator/src`.
+
+When `evaluator-commit` is empty, that job skips the pin comparison and imports
+through `PYTHONPATH=src` from the verifier checkout. A robot lock with no
+`evaluators` object takes that path.
+
+<span id="caller-lock-on-the-robot-path"></span>
+
+## A caller lock committed in the robot repository
+
+`caller-verification.lock.json` is the copy a caller run writes for
+`repin --check` and for the evaluator pin. A copy already committed in the
+robot repository is a different thing. The plan step `Refs from verification.lock.json`
+treats it as follows.
+
+When `EVIDENCE_SOURCE` is `caller`, that file is the pin. The workflow sets
+`caller` by passing `verification-lock`. The plan step sets `COPY_CALLER_LOCK=1`,
+and the evidence writer then projects the `1.0.0` document and writes the
+caller file to `caller-verification.lock.json`.
+
+When `EVIDENCE_SOURCE` is anything else, including empty and `robot`, and
+`caller-verification.lock.json` is in the robot tree, the step exits 1 with:
+
+```text
+caller-verification.lock.json is committed in the robot repository; pass verification-lock or remove that file
+```
+
+That refusal is the first action in the step, before `jq`. The verifier runtime
+that replays the step does not install `jq`. A caller lock passed in
+`verification-lock` remains the pin, because that run's source is `caller`.
+
+The evidence script refuses a bad `verification-lock` path on its own:
+
+- An empty input, and no robot `verification.lock.json`: `the robot commit has no verification.lock.json; pass verification-lock (a path in the caller repository)`. The local `run` command's wording is `the robot commit has no verification.lock.json; pass a livingproof-verification-lock/0.2.0 as verification-lock`.
+- A path that starts with `/` or contains `..`: `verification-lock must be a relative path inside the caller repository`.
+- A missing file: `caller has no verification lock at {path}`.
+- A file whose format is not `0.2.0`: `evidence inputs are written from a livingproof-verification-lock/0.2.0 (got {found}). A 0.1.0 lock does not own plan, world or configuration sha256s.`
+- A `0.2.0` file missing an evidence field: `verification lock is missing {fields}`.
+- A replacement digest that is not 64 hexadecimal characters: `overridden robot lock sha256 must be 64 hex characters, got {digest}`.
+- Evidence input that is not JSON: `{path}: not valid JSON ({error})`.
+
+On success the script prints `source=caller` or `source=robot`. A caller write
+logs `EVIDENCE_SOURCE: caller` and either
+`overridden robot verification.lock.json sha256: {digest}` or
+`robot commit has no verification.lock.json`. A `0.1.0` local run leaves an
+existing robot `verification.lock.json` byte for byte.
+
+<span id="recorded-hashes"></span>
+
+## Recorded hashes
+
+Record a hash, a commit or an image digest by running the command that computes
+it. Change the file, the tag or the definition, then run that command again. A
+value typed by hand fails the check that compares it with the file, the tag or
+the registry. `repin --check` describes a commit that is not the commit its tag
+resolves to as a moved or deleted tag, or a hand-edited commit.
+
+| Record | Written by | Mismatch |
+| --- | --- | --- |
+| `definition.sha256` | `lock`, from the definition file bytes | `{name} changed since it was locked; re-run lock and review` |
+| `robot.lock.sha256` | `lock`, from the robot `verification.lock.json` bytes | `{repository}@{commit} lock differs from {lockname}` |
+| `robot.commit` | `lock`, from the fetched ref | `robot.commit is not a full commit sha`, and the checkout uses the recorded commit |
+| `releases.{name}.commit` | `repin`, from `git ls-remote`. Tags are never invented. | `releases.{name}: {repository} tag {tag} is {resolved}, not the locked {recorded}` |
+| `releases.{name}.digest` | `repin`, from the registry `Docker-Content-Digest` | `releases.{name}: {image}:{version} is {published}, not the locked {recorded}` |
+| `configurations[].sha256` | Compared with the file at the locked commit. This repository's `lock` command writes `0.1.0`, which has no configuration sha256 of its own. | `{repository}@{commit}: {path} sha256 is {actual}, not the locked {recorded}` |
+| `overridden_robot_lock.sha256` | The evidence writer, from the robot file before replacement | `overridden robot lock sha256 must be 64 hex characters, got {digest}` |
+| `world.sha256` | Optional on a `0.2.0` lock. The checker tests the spelling. | `world.sha256 must be 64 hex characters` |
+
+File sha256 fields are 64 lowercase hexadecimal characters. Image digests add
+the `sha256:` prefix. The two spellings are not interchangeable:
+`configurations[].sha256` set to a `sha256:` digest fails
+`.sha256 must be 64 hex characters`, and `releases.reporter.digest` set to a
+bare 64-character hash fails `.digest must be a sha256 digest`.
