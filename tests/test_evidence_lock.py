@@ -102,6 +102,7 @@ def _run_script(robot, caller, lock_rel, env=None):
         script_env.update(env)
     return subprocess.run(
         ["sh", str(SCRIPT), str(robot), str(caller), lock_rel, str(ROOT)],
+        check=False,
         capture_output=True,
         text=True,
         env=script_env,

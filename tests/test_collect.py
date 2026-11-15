@@ -5,11 +5,10 @@ Reporter v3.5.0 renders the stored playground bundle. The collector and the
 reporter are unchanged between the one-evaluator and two-evaluator renders.
 """
 
+import importlib.metadata
 import json
 import shutil
 from pathlib import Path
-
-import importlib.metadata
 
 from livingproof_capability_report.assessed import report_from_bundle
 from livingproof_capability_report.core import load_bundle, render

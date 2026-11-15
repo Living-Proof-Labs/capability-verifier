@@ -285,6 +285,7 @@ def _run_media(tmp_path, name):
     shutil.copy(FIXTURES / name, media / "media.json")
     done = subprocess.run(
         [sys.executable, "-c", _media_script()],
+        check=False,
         cwd=tmp_path,
         capture_output=True,
         text=True,

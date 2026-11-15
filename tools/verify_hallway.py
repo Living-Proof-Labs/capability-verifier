@@ -16,8 +16,8 @@ import os
 import re
 import shutil
 import signal
-import tempfile
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 

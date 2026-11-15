@@ -12,7 +12,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from docs import source_identity  # noqa: E402
+from docs import source_identity
 
 
 @pytest.hookimpl(hookwrapper=True, tryfirst=True)

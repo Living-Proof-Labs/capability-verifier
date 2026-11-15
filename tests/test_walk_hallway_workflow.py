@@ -161,6 +161,7 @@ def _write_lock(robot, caller_dir, relative, *, copy):
             relative,
             str(Path(__file__).parents[1]),
         ],
+        check=False,
         capture_output=True,
         text=True,
         env=env,
@@ -441,10 +442,7 @@ def test_scenario_evaluator_is_a_parallel_job_and_the_report_collects_by_pattern
     start = WORKFLOW.index("<<'COLLECT'\n") + len("<<'COLLECT'\n")
     end = WORKFLOW.index("\n          COLLECT\n", start)
     indent = "          "
-    extracted = "\n".join(
-        line[len(indent) :] if line.startswith(indent) else line
-        for line in WORKFLOW[start:end].splitlines()
-    )
+    extracted = "\n".join(line.removeprefix(indent) for line in WORKFLOW[start:end].splitlines())
     source = (Path(__file__).parents[1] / "src/capability_verifier/collect.py").read_text()
     assert extracted + "\n" == source
 
@@ -500,6 +498,7 @@ def _plan(tmp_path, runner, reporter, mcap=True, verifier="v1.9.0"):
     )
     return subprocess.run(
         [sys.executable, "-c", _capability_script()],
+        check=False,
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -585,8 +584,10 @@ def test_verify_writes_the_bundle_version_from_the_plan(tmp_path):
     (tmp_path / "b").mkdir()
     new = _run(tmp_path / "b", script, "uv", "1.1.0")
     assert new == [
-        "run --no-sync python tools/verify_hallway.py --bundle-version 1.1.0 "
-        "evidence/manifest.json verified"
+        (
+            "run --no-sync python tools/verify_hallway.py --bundle-version 1.1.0 "
+            "evidence/manifest.json verified"
+        )
     ]
 
 
@@ -650,6 +651,7 @@ def test_pre_and_dev_releases_fail_closed_and_never_count_as_the_release(tmp_pat
         )
         done = subprocess.run(
             [sys.executable, "-c", _capability_script()],
+            check=False,
             cwd=tmp_path,
             capture_output=True,
             text=True,

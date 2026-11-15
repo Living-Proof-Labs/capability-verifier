@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """Run a declarative verification locally through the same steps as the reusable workflow.
 
@@ -50,13 +49,13 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import shlex
 import shutil
 import subprocess
 import sys
 import tomllib
+from pathlib import Path
 
 import yaml
 
@@ -603,7 +602,7 @@ def sh(script: str, cwd: Path, env: dict, outputs: Path | None = None) -> dict:
         line for line in script.splitlines() if not line.startswith("python3 -m pip install")
     )
     print(f"$ ({cwd.name}) " + script.splitlines()[0], file=sys.stderr, flush=True)
-    done = subprocess.run(["bash", "-e", "-c", script], cwd=cwd, env=env)
+    done = subprocess.run(["bash", "-e", "-c", script], check=False, cwd=cwd, env=env)
     if done.returncode:
         raise DefinitionError(
             f"step failed (exit {done.returncode}) in {cwd.name}: {script.splitlines()[0]}"

@@ -24,8 +24,9 @@ run again, producing a new bundle that names its parent.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable, Protocol
+from typing import Protocol
 
 from . import hallway
 

@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from export_demo import export_demo  # noqa: E402
-from run_archives import archive, checksums, extract, name_for, safe_path  # noqa: E402
+from export_demo import export_demo
+from run_archives import archive, checksums, extract, name_for, safe_path
 
 
 def test_repeated_executions_have_unique_stable_identities(tmp_path):
@@ -83,14 +83,14 @@ def test_checksum_detects_corruption_and_unindexed_files(tmp_path):
 
 
 def test_names_include_version_run_architecture_and_attempt():
-    metadata = dict(
-        verifier_version="v1.2.0",
-        demo="baseline",
-        bundle_run_id="execution-123",
-        architecture="amd64",
-        ci_run="987",
-        ci_attempt="1",
-    )
+    metadata = {
+        "verifier_version": "v1.2.0",
+        "demo": "baseline",
+        "bundle_run_id": "execution-123",
+        "architecture": "amd64",
+        "ci_run": "987",
+        "ci_attempt": "1",
+    }
     assert name_for(metadata) == "capability-verifier-v1.2.0-baseline-execution-123-amd64-987-1"
     assert name_for(metadata) != name_for({**metadata, "ci_attempt": "2"})
     with pytest.raises(ValueError):

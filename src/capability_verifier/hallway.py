@@ -708,8 +708,10 @@ def summary_lines(result: dict) -> list[str]:
         lines = [f"{UNSUPPORTED}: {s['reason']} (no trials assessed)"]
     else:
         lines = [
-            f"{s['k']}/{s['n']} trials PASS (needs {s['required_passes']}), "
-            f"Wilson 95% [{s['wilson95'][0]:.4f}, {s['wilson95'][1]:.4f}]: {s['grade']}"
+            (
+                f"{s['k']}/{s['n']} trials PASS (needs {s['required_passes']}), "
+                f"Wilson 95% [{s['wilson95'][0]:.4f}, {s['wilson95'][1]:.4f}]: {s['grade']}"
+            )
         ]
         for t in result["trials"]:
             if t["status"] != PASS:

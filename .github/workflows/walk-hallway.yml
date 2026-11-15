@@ -694,9 +694,12 @@ jobs:
                       if not path.is_file():
                           continue
                       document = json.loads(path.read_text(encoding="utf-8"))
-                      if isinstance(document, dict) and isinstance(document.get("format"), str):
-                          if RESULT_FORMAT.fullmatch(document["format"]):
-                              documents.append(document)
+                      if (
+                          isinstance(document, dict)
+                          and isinstance(document.get("format"), str)
+                          and RESULT_FORMAT.fullmatch(document["format"])
+                      ):
+                          documents.append(document)
               by_id = {}
               for result in bundle["results"]:
                   if isinstance(result, dict) and isinstance(result.get("id"), str):

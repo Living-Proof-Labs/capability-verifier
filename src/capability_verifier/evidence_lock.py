@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """Write the evidence inputs livingproof-sim-mujoco v2.0.3 reads.
 
