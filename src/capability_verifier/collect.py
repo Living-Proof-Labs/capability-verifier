@@ -9,12 +9,19 @@ A result that cites ``thresholds.json`` keeps that input reference. The file
 at the cited path is copied into the report output, and its SHA-256 has to
 match the citation. A missing file, different bytes, or a different path
 fails the collection. The manifest is left unchanged when that happens.
+
+The command prints, per evaluator, how many documents it appended and how many it
+skipped because their trial is not in this bundle (another configuration). A
+bundle with trials that ends up with no appended document fails, naming the
+artifact pattern in ``EVALUATOR_RESULTS_PATTERN``; a bundle with no trials (a
+"not supported" run) has nothing to append.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path, PurePosixPath
@@ -28,7 +35,12 @@ class ThresholdCitationError(ValueError):
     """The cited thresholds.json is missing, altered, or a different path."""
 
 
-def collect(bundle: dict, directory: Path, report_dir: Path | None = None) -> dict:
+def collect(
+    bundle: dict,
+    directory: Path,
+    report_dir: Path | None = None,
+    counts: dict | None = None,
+) -> dict:
     """Append this bundle's result documents. ``bundle`` is updated.
 
     A document whose ``scenario.trial_id`` is not one of this bundle's results
@@ -38,6 +50,9 @@ def collect(bundle: dict, directory: Path, report_dir: Path | None = None) -> di
     Each appended document that cites ``thresholds.json`` is checked against
     the file at that URI, relative to the result file. When ``report_dir`` is
     set, the matching bytes are copied there under the cited relative path.
+
+    ``counts``, when given, is filled with ``{evaluator id: {"appended": n,
+    "skipped": m}}``.
     """
     if not isinstance(bundle, dict) or not isinstance(bundle.get("results"), list):
         raise TypeError("bundle is missing results")
@@ -64,8 +79,16 @@ def collect(bundle: dict, directory: Path, report_dir: Path | None = None) -> di
         scenario = document.get("scenario")
         trial_id = scenario.get("trial_id") if isinstance(scenario, dict) else None
         result = by_id.get(trial_id)
+        evaluator = document.get("evaluator")
+        name = evaluator.get("id") if isinstance(evaluator, dict) else None
+        tally = (counts if counts is not None else {}).setdefault(
+            name if isinstance(name, str) and name else "(no evaluator id)",
+            {"appended": 0, "skipped": 0},
+        )
         if result is None:
+            tally["skipped"] += 1
             continue
+        tally["appended"] += 1
         _take_thresholds(path, document, directory, exports)
         matched.append((trial_id, result, document))
     for trial_id, result, document in matched:
@@ -204,10 +227,30 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     manifest = Path(args[0])
     bundle = json.loads(manifest.read_text(encoding="utf-8"))
+    counts: dict = {}
     try:
-        collect(bundle, Path(args[1]), Path(args[2]))
+        collect(bundle, Path(args[1]), Path(args[2]), counts)
     except ThresholdCitationError as exc:
         print(str(exc), file=sys.stderr)
+        return 1
+    for name in sorted(counts):
+        tally = counts[name]
+        print(
+            f"evaluator {name}: appended {tally['appended']}, "
+            f"skipped {tally['skipped']} (trial not in this bundle)"
+        )
+    trials = sum(1 for result in bundle["results"] if isinstance(result, dict))
+    if trials == 0:
+        print("no trials in this bundle, so no evaluator result to append")
+    elif sum(tally["appended"] for tally in counts.values()) == 0:
+        pattern = os.environ.get("EVALUATOR_RESULTS_PATTERN") or "(EVALUATOR_RESULTS_PATTERN unset)"
+        print(
+            f"no evaluator result was appended to this bundle's {trials} trial(s). "
+            f"Expected result documents for these trials in {args[1]}, downloaded from "
+            f"artifacts matching {pattern}. Check the artifact name and prefix, and that "
+            "each result's scenario.trial_id is one of this bundle's result ids.",
+            file=sys.stderr,
+        )
         return 1
     manifest.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
     return 0
