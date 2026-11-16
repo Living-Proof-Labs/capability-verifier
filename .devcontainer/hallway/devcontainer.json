@@ -1,6 +1,6 @@
 {
   "name": "G1 hallway demo (same image as walk-hallway.yml)",
-  "image": "ghcr.io/living-proof-labs/capability-verifier-hallway:1.23.4@sha256:f0eac41791812c3642e814839c47cfc3bcbb8c212d6084cc035a44925a1f89ac",
+  "image": "ghcr.io/living-proof-labs/capability-verifier-hallway:1.24.0@sha256:931ce2ac77a986e00bd41f035780bb25267a97f85336204815a6da7baec3a5c0",
   "remoteUser": "lpl",
   "updateRemoteUserUID": true,
   "overrideCommand": true,
