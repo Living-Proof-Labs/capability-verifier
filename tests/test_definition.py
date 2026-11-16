@@ -1155,3 +1155,28 @@ def test_a_walk_hallway_lock_still_needs_the_plan_speed(tmp_path, thin_robot):
     _write_v2(path, lock)
     with pytest.raises(SystemExit, match="command_speed"):
         d.read_lock(d.lock_path(path))
+
+
+# Vera review of #117: the speed rule follows the locked scenario, not the procedure name,
+# and a corner lock may pin its world bytes (the grader needs lock.content.world.sha256).
+def test_the_scenario_procedure_running_walk_hallway_still_needs_the_plan_speed(
+    tmp_path, thin_robot
+):
+    path = _scenario_definition(tmp_path)
+    lock = _v2_lock(thin_robot, path)
+    lock["procedure"] = "scenario"
+    del lock["plan"]["command_speed"]
+    _write_v2(path, lock)
+    with pytest.raises(SystemExit, match="plan.command_speed must be a number"):
+        d.read_lock(d.lock_path(path))
+
+
+def test_a_corner_lock_that_pins_its_world_sha256_checks(tmp_path, thin_robot):
+    path = _scenario_definition(tmp_path)
+    lock = _corner_lock(thin_robot, path)
+    lock["world"]["sha256"] = "8393881e8b38a090f51c3a424ca444623a901f642f75186cb4d41ac7482898f5"
+    lock = _write_v2(path, lock)
+    v = lock["releases"]["verifier"]
+    uses = f"{v['repository']}/.github/workflows/scenario.yml@{v['commit']}"
+    assert d.check(path, tmp_path / "w2", _workflow(tmp_path, lock, uses=uses)) == lock
+    assert d.read_lock(d.lock_path(path))["world"]["sha256"] == lock["world"]["sha256"]
