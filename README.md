@@ -381,10 +381,16 @@ inside the exit segment (|y| <= half the world's `clear_width`, read from the tr
 cannot be read, or an end the format does not define, is INSUFFICIENT. Any other observation
 format is refused: every evaluator reports INSUFFICIENT. Any wall contact still fails.
 
-`hallway-specs.lock.json` pins the catalog by tag. The reference is `v2.2.0`.
+`hallway-specs.lock.json` pins the catalog by tag. The reference is `v2.3.0`.
 The commit in that file is the commit the tag resolved to, recorded as evidence.
 While the lock says `"tag": "UNRELEASED"`, `HALLWAY_SPECS_SOURCE` must name a local
 checkout. A release changes the `"tag"` line. The fetch checks that tag, not the commit.
+
+Evidence that holds the record `UNSUPPORTED: precondition scenario_supported unmet`
+and names no trials is graded `UNSUPPORTED`. The report says that robot and scenario
+are not supported. That grade is not a robot `FAIL`, and no trial is assessed. A
+record that names trials is graded as before. The reporter bundle still has no
+unsupported status, so export writes no bundle for that run.
 
     PYTHONPATH=src python tools/verify_hallway.py <evidence>/manifest.json <out> [--prototype] [--bundle-version 1.1.0]
     # exit 0: no test-system finding. exit 4: the finding was printed and the files were written.
@@ -455,7 +461,7 @@ bundle bump; no grading decision reads them:
   `specs/scenarios/walk-hallway/description.json` (`livingproof-scenario-description/0.1`),
   copied unchanged with its `source` path, sha256 and catalog commit, once per bundle. It
   is written only when the catalog has the file, and refused if it names another scenario
-  revision or world; catalogs up to v1.8.0 have none. The lock's tag is v2.2.0.
+  revision or world; catalogs up to v1.8.0 have none. The lock's tag is v2.3.0.
 
 ## Reusable scenario workflow (robot repositories)
 

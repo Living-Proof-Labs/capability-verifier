@@ -11,10 +11,10 @@ from __future__ import annotations
 
 SPECS = "https://github.com/Living-Proof-Labs/robot-capability-specs"
 # The catalog this verifier fetches and resolves thresholds from.
-SPECS_TAG = "v2.2.0"
-# Tags already graded by this policy. v2.2.0 is the catalog reference above.
+SPECS_TAG = "v2.3.0"
+# Tags already graded by this policy. v2.3.0 is the catalog reference above.
 # Older released tags stay so a stored bundle is still graded. Commits are not listed.
-ACCEPTED_TAGS = frozenset({"v1.6.0", "v1.6.1", "v1.9.0", SPECS_TAG})
+ACCEPTED_TAGS = frozenset({"v1.6.0", "v1.6.1", "v1.9.0", "v2.2.0", SPECS_TAG})
 PLACEHOLDER_TAG = "v0.0.0"
 PLACEHOLDER_REASON = "tag v0.0.0 is a placeholder, not a release"
 

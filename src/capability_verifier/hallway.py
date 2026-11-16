@@ -35,7 +35,12 @@ from livingproof_evaluator_scenario.checks import (
 )
 from livingproof_scenario_parameters import ScenarioParameterError, quantize_half_up_decimal_text
 
-from .scenario_parameters import acceptance, clearance_table, evaluator_thresholds
+from .scenario_parameters import (
+    acceptance,
+    clearance_table,
+    evaluator_thresholds,
+    scenario_identity,
+)
 
 
 def exit_reached(observation, thresholds, evidence_id, seed=None):
@@ -78,6 +83,9 @@ def _num(v):
 
 # A run whose manifest declares an unmet required precondition: never graded PASS/FAIL.
 UNSUPPORTED = "UNSUPPORTED"
+# robot-capability-specs v2.3.0: the simulator records this, with no trials, when the
+# robot manifest does not declare the scenario. It is never a robot FAIL.
+SCENARIO_SUPPORTED_RECORD = "UNSUPPORTED: precondition scenario_supported unmet"
 ASSESSOR_TYPES = {"deterministic", "human", "agent"}
 # Reporter bundle 1.0.0 'kind' for each assessor type; agents have no reporter kind yet.
 REPORTER_KIND = {"deterministic": "deterministic", "human": "human", "agent": None}
@@ -385,6 +393,56 @@ def fits_width(manifest: dict) -> dict:
     }
 
 
+def _no_trials(manifest: dict) -> bool:
+    """True when the evidence names no trial result to grade."""
+    trials = manifest.get("trials")
+    if isinstance(trials, list):
+        return not trials
+    if isinstance(trials, dict) and isinstance(trials.get("results"), list):
+        return not trials["results"]
+    return False
+
+
+def _holds_text(value, text: str) -> bool:
+    if isinstance(value, str):
+        return text in value
+    if isinstance(value, dict):
+        return any(_holds_text(item, text) for item in value.values())
+    if isinstance(value, list):
+        return any(_holds_text(item, text) for item in value)
+    return False
+
+
+def holds_scenario_supported_record(manifest: dict) -> bool:
+    """The unmet ``scenario_supported`` record, and no trials were recorded."""
+    return _no_trials(manifest) and _holds_text(manifest, SCENARIO_SUPPORTED_RECORD)
+
+
+def _robot_label(manifest: dict) -> str:
+    robot = manifest.get("robot")
+    if isinstance(robot, dict) and isinstance(robot.get("id"), str) and robot["id"]:
+        return robot["id"]
+    return "robot"
+
+
+def _scenario_label(manifest: dict) -> str:
+    identity = scenario_identity(manifest)
+    if identity is not None:
+        return identity[0]
+    return "scenario"
+
+
+def unsupported_reason(manifest: dict, unmet: dict) -> str:
+    """Why a run is UNSUPPORTED. ``scenario_supported`` says the scenario is not supported."""
+    reason = f"precondition {unmet['name']} unmet"
+    detail = unmet.get("detail") or ""
+    if detail:
+        reason = f"{reason}: {detail}"
+    if unmet["name"] != "scenario_supported":
+        return reason
+    return f"{_robot_label(manifest)} {_scenario_label(manifest)} is not supported: {reason}"
+
+
 def unmet_precondition(manifest: dict) -> dict | None:
     """The first required precondition that is unmet, or None if all are met.
 
@@ -648,12 +706,15 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
         raise ManifestError(f"manifest is not valid JSON: {e}") from None
     validate_manifest(manifest)
     plan = manifest["plan"]
-    unmet = unmet_precondition(manifest)
+    # Grade the recorded sentence before resolving parameters or reading trials.
+    # No trial ran, so this is not a robot failure.
+    if holds_scenario_supported_record(manifest):
+        unmet = {"name": "scenario_supported", "detail": ""}
+    else:
+        unmet = unmet_precondition(manifest)
     if unmet is not None:
         # Declared unsupported: no trial is read or graded, whatever the manifest lists.
-        reason = f"precondition {unmet['name']} unmet" + (
-            f": {unmet['detail']}" if unmet["detail"] else ""
-        )
+        reason = unsupported_reason(manifest, unmet)
         n, need = planned_counts(plan)
         return _with_findings(
             {
