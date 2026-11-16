@@ -15,7 +15,8 @@ def collect(path: Path) -> dict:
     raw = path.read_bytes()
     evidence = json.loads(raw)
     if not isinstance(evidence, dict):
-        raise ValueError("Evidence must be an object")
+        # test_unreadable_evidence_fails_closed requires ValueError for null and [].
+        raise ValueError("Evidence must be an object")  # noqa: TRY004
     return {
         "evidence": evidence,
         "sha256": hashlib.sha256(raw).hexdigest(),

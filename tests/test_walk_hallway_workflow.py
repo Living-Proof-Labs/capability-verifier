@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The reusable walk-hallway workflow: callable, lock-driven, renderer is the reporter image."""
 
+import hashlib
 import json
 import os
 import shutil
@@ -180,6 +181,7 @@ def _write_lock(robot, caller_dir, relative, *, copy):
             relative,
             str(Path(__file__).parents[1]),
         ],
+        check=False,
         capture_output=True,
         text=True,
         env=env,
@@ -459,10 +461,7 @@ def test_scenario_evaluator_is_a_parallel_job_and_the_report_collects_by_pattern
     start = WORKFLOW.index("<<'COLLECT'\n") + len("<<'COLLECT'\n")
     end = WORKFLOW.index("\n          COLLECT\n", start)
     indent = "          "
-    extracted = "\n".join(
-        line[len(indent) :] if line.startswith(indent) else line
-        for line in WORKFLOW[start:end].splitlines()
-    )
+    extracted = "\n".join(line.removeprefix(indent) for line in WORKFLOW[start:end].splitlines())
     source = (Path(__file__).parents[1] / "src/capability_verifier/collect.py").read_text()
     assert extracted + "\n" == source
 
@@ -592,6 +591,7 @@ def _plan(tmp_path, runner, reporter, mcap=True, verifier="v1.9.0"):
     )
     return subprocess.run(
         [sys.executable, "-c", _capability_script()],
+        check=False,
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -677,8 +677,10 @@ def test_verify_writes_the_bundle_version_from_the_plan(tmp_path):
     (tmp_path / "b").mkdir()
     new = _run(tmp_path / "b", script, "uv", "1.1.0")
     assert new == [
-        "run --no-sync python tools/verify_hallway.py --bundle-version 1.1.0 "
-        "evidence/manifest.json verified"
+        (
+            "run --no-sync python tools/verify_hallway.py --bundle-version 1.1.0 "
+            "evidence/manifest.json verified"
+        )
     ]
 
 
@@ -727,6 +729,46 @@ def test_html_and_markdown_render_from_the_bundle_text_from_report_json(tmp_path
     assert calls.count("render reports/report.json") == 1
 
 
+def test_collect_then_render_keeps_thresholds_in_an_existing_reports_directory(tmp_path):
+    """Collect writes reports/ first. Render must still run and checksum thresholds.json.
+
+    v1.21.0 added a collect step that copies cited thresholds.json into reports/,
+    then the render step ran `mkdir reports` and failed with 'File exists' for
+    every caller (capability-verifier#99). These two workflow steps run in that
+    order here so the regression fails in this repo rather than in a caller.
+    """
+    work = tmp_path / "job"
+    work.mkdir()
+    cited = b'{"limits":{"exit_segment":0.75}}\n'
+    digest = hashlib.sha256(cited).hexdigest()
+    manifest = work / "verified" / "bundle" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({"results": [{"id": "playground-seed-01"}]}) + "\n")
+    results = work / "evaluator-results" / "livingproof-scenario"
+    results.mkdir(parents=True)
+    document = {
+        "format": "livingproof-evaluator-result/1.1.0",
+        "evaluator": {"id": "livingproof-scenario", "version": "1.2.1"},
+        "inputs": [{"role": "thresholds", "uri": "thresholds.json", "sha256": digest}],
+        "scenario": {"trial_id": "playground-seed-01", "steps": []},
+    }
+    (results / "playground-seed-01.json").write_text(json.dumps(document) + "\n")
+    (results / "thresholds.json").write_bytes(cited)
+
+    subprocess.run(
+        ["bash", "-e", "-c", _step("Append each evaluator's result documents")],
+        cwd=work,
+        check=True,
+    )
+    assert (work / "reports" / "thresholds.json").read_bytes() == cited
+
+    _run(work, _step("Validate, then render"), "livingproof-capability-report", "1.1.0")
+    assert (work / "reports" / "thresholds.json").read_bytes() == cited
+    assert (work / "reports" / "report.json").is_file()
+    sums = (work / "reports" / "SHA256SUMS").read_text()
+    assert f"{digest}  thresholds.json" in sums
+
+
 def test_pre_and_dev_releases_fail_closed_and_never_count_as_the_release(tmp_path):
     import json
     import subprocess
@@ -742,6 +784,7 @@ def test_pre_and_dev_releases_fail_closed_and_never_count_as_the_release(tmp_pat
         )
         done = subprocess.run(
             [sys.executable, "-c", _capability_script()],
+            check=False,
             cwd=tmp_path,
             capture_output=True,
             text=True,
@@ -1033,6 +1076,7 @@ def _run_verify(work: Path):
     script = definition.step(WORKFLOW, "Assess every trial")
     return subprocess.run(
         ["bash", "-e", "-c", script],
+        check=False,
         cwd=work,
         env=env,
         capture_output=True,
@@ -1147,7 +1191,12 @@ def _run_assess_stub(work: Path, code: int):
     env["BUNDLE_VERSION"] = "1.1.0"
     script = definition.step(WORKFLOW, "Assess every trial")
     done = subprocess.run(
-        ["bash", "-e", "-c", script], cwd=work, env=env, capture_output=True, text=True
+        ["bash", "-e", "-c", script],
+        check=False,
+        cwd=work,
+        env=env,
+        capture_output=True,
+        text=True,
     )
     return done, calls.read_text()
 
@@ -1299,6 +1348,7 @@ def _run_refs(robot: Path, source: str):
     env.pop("PYTHONPATH", None)
     done = subprocess.run(
         ["bash", "-eo", "pipefail", "-c", _step("Refs from verification.lock.json")],
+        check=False,
         cwd=robot,
         env=env,
         capture_output=True,
@@ -1412,8 +1462,10 @@ def _venv_markers(root: Path, package_marker: str, dependency_marker: str) -> No
             [
                 str(py),
                 "-c",
-                "import site\n"
-                "print(next(p for p in site.getsitepackages() if p.endswith('site-packages')))\n",
+                (
+                    "import site\n"
+                    "print(next(p for p in site.getsitepackages() if p.endswith('site-packages')))\n"
+                ),
             ],
             text=True,
         ).strip()
@@ -1460,6 +1512,7 @@ def _run_plan_pin(work: Path, *, installed_commit: str, git_commit: str):
     _pin_env(env, tag=_PIN_TAG, commit=_PIN_COMMIT, git_commit=git_commit)
     return subprocess.run(
         ["bash", "-eo", "pipefail", "-c", _step("Every ref is a released tag")],
+        check=False,
         cwd=work,
         env=env,
         capture_output=True,
@@ -1495,6 +1548,7 @@ def _run_scenario(
     _pin_env(env, tag=tag, commit=commit, git_commit=git_commit)
     done = subprocess.run(
         ["bash", "-eo", "pipefail", "-c", _step("Scenario evaluator, one result file per trial")],
+        check=False,
         cwd=work,
         env=env,
         capture_output=True,

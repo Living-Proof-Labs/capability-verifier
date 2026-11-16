@@ -831,7 +831,7 @@ jobs:
               set, the matching bytes are copied there under the cited relative path.
               """
               if not isinstance(bundle, dict) or not isinstance(bundle.get("results"), list):
-                  raise ValueError("bundle is missing results")
+                  raise TypeError("bundle is missing results")
               directory = Path(directory)
               found = []
               if directory.is_dir():
@@ -839,9 +839,12 @@ jobs:
                       if not path.is_file() or path.is_symlink():
                           continue
                       document = json.loads(path.read_text(encoding="utf-8"))
-                      if isinstance(document, dict) and isinstance(document.get("format"), str):
-                          if RESULT_FORMAT.fullmatch(document["format"]):
-                              found.append((path, document))
+                      if (
+                          isinstance(document, dict)
+                          and isinstance(document.get("format"), str)
+                          and RESULT_FORMAT.fullmatch(document["format"])
+                      ):
+                          found.append((path, document))
               by_id = {}
               for result in bundle["results"]:
                   if isinstance(result, dict) and isinstance(result.get("id"), str):
@@ -862,7 +865,7 @@ jobs:
                       entries = []
                       result["evaluator_results"] = entries
                   if not isinstance(entries, list):
-                      raise ValueError(f"result {trial_id!r} evaluator_results is not a list")
+                      raise TypeError(f"result {trial_id!r} evaluator_results is not a list")
                   entries.append(document)
               if report_dir is not None:
                   _write_thresholds(Path(report_dir), exports)
@@ -1020,7 +1023,7 @@ jobs:
           fi
           livingproof-capability-report --version
           livingproof-capability-report validate verified/bundle/manifest.json
-          mkdir reports
+          mkdir -p reports
           set --
           if [ -f links/evidence-links.json ]; then set -- --evidence-links links/evidence-links.json; fi
           # Markdown and HTML are rendered from the bundle manifest, with the same

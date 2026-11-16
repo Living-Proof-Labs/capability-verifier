@@ -12,16 +12,16 @@ reporter step's path input uses.
 """
 
 import argparse
-from datetime import datetime, timezone
 import glob
 import json
 import os
-from pathlib import Path
 import re
 import sys
+import xml.etree.ElementTree as ET
+from datetime import UTC, datetime
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
-import xml.etree.ElementTree as ET
 
 SUMMARY_LIMIT = 65000
 API_ROOT = "https://api.github.com"
@@ -364,7 +364,7 @@ def main(argv=None):
         help="ISO-8601 timestamp stored on the check run",
     )
     args = parser.parse_args(argv)
-    completed_at = args.completed_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    completed_at = args.completed_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     publish = args.publish_check == "true"
     sha = os.environ.get("HEAD_SHA") or os.environ.get("GITHUB_SHA", "")
     result = evaluate(

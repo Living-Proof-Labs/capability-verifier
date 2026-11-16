@@ -2,10 +2,10 @@
 """Walk-hallway evaluators bound to the locked catalog's verifier scenarios."""
 
 import copy
-import importlib.util
-import os
 import hashlib
+import importlib.util
 import json
+import os
 import re
 import shutil
 import signal
@@ -459,6 +459,7 @@ def _cli(tmp_path, manifest, out, version, commit="0" * 40, *args):
     assert not (tree / ".git").exists()
     return subprocess.run(
         [sys.executable, "tools/verify_hallway.py", str(manifest), str(out), "--prototype", *args],
+        check=False,
         cwd=tree,
         env=env,
         capture_output=True,
@@ -486,8 +487,10 @@ def test_export_needs_no_git_and_labels_release_and_dev_builds(tmp_path):
     assert bundle["producer"]["version"] == "0.0.0" and bundle["producer"]["commit"] == "a" * 40
     notes = {res["provenance"]["producer"] for res in bundle["results"]}
     assert notes == {
-        f"DEV: capability-verifier unreleased build at {'a' * 40}; "
-        "producer version 0.0.0 is a placeholder, not a release"
+        (
+            f"DEV: capability-verifier unreleased build at {'a' * 40}; "
+            "producer version 0.0.0 is a placeholder, not a release"
+        )
     }
 
 

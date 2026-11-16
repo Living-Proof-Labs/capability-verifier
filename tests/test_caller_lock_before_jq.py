@@ -72,6 +72,7 @@ def _run_refs(robot: Path, source: str, bindir: Path):
     env.pop("PYTHONPATH", None)
     return subprocess.run(
         [bash, "-eo", "pipefail", "-c", _step("Refs from verification.lock.json")],
+        check=False,
         cwd=robot,
         env=env,
         capture_output=True,

@@ -166,9 +166,9 @@ def test_github_api_responses_come_from_fixtures(browser_page):
     github = []
     page.on(
         "response",
-        lambda response: github.append(response)
-        if urlsplit(response.url).hostname == "api.github.com"
-        else None,
+        lambda response: (
+            github.append(response) if urlsplit(response.url).hostname == "api.github.com" else None
+        ),
     )
     try:
         page.goto(base)

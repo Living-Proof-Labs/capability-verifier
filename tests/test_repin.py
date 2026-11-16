@@ -152,8 +152,10 @@ def test_check_confirms_each_image_tag_has_its_locked_digest():
     published[repin.VERIFIER_IMAGE] = "sha256:" + "e" * 64
     tag = LOCK["releases"]["verifier"]["tag"].removeprefix("v")
     assert repin.check(lock, PYPROJECT, locked_commits, registry) == [
-        f"releases.verifier: {repin.VERIFIER_IMAGE}:{tag} is sha256:{'e' * 64}, "
-        f"not the locked {DIGEST}"
+        (
+            f"releases.verifier: {repin.VERIFIER_IMAGE}:{tag} is sha256:{'e' * 64}, "
+            f"not the locked {DIGEST}"
+        )
     ]
     assert repin.check(lock, PYPROJECT) == []  # offline: format only
 
@@ -172,9 +174,11 @@ def test_check_confirms_each_tag_resolves_to_its_locked_commit():
     moved["releases"]["verifier"]["commit"] = "e" * 40
     problems = repin.check(moved, PYPROJECT, locked_commits)
     assert problems == [
-        f"releases.verifier: {LOCK['releases']['verifier']['repository']} tag "
-        f"{LOCK['releases']['verifier']['tag']} is {LOCK['releases']['verifier']['commit']}, "
-        f"not the locked {'e' * 40}"
+        (
+            f"releases.verifier: {LOCK['releases']['verifier']['repository']} tag "
+            f"{LOCK['releases']['verifier']['tag']} is {LOCK['releases']['verifier']['commit']}, "
+            f"not the locked {'e' * 40}"
+        )
     ]
     assert repin.check(moved, PYPROJECT) == []  # offline: format only, as before
 

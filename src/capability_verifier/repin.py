@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """Fill PENDING_RELEASE refs in a robot repository's verification.lock.json from real
 release tags, or check them. Owned by the capability verifier; robot repositories call it
@@ -30,12 +29,12 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import re
 import subprocess
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 LOCK = "verification.lock.json"
 PYPROJECT = "pyproject.toml"
@@ -43,17 +42,15 @@ PENDING = "PENDING_RELEASE"
 TAG = re.compile(r"v\d+\.\d+\.\d+")
 SHA = re.compile(r"[0-9a-f]{40}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
-MANIFESTS = ", ".join(
-    [
-        "application/vnd.oci.image.index.v1+json",
-        "application/vnd.docker.distribution.manifest.list.v2+json",
-        "application/vnd.oci.image.manifest.v1+json",
-        "application/vnd.docker.distribution.manifest.v2+json",
-    ]
+MANIFESTS = (
+    "application/vnd.oci.image.index.v1+json, "
+    "application/vnd.docker.distribution.manifest.list.v2+json, "
+    "application/vnd.oci.image.manifest.v1+json, "
+    "application/vnd.docker.distribution.manifest.v2+json"
 )
 RUNNER_DIST = "livingproof-sim-mujoco"
 VERIFIER_IMAGE = "ghcr.io/living-proof-labs/capability-verifier-hallway"
-SOURCE = re.compile(rf"^{RUNNER_DIST}\s*=\s*\{{(?P<body>[^}}]*)\}}", re.M)
+SOURCE = re.compile(rf"^{RUNNER_DIST}\s*=\s*\{{(?P<body>[^}}]*)\}}", re.MULTILINE)
 
 
 def resolve(repository: str, tag: str) -> str:
@@ -126,7 +123,7 @@ def check(lock: dict, pyproject: str, resolver=None, digester=None) -> list[str]
     verifier_image = lock["releases"].get("verifier", {}).get("image")
     if verifier_image is not None and verifier_image != VERIFIER_IMAGE:
         problems.append(f"releases.verifier.image is {verifier_image!r}, not {VERIFIER_IMAGE}")
-    if re.search(r"^\S+\s*=\s*\{[^}]*\bpath\s*=", pyproject, re.M):
+    if re.search(r"^\S+\s*=\s*\{[^}]*\bpath\s*=", pyproject, re.MULTILINE):
         problems.append("pyproject.toml has a path-pinned dependency")
     runner = lock["releases"]["runner"]
     body = runner_source(pyproject) or ""
@@ -203,9 +200,11 @@ def dump(lock: dict) -> str:
     return (
         re.sub(
             r"\[\s*([^\[\]{}]*?)\s*\]",
-            lambda m: "[" + ", ".join(x.strip() for x in m.group(1).split(",")) + "]"
-            if m.group(1)
-            else "[]",
+            lambda m: (
+                "[" + ", ".join(x.strip() for x in m.group(1).split(",")) + "]"
+                if m.group(1)
+                else "[]"
+            ),
             text,
         )
         + "\n"

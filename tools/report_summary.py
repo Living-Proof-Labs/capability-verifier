@@ -2,8 +2,8 @@
 """Show capability verdicts separately from successful expectation tests."""
 
 import html
-from pathlib import Path
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 
 def cell(value):
@@ -14,8 +14,10 @@ def render(path):
     lines = [
         "## Fixture capability verdicts",
         "",
-        "**Passing expectation tests do not mean the robot capability passed.** "
-        "These are deterministic fixtures, not robot certification.",
+        (
+            "**Passing expectation tests do not mean the robot capability passed.** "
+            "These are deterministic fixtures, not robot certification."
+        ),
         "",
     ]
     if not path.exists():

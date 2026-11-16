@@ -18,7 +18,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / "src"))
-from capability_verifier.specs_ref import SPECS_TAG, catalog_reference_ok  # noqa: E402
+from capability_verifier.specs_ref import SPECS_TAG, catalog_reference_ok
 
 lock = json.loads((root / "hallway-specs.lock.json").read_text())
 destination = root / ".specs-hallway"
