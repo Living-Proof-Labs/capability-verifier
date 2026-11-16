@@ -785,6 +785,9 @@ jobs:
           path: evaluator-results
       - name: Append each evaluator's result documents
         run: |
+          if [ ! -f verified/bundle/manifest.json ]; then
+            exit 0
+          fi
           cat > /tmp/collect_evaluator_results.py <<'COLLECT'
           # SPDX-License-Identifier: Apache-2.0
           """Append evaluator result documents onto a bundle.
@@ -1012,6 +1015,12 @@ jobs:
           path: links
       - name: Validate, then render the verifier's decisions (a capability FAIL exits 0)
         run: |
+          if [ -f verified/reports/report.json ]; then
+            mkdir -p reports
+            cp -a verified/reports/. reports/
+            (cd reports && sha256sum -c SHA256SUMS)
+            exit 0
+          fi
           livingproof-capability-report --version
           livingproof-capability-report validate verified/bundle/manifest.json
           mkdir -p reports

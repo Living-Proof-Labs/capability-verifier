@@ -15,6 +15,8 @@ so the verify job fails. Exit 4 is that finding. A robot grade with no finding i
 """
 
 import argparse
+import hashlib
+import html
 import json
 import os
 import re
@@ -27,6 +29,7 @@ import threading
 from pathlib import Path
 
 from capability_verifier import evaluate, hallway
+from capability_verifier.scenario_parameters import scenario_identity
 
 ROOT = Path(__file__).resolve().parents[1]
 # specs #30: human-readable mission and world text, passed through as-is into the bundle's
@@ -159,6 +162,74 @@ def description(path: Path = DESCRIPTION, commit: str | None = None) -> dict | N
     return {"source": source, **text}
 
 
+def _checksums(directory: Path) -> str:
+    """``sha256sum`` lines for every file already in ``directory``, names sorted."""
+    lines = []
+    for path in sorted(directory.iterdir()):
+        if path.is_file():
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            lines.append(f"{digest}  {path.name}")
+    return "\n".join(lines) + "\n"
+
+
+def _report_system(evidence: dict) -> dict:
+    """``system.id`` as the reporter writes it: ``robot/configuration``."""
+    robot = evidence.get("robot") if isinstance(evidence.get("robot"), dict) else {}
+    conf = evidence.get("configuration") if isinstance(evidence.get("configuration"), dict) else {}
+    robot_id = robot.get("id") if isinstance(robot.get("id"), str) and robot["id"] else "robot"
+    name = conf.get("name") if isinstance(conf.get("name"), str) and conf["name"] else ""
+    system = {"id": f"{robot_id}/{name}" if name else robot_id}
+    version = conf.get("version")
+    if isinstance(version, str) and version:
+        system["version"] = version
+    return system
+
+
+def _report_capability(evidence: dict) -> str:
+    """The scenario this run graded, not the hallway catalog's capability."""
+    identity = scenario_identity(evidence)
+    if identity is not None:
+        return identity[0]
+    return "scenario"
+
+
+def write_unsupported_report(out: Path, result: dict, evidence: dict) -> None:
+    """Published report for an UNSUPPORTED grade. The reporter bundle is not written.
+
+    ``report.json`` is report 1.0.0, the shape the site already reads. There is no
+    ``source_bundle``: the bundle schema has no UNSUPPORTED status. ``SHA256SUMS``
+    hashes the published bytes.
+    """
+    reports = out / "reports"
+    reports.mkdir(parents=True)
+    text = "\n".join(hallway.summary_lines(result)) + "\n"
+    summary = result["summary"]
+    document = {
+        "report_version": "1.0.0",
+        "summaries": [
+            {
+                "capability": _report_capability(evidence),
+                "system": _report_system(evidence),
+                "grade": summary["grade"],
+                "k": summary["k"],
+                "n": summary["n"],
+                "required_passes": summary["required_passes"],
+                "result_ids": [],
+                "failures": [],
+                "rationale": summary["reason"],
+            }
+        ],
+    }
+    (reports / "report.json").write_text(json.dumps(document, indent=2) + "\n")
+    (reports / "report.md").write_text(f"# {summary['grade']}\n\n{text}")
+    (reports / "report.txt").write_text(text)
+    (reports / "report.html").write_text(
+        "<!DOCTYPE html>\n<html><body><pre>" + html.escape(text) + "</pre></body></html>\n"
+    )
+    (reports / "SHA256SUMS").write_text(_checksums(reports))
+    (out / "verification.json").write_text(json.dumps(result, indent=2) + "\n")
+
+
 def _export(
     manifest_path: Path,
     out: Path,
@@ -173,8 +244,10 @@ def _export(
         raise SystemExit("hallway lock is UNRELEASED; pass --prototype to export a labelled bundle")
     result = hallway.verify(manifest_path)  # raises ManifestError for JSON, fields, plan, trials
     if result["summary"]["grade"] == hallway.UNSUPPORTED:
-        # The reporter bundle has no unsupported result yet (verifier #20); export nothing.
-        raise SystemExit(f"{hallway.UNSUPPORTED}: {result['summary']['reason']}; no bundle written")
+        # The reporter bundle has no UNSUPPORTED status. The published report is still written.
+        evidence = json.loads(manifest_path.read_text())
+        write_unsupported_report(out, result, evidence)
+        return result
     missing = absent_evidence(manifest_path, result)
     if missing:
         result["missing_evidence"] = missing

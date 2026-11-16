@@ -719,9 +719,14 @@ def test_export_writes_no_bundle_for_an_unsupported_run(tmp_path, monkeypatch):
     src = tmp_path / "evidence"
     src.mkdir()
     path = _hallway_manifest(src, 1.41, False, "1.41 + 2 x 0.05 > 1.5")
-    with pytest.raises(SystemExit, match="UNSUPPORTED: precondition fits_width unmet"):
-        _tool().export(path, tmp_path / "verified", prototype=True)
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["evidence"]
+    out = tmp_path / "verified"
+    result = _tool().export(path, out, prototype=True)
+    assert result["summary"]["grade"] == hallway.UNSUPPORTED
+    assert "fits_width" in result["summary"]["reason"]
+    assert not (out / "bundle").exists()
+    report = (out / "reports" / "report.txt").read_text()
+    assert "fits_width" in report
+    assert "not supported" not in report
 
 
 def test_fits_width_is_recomputed_not_trusted(tmp_path):

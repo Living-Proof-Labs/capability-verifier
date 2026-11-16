@@ -587,6 +587,7 @@ def test_contract_revision_absent_with_matching_commit_is_graded():
         ("v1.6.1", "0bdf1db3f975b044692c0b8f1ec37737ad8b889f"),
         ("v1.9.0", "d677bd9770e60a6d42ea597966799e119dc7dd18"),
         ("v2.2.0", "23bec516bda29be7b26555286cbf2e8217ac5c81"),
+        ("v2.3.0", "57317e617014a6df97bb7fba9d92a890af8d42e5"),
     ],
 )
 def test_every_released_tag_grades_with_its_own_commit(tag, commit):

@@ -35,11 +35,11 @@ FORMAT_LITERAL = re.compile(r"livingproof-hallway-[a-z0-9./-]+")
 
 
 def test_catalog_reference_is_the_tag_not_the_commit():
-    assert catalog_reference_ok("v2.2.0", "v2.2.0", "a" * 40, "b" * 40)
-    assert not catalog_reference_ok("v1.9.0", "v2.2.0", "b" * 40, "b" * 40)
+    assert catalog_reference_ok("v2.3.0", "v2.3.0", "a" * 40, "b" * 40)
+    assert not catalog_reference_ok("v1.9.0", "v2.3.0", "b" * 40, "b" * 40)
     lock = json.loads((ROOT / "hallway-specs.lock.json").read_text())
-    assert lock["tag"] == SPECS_TAG == "v2.2.0"
-    assert lock["commit"] == "23bec516bda29be7b26555286cbf2e8217ac5c81"
+    assert lock["tag"] == SPECS_TAG == "v2.3.0"
+    assert lock["commit"] == "57317e617014a6df97bb7fba9d92a890af8d42e5"
     assert "specs/scenarios/walk-hallway/parameters.json" in lock["files"]
     fetch = (ROOT / "tools" / "fetch_hallway_specs.py").read_text()
     assert "does not match the locked commit" not in fetch
