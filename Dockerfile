@@ -31,7 +31,7 @@ RUN uv run --locked --no-sync playwright install --with-deps chromium
 # livingproof-verification's verification lock names (robot, verifier, reporter); their uv.lock
 # files are synced here so a run only links from the warm cache. Bump them with that lock.
 FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 AS uv-hallway
-FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337 AS hallway
+FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df AS hallway
 COPY --from=uv-hallway /uv /uvx /usr/local/bin/
 # APT_MIRROR replaces deb.debian.org (e.g. https://cloudfront.debian.net behind a proxy that
 # breaks deb.debian.org). Failed index downloads stop the build.
