@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The reusable walk-hallway workflow: callable, lock-driven, renderer is the reporter image."""
 
+import hashlib
 import json
 import os
 import shutil
@@ -725,6 +726,46 @@ def test_html_and_markdown_render_from_the_bundle_text_from_report_json(tmp_path
     assert "render reports/report.json --format markdown -o reports/report.md" not in calls
     assert "render reports/report.json --format html -o reports/report.html" not in calls
     assert calls.count("render reports/report.json") == 1
+
+
+def test_collect_then_render_keeps_thresholds_in_an_existing_reports_directory(tmp_path):
+    """Collect writes reports/ first. Render must still run and checksum thresholds.json.
+
+    v1.21.0 added a collect step that copies cited thresholds.json into reports/,
+    then the render step ran `mkdir reports` and failed with 'File exists' for
+    every caller (capability-verifier#99). These two workflow steps run in that
+    order here so the regression fails in this repo rather than in a caller.
+    """
+    work = tmp_path / "job"
+    work.mkdir()
+    cited = b'{"limits":{"exit_segment":0.75}}\n'
+    digest = hashlib.sha256(cited).hexdigest()
+    manifest = work / "verified" / "bundle" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({"results": [{"id": "playground-seed-01"}]}) + "\n")
+    results = work / "evaluator-results" / "livingproof-scenario"
+    results.mkdir(parents=True)
+    document = {
+        "format": "livingproof-evaluator-result/1.1.0",
+        "evaluator": {"id": "livingproof-scenario", "version": "1.2.1"},
+        "inputs": [{"role": "thresholds", "uri": "thresholds.json", "sha256": digest}],
+        "scenario": {"trial_id": "playground-seed-01", "steps": []},
+    }
+    (results / "playground-seed-01.json").write_text(json.dumps(document) + "\n")
+    (results / "thresholds.json").write_bytes(cited)
+
+    subprocess.run(
+        ["bash", "-e", "-c", _step("Append each evaluator's result documents")],
+        cwd=work,
+        check=True,
+    )
+    assert (work / "reports" / "thresholds.json").read_bytes() == cited
+
+    _run(work, _step("Validate, then render"), "livingproof-capability-report", "1.1.0")
+    assert (work / "reports" / "thresholds.json").read_bytes() == cited
+    assert (work / "reports" / "report.json").is_file()
+    sums = (work / "reports" / "SHA256SUMS").read_text()
+    assert f"{digest}  thresholds.json" in sums
 
 
 def test_pre_and_dev_releases_fail_closed_and_never_count_as_the_release(tmp_path):

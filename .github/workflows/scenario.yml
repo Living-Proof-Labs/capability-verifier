@@ -1011,7 +1011,7 @@ jobs:
         run: |
           livingproof-capability-report --version
           livingproof-capability-report validate verified/bundle/manifest.json
-          mkdir reports
+          mkdir -p reports
           set --
           if [ -f links/evidence-links.json ]; then set -- --evidence-links links/evidence-links.json; fi
           # Markdown and HTML are rendered from the bundle manifest, with the same
