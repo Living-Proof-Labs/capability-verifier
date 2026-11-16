@@ -54,11 +54,11 @@ def test_released_pins_are_tags():
     ) in project
     assert (
         "livingproof-scenario-parameters @ git+https://github.com/Living-Proof-Labs/"
-        "robot-capability-specs@v2.2.0#subdirectory=python"
+        "robot-capability-specs@v2.3.0#subdirectory=python"
     ) in project
     assert (
         "livingproof-sim-mujoco @ git+https://github.com/Living-Proof-Labs/"
-        "livingproof-sim-mujoco.git@v2.1.1"
+        "livingproof-sim-mujoco.git@v3.2.5"
     ) in project
     assert "TODO" not in project
     worlds = json.loads((ROOT / "worlds.lock.json").read_text())

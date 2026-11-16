@@ -2,6 +2,9 @@ version = 1
 revision = 5
 requires-python = "==3.12.*"
 
+[manifest]
+overrides = [{ name = "livingproof-scenario-parameters", git = "https://github.com/Living-Proof-Labs/robot-capability-specs?subdirectory=python&rev=v2.3.0" }]
+
 [[package]]
 name = "absl-py"
 version = "2.5.1"
@@ -45,8 +48,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "livingproof-evaluator-scenario", git = "https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git?rev=v1.3.0" },
-    { name = "livingproof-scenario-parameters", git = "https://github.com/Living-Proof-Labs/robot-capability-specs?subdirectory=python&rev=v2.2.0" },
-    { name = "livingproof-sim-mujoco", git = "https://github.com/Living-Proof-Labs/livingproof-sim-mujoco.git?rev=v2.1.1" },
+    { name = "livingproof-scenario-parameters", git = "https://github.com/Living-Proof-Labs/robot-capability-specs?subdirectory=python&rev=v2.3.0" },
+    { name = "livingproof-sim-mujoco", git = "https://github.com/Living-Proof-Labs/livingproof-sim-mujoco.git?rev=v3.2.5" },
     { name = "pyyaml", specifier = "==6.0.3" },
 ]
 
@@ -263,12 +266,12 @@ dependencies = [
 [[package]]
 name = "livingproof-scenario-parameters"
 version = "2.2.0"
-source = { git = "https://github.com/Living-Proof-Labs/robot-capability-specs?subdirectory=python&rev=v2.2.0#23bec516bda29be7b26555286cbf2e8217ac5c81" }
+source = { git = "https://github.com/Living-Proof-Labs/robot-capability-specs?subdirectory=python&rev=v2.3.0#57317e617014a6df97bb7fba9d92a890af8d42e5" }
 
 [[package]]
 name = "livingproof-sim-mujoco"
-version = "2.1.1"
-source = { git = "https://github.com/Living-Proof-Labs/livingproof-sim-mujoco.git?rev=v2.1.1#6aa1017adf72ac2886ed4f407e0ac574531744d5" }
+version = "3.2.5"
+source = { git = "https://github.com/Living-Proof-Labs/livingproof-sim-mujoco.git?rev=v3.2.5#fada9032ed5de4c768c65ed03fe962b6f154271f" }
 dependencies = [
     { name = "livingproof-common" },
     { name = "livingproof-scenario-parameters" },

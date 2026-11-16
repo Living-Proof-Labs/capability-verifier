@@ -6,13 +6,14 @@ requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
 dependencies = [
     "pyyaml==6.0.3",
-    # Released tags only. robot-capability-specs v2.2.0, livingproof-worlds v1.2.0
-    # (worlds.lock.json), livingproof-sim-mujoco v2.1.1, livingproof-evaluator-scenario v1.3.0.
-    # The parameter package stays on v2.2.0: evaluator v1.3.0 and sim v2.1.1 require that
-    # git URL, and the package bytes are the same at v2.3.0. The catalog lock is v2.3.0.
+    # Released tags only. robot-capability-specs v2.3.0, livingproof-worlds v1.2.0
+    # (worlds.lock.json), livingproof-sim-mujoco v3.2.5, livingproof-evaluator-scenario v1.3.0.
+    # sim v3.2.5 requires the parameter package at specs v2.3.0 and evaluator v1.3.0 at
+    # v2.2.0. The python/ bytes are identical at both tags, so [tool.uv] overrides the
+    # evaluator's URL to v2.3.0. The catalog lock is v2.3.0.
     "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git@v1.3.0",
-    "livingproof-scenario-parameters @ git+https://github.com/Living-Proof-Labs/robot-capability-specs@v2.2.0#subdirectory=python",
-    "livingproof-sim-mujoco @ git+https://github.com/Living-Proof-Labs/livingproof-sim-mujoco.git@v2.1.1",
+    "livingproof-scenario-parameters @ git+https://github.com/Living-Proof-Labs/robot-capability-specs@v2.3.0#subdirectory=python",
+    "livingproof-sim-mujoco @ git+https://github.com/Living-Proof-Labs/livingproof-sim-mujoco.git@v3.2.5",
 ]
 
 [project.entry-points."livingproof.capability.commands"]
@@ -27,6 +28,12 @@ dev = [
     "zensical==0.0.73",
     "livingproof-capability-report @ https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.5.0/livingproof_capability_report-3.5.0-py3-none-any.whl",
     "livingproof-common @ https://github.com/Living-Proof-Labs/livingproof-common/releases/download/v1.0.0/livingproof_common-1.0.0-py3-none-any.whl",
+]
+
+[tool.uv]
+# One parameter-package URL for sim v3.2.5 (specs v2.3.0) and evaluator v1.3.0 (v2.2.0).
+override-dependencies = [
+    "livingproof-scenario-parameters @ git+https://github.com/Living-Proof-Labs/robot-capability-specs@v2.3.0#subdirectory=python",
 ]
 
 [tool.pytest.ini_options]
