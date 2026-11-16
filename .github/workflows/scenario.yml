@@ -570,11 +570,15 @@ jobs:
             else
               pin_src=src
             fi
-            PYTHONPATH="$pin_src" python3 -m capability_verifier.evaluator_pin \
+            # actions/checkout fetched the locked commit shallow and tagless, which hatch-vcs
+            # builds as 0.1.dev1. --checkout fetches the locked tag into it once it is
+            # checked against the locked commit, so the build reads the release version.
+            release=$(PYTHONPATH="$pin_src" python3 -m capability_verifier.evaluator_pin \
               --repository "$EVALUATOR_REPOSITORY" \
               --tag "$EVALUATOR_TAG" \
               --commit "$EVALUATOR_COMMIT" \
-              --verifier .
+              --verifier . \
+              --checkout evaluator)
             uv sync --locked --directory evaluator
             eval_site=$(evaluator/.venv/bin/python -c 'import site; print(next(p for p in site.getsitepackages() if p.endswith("site-packages")))')
             export PYTHONPATH="evaluator/src:${eval_site}:src"
@@ -586,6 +590,12 @@ jobs:
                 exit 1
                 ;;
             esac
+            # The version the evaluator writes into each result (importlib.metadata).
+            reported=$(uv run --no-sync python -c 'import importlib.metadata as m; print(m.version("livingproof-evaluator-scenario"))')
+            if [ "$reported" != "$release" ]; then
+              echo "livingproof-evaluator-scenario reports ${reported}, not the locked ${EVALUATOR_TAG}" >&2
+              exit 1
+            fi
             uv run --no-sync python tools/run_scenario_evaluator.py \
               evidence/manifest.json evaluator-results/livingproof-scenario
           else

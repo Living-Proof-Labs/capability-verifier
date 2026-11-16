@@ -1396,6 +1396,11 @@ if [ "$1" = sync ]; then
   site=$(evaluator/.venv/bin/python -c 'import site; print(next(p for p in site.getsitepackages() if p.endswith("site-packages")))')
   mkdir -p "$site/livingproof_scenario_parameters"
   printf '%s\\n' 'MARKER = "evaluator-deps"' > "$site/livingproof_scenario_parameters/__init__.py"
+  # What hatch-vcs builds: the tag's version once the tag is in the checkout.
+  info="$site/livingproof_evaluator_scenario-0.dist-info"
+  mkdir -p "$info"
+  printf 'Metadata-Version: 2.1\\nName: livingproof-evaluator-scenario\\nVersion: %s\\n' \
+    "${EVALUATOR_BUILT_VERSION:-${EVALUATOR_TAG#v}}" > "$info/METADATA"
   exit 0
 fi
 if [ "$1" = run ]; then
@@ -1418,6 +1423,15 @@ _GIT_STUB = """#!/bin/sh
 if [ "$1" = ls-remote ]; then
   printf '%s\\trefs/tags/%s^{}\\n' "$GIT_TAG_COMMIT" "$GIT_TAG_NAME"
   exit 0
+fi
+if [ "$1" = -C ]; then
+  echo "git $*" >> "${CALLS:-/dev/null}"
+  shift 2
+  case "$1 $2" in
+    "rev-parse HEAD") echo "$EVALUATOR_COMMIT"; exit 0 ;;
+    "rev-parse --verify") echo "$GIT_TAG_COMMIT"; exit 0 ;;
+    "fetch -q"|"tag -d") exit 0 ;;
+  esac
 fi
 echo "unexpected git $*" >&2
 exit 1
@@ -1530,6 +1544,7 @@ def _run_scenario(
     installed_commit: str,
     git_commit: str,
     checkout: bool,
+    built_version: str | None = None,
 ):
     _installed_pin(work, installed_tag, installed_commit)
     _venv_markers(work, "stale", "verifier-deps")
@@ -1547,6 +1562,8 @@ def _run_scenario(
     env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
     env["CALLS"] = str(calls)
     _pin_env(env, tag=tag, commit=commit, git_commit=git_commit)
+    if built_version is not None:
+        env["EVALUATOR_BUILT_VERSION"] = built_version
     done = subprocess.run(
         ["bash", "-eo", "pipefail", "-c", _step("Scenario evaluator, one result file per trial")],
         check=False,
@@ -1638,3 +1655,39 @@ def test_scenario_evaluator_imports_the_checkout_and_its_own_dependencies(tmp_pa
     assert "dependency-marker evaluator-deps" in done.stdout
     assert "package " + str(tmp_path / "checkout" / "evaluator" / "src") in done.stdout
     assert "sync --locked --directory evaluator" in calls
+
+
+def test_scenario_evaluator_fetches_the_locked_tag_before_the_build(tmp_path):
+    """#125: the tag is fetched into the checkout, checked, and only then built."""
+    done, calls = _run_scenario(
+        tmp_path / "release",
+        tag=_PIN_TAG,
+        commit=_PIN_COMMIT,
+        installed_tag=_PIN_TAG,
+        installed_commit=_PIN_COMMIT,
+        git_commit=_PIN_COMMIT,
+        checkout=True,
+    )
+    assert done.returncode == 0, done.stderr
+    fetch = f"git -C evaluator fetch -q --no-tags --depth=1 origin +refs/tags/{_PIN_TAG}"
+    lines = calls.splitlines()
+    [fetched] = [i for i, line in enumerate(lines) if line.startswith(fetch)]
+    [synced] = [i for i, line in enumerate(lines) if "sync --locked --directory evaluator" in line]
+    assert fetched < synced
+
+
+def test_scenario_evaluator_refuses_a_build_that_reports_a_dev_version(tmp_path):
+    """#125: a checkout that still builds as 0.1.dev1 does not write results."""
+    done, _calls = _run_scenario(
+        tmp_path / "dev",
+        tag=_PIN_TAG,
+        commit=_PIN_COMMIT,
+        installed_tag=_PIN_TAG,
+        installed_commit=_PIN_COMMIT,
+        git_commit=_PIN_COMMIT,
+        checkout=True,
+        built_version="0.1.dev1",
+    )
+    assert done.returncode != 0, done.stdout
+    assert f"reports 0.1.dev1, not the locked {_PIN_TAG}" in done.stderr
+    assert "package-marker" not in done.stdout
