@@ -486,6 +486,7 @@ def _tools_that_read_the_hallway_catalog():
             ".specs-hallway" in text
             or "load_parameters(" in text
             or "from capability_verifier.hallway import thresholds" in text
+            or "grading_inputs" in text
         ):
             found.append(path.name)
     return tuple(found)

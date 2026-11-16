@@ -6,4 +6,5 @@ artifacts/
 .specs/
 .matrix-sources/
 .specs-hallway/
+.worlds/
 *.egg-info/

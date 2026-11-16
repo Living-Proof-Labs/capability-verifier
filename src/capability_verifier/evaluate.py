@@ -43,6 +43,20 @@ INCOMPATIBLE = "INCOMPATIBLE"
 STATUSES = (PASS, FAIL, INSUFFICIENT, INCOMPATIBLE)
 FORMAT = "livingproof-run-assessment/0.1"
 EVALUATOR_VERSIONS = {name: hallway.VERSION for name in hallway.EVALUATORS}
+
+
+def required_evaluators(spec: dict) -> tuple:
+    """The deterministic checks a result for ``spec`` must carry.
+
+    walk-hallway keeps its four. Any other scenario's checks are its parameter file's
+    (walk-corner: five, corner-turned included).
+    """
+    capability, revision = spec.get("capability"), spec.get("revision")
+    if capability == "walk-hallway" or not isinstance(capability, str):
+        return hallway.EVALUATORS
+    return hallway.scenario_evaluators({"plan": {"scenario": f"{capability}@{revision}"}})
+
+
 FAILURE_KEYS = {"check", "observed", "limit", "unit", "t", "seed"}
 # Optional keys: ``wall`` names a contacted wall; ``via`` names how a trial left the hallway
 # (a wall, or ``exit-outside-segment``).
@@ -220,7 +234,8 @@ class AllRequiredV1(Policy):
         capability = spec.get("capability")
         if not isinstance(capability, str) or not capability:
             return Decision(rid, INCOMPATIBLE, "Unsupported scenario contract")
-        if not self.members_supported(assessments):
+        required = required_evaluators(spec)
+        if not self.members_supported(assessments, required):
             return Decision(rid, INCOMPATIBLE, "Unsupported evaluator, version or assessor kind")
         found = [f for a in assessments for f in structured_failures(a)]
         types = sorted({assessor_type(a) for a in assessments})
@@ -232,7 +247,7 @@ class AllRequiredV1(Policy):
             return Decision(rid, INSUFFICIENT, "Evidence missing or digest mismatch", found, types)
         deterministic = [a["evaluator"] for a in assessments if a["kind"] == "deterministic"]
         if (
-            sorted(deterministic) != sorted(EVALUATOR_VERSIONS)
+            sorted(deterministic) != sorted(required)
             or not all(a["mandatory"] for a in assessments if a["kind"] == "deterministic")
             or any(a["status"] != PASS or not a["evidence_ids"] for a in assessments)
         ):
@@ -252,16 +267,14 @@ class AllRequiredV1(Policy):
         )
 
     @staticmethod
-    def members_supported(assessments) -> bool:
+    def members_supported(assessments, required=hallway.EVALUATORS) -> bool:
+        versions = {name: hallway.VERSION for name in required}
         for a in assessments:
             if a["kind"] not in hallway.ASSESSOR_TYPES:
                 return False
-            if (
-                a["kind"] == "deterministic"
-                and EVALUATOR_VERSIONS.get(a["evaluator"]) != a["version"]
-            ):
+            if a["kind"] == "deterministic" and versions.get(a["evaluator"]) != a["version"]:
                 return False
-            if a["kind"] != "deterministic" and a["evaluator"] in EVALUATOR_VERSIONS:
+            if a["kind"] != "deterministic" and a["evaluator"] in versions:
                 return False  # a person or agent cannot stand in for a deterministic evaluator
         return True
 
@@ -571,6 +584,22 @@ WORST = (
     ("hallway-fall", "min", "m", "time"),
     ("hallway-exit-reached", "max", "s", "time"),
 )
+# walk-corner: the same four measures under its check names. corner-turned has no number.
+CORNER_WORST = (
+    ("corner-route-limit", "max", "m", "peak_time"),
+    ("corner-wall-contact", "max", "m", None),
+    ("corner-fall", "min", "m", "time"),
+    ("corner-exit-reached", "max", "s", "time"),
+)
+WALL_CONTACT = {"hallway-wall-contact", "corner-wall-contact"}
+EXIT_REACHED = {"hallway-exit-reached", "corner-exit-reached"}
+
+
+def _worst_rows(members: list) -> tuple:
+    names = {a["evaluator"] for r in members for a in r["assessments"]}
+    if names & {row[0] for row in CORNER_WORST} and not names & {row[0] for row in WORST}:
+        return CORNER_WORST
+    return WORST
 
 
 def worst_observed(members: list) -> list:
@@ -584,14 +613,14 @@ def worst_observed(members: list) -> list:
     INSUFFICIENT assessments are skipped. Ties keep the earlier result.
     """
     out = []
-    for check, sense, unit, time_key in WORST:
+    for check, sense, unit, time_key in _worst_rows(members):
         best, missing = None, 0
         for r in members:
             for a in r["assessments"]:
                 if a["evaluator"] != check or a["status"] not in (PASS, FAIL):
                     continue
                 details = a["provenance"].get("details") or {}
-                if check == "hallway-wall-contact":
+                if check in WALL_CONTACT:
                     cands = [
                         (f["observed"], f["t"], {"wall": f["wall"]} if "wall" in f else {})
                         for f in structured_failures(a)
@@ -615,7 +644,7 @@ def worst_observed(members: list) -> list:
             entry.update(
                 {"observed": v, "seed": _seed_of(r), "t": t, "result_id": r["id"], **extra}
             )
-        if check == "hallway-exit-reached":
+        if check in EXIT_REACHED:
             entry["missing"] = missing
         out.append(entry)
     return out

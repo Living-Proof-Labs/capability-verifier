@@ -156,7 +156,8 @@ def description(path: Path = DESCRIPTION, commit: str | None = None) -> dict | N
     text = json.loads(raw)
     if text.get("format") != "livingproof-scenario-description/0.1":
         raise SystemExit(f"{path}: unknown scenario description format {text.get('format')!r}")
-    source = {"path": "specs/scenarios/walk-hallway/description.json", "sha256": hallway._sha(path)}
+    scenario = text.get("scenario", {}).get("id", "walk-hallway")
+    source = {"path": f"specs/scenarios/{scenario}/description.json", "sha256": hallway._sha(path)}
     if commit:
         source["commit"] = commit
     return {"source": source, **text}
@@ -263,20 +264,24 @@ def _export(
             f"PROTOTYPE: catalog unreleased at {lock['commit']}; tag v0.0.0 is a placeholder, not a release"
         )
     )
+    # The scenario the evidence ran, from the same catalog release. walk-hallway when
+    # it names none (frozen evidence).
+    capability, revision = scenario_identity(evidence) or (lock["capability"], lock["revision"])
     spec = {
         "repository": lock["repository"],
         "tag": lock["tag"] if released else "v0.0.0",
         "commit": lock["commit"],
-        "capability": lock["capability"],
-        "revision": lock["revision"],
+        "capability": capability,
+        "revision": revision,
     }
     conf = evidence["configuration"]
     # The catalog commit is stated only for the locked catalog's own file.
     catalog = Path(description_path) == DESCRIPTION
+    if catalog and capability != lock["capability"]:
+        description_path = DESCRIPTION.parents[1] / capability / "description.json"
     text = description(description_path, lock["commit"] if catalog else None)
     if text is not None and (
-        (text["scenario"]["id"], text["scenario"]["revision"])
-        != (lock["capability"], lock["revision"])
+        (text["scenario"]["id"], text["scenario"]["revision"]) != (capability, revision)
         or (text["world"]["id"], text["world"]["content_version"])
         != (evidence["world"]["id"], evidence["world"]["version"])
     ):

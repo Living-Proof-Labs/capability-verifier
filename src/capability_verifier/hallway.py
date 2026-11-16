@@ -33,14 +33,20 @@ from livingproof_evaluator_scenario.checks import (
     assessment,
     failure,
 )
+from livingproof_evaluator_scenario.checks import assess as _assess
 from livingproof_scenario_parameters import ScenarioParameterError, quantize_half_up_decimal_text
 
 from .scenario_parameters import (
     acceptance,
+    check_names,
     clearance_table,
+    command_speed,
     evaluator_thresholds,
+    load_parameters,
     scenario_identity,
+    uses_world,
 )
+from .scenario_parameters import world_document as _world_document
 
 
 def exit_reached(observation, thresholds, evidence_id, seed=None):
@@ -111,6 +117,8 @@ SPEC_PRECONDITIONS = (
 # the exit segment. Any other format is refused: every evaluator reports INSUFFICIENT.
 OBSERVATION_FORMAT = "livingproof-hallway-observation/2.0.0"
 OBSERVATION_FORMATS = frozenset({"livingproof-hallway-observation/1.0.0", OBSERVATION_FORMAT})
+# A scenario graded on its world (walk-corner) reads the runner's route observation.
+ROUTE_OBSERVATION_FORMATS = frozenset({"livingproof-route-observation/0.1.0"})
 # Trial ends each format may report; anything else is malformed evidence.
 OBSERVATION_ENDS = {
     "livingproof-hallway-observation/1.0.0": {"crossed_exit", "time_limit", "non_finite_state"},
@@ -188,6 +196,8 @@ V2_FIELDS = (
     ("world.route_length", _NUM),
     ("trials", dict),
 )
+# A scenario graded on its world may leave the speed to its parameter file (walk-corner).
+V2_WORLD_FIELDS = tuple(f for f in V2_FIELDS if f[0] != "plan.command_speed")
 V2_RESULT_FIELDS = (("index", _INT), ("path", str), ("sha256", str))
 _ABSENT = object()
 
@@ -275,7 +285,13 @@ def _validate_v1(manifest) -> None:
 
 
 def _validate_v2(manifest) -> None:
-    _check_fields(manifest, V2_FIELDS)
+    if uses_world(manifest):
+        _check_fields(manifest, V2_WORLD_FIELDS)
+        speed = manifest["plan"].get("command_speed", 0.0)
+        if not _is(speed, _NUM):
+            raise ManifestError("manifest field 'plan.command_speed' has the wrong type")
+    else:
+        _check_fields(manifest, V2_FIELDS)
     for retired in ("seeds", "required_passes"):
         if retired in manifest["plan"]:
             raise ManifestError(f"manifest field 'plan.{retired}' is not part of {EVIDENCE_V2}")
@@ -509,6 +525,35 @@ def unmet_precondition(manifest: dict) -> dict | None:
     return unmet
 
 
+def scenario_evaluators(manifest: dict) -> tuple:
+    """The checks this evidence is graded on: walk-hallway's four, else its parameter file's."""
+    if not uses_world(manifest):
+        return EVALUATORS
+    return _parameters(check_names, manifest)
+
+
+def world_document(world: dict, sha256: str | None = None) -> dict:
+    """The locked livingproof-worlds ``world.json`` for ``world`` (id and version)."""
+    return _parameters(_world_document, world, sha256)
+
+
+def grading_inputs(manifest: dict) -> tuple:
+    """``(world, parameters)`` for the evaluator, or ``(None, None)`` for walk-hallway.
+
+    The world must be the bytes the run lock recorded.
+    """
+    if not uses_world(manifest):
+        return None, None
+    lock = manifest.get("lock") if isinstance(manifest.get("lock"), dict) else {}
+    content = lock.get("content") if isinstance(lock.get("content"), dict) else {}
+    locked = content.get("world") if isinstance(content.get("world"), dict) else {}
+    digest = locked.get("sha256")
+    if not isinstance(digest, str) or not digest:
+        raise ManifestError("manifest field 'lock.content.world.sha256' is missing")
+    world = world_document(manifest["world"], digest)
+    return world, _parameters(load_parameters, manifest)
+
+
 def thresholds(manifest: dict) -> dict:
     """Spec-rounded limits from the parameter file, passed to the evaluator as-is."""
     return evaluator_thresholds(_parameters(acceptance, manifest))
@@ -530,7 +575,7 @@ def limits(manifest: dict) -> dict:
     resolved = _parameters(acceptance, manifest)
     th = evaluator_thresholds(resolved)
     robot = manifest["robot"]["profile"]
-    world, plan = manifest["world"], manifest["plan"]
+    world = manifest["world"]
     width = robot["dimensions"]["width"]
     width = width["value"] if isinstance(width, dict) else width
     cls = robot.get("class")
@@ -561,7 +606,7 @@ def limits(manifest: dict) -> dict:
             "formula": TIME_LIMIT_FORMULA,
             "inputs": {
                 "route_length": world["route_length"],
-                "command_speed": plan["command_speed"],
+                "command_speed": _parameters(command_speed, manifest),
             },
         },
         "fall_height": {
@@ -595,19 +640,38 @@ def policy(assessments, required):
     return PASS
 
 
-def assess_trial(observation, th, eid, recorded=(), required_assessors=(), seed=None):
-    if observation.get("format") not in OBSERVATION_FORMATS:
+def assess_trial(
+    observation,
+    th,
+    eid,
+    recorded=(),
+    required_assessors=(),
+    seed=None,
+    *,
+    evaluators=EVALUATORS,
+    world=None,
+    parameters=None,
+):
+    """All-required-v1 over the scenario's checks.
+
+    With no ``world`` these are the four walk-hallway checks on the frozen straight
+    route. With a world, the evaluator grades every check in ``parameters`` on it.
+    """
+    formats = OBSERVATION_FORMATS if world is None else ROUTE_OBSERVATION_FORMATS
+    if observation.get("format") not in formats:
         assessments = [
             assessment(n, INSUFFICIENT, f"unknown observation format{_seed(seed)}", eid)
-            for n in EVALUATORS
+            for n in evaluators
         ]
+    elif world is None:
+        assessments = [EVALUATE[n](observation, th, eid, seed) for n in evaluators]
     else:
-        assessments = [EVALUATE[n](observation, th, eid, seed) for n in EVALUATORS]
+        assessments = _assess(observation, th, eid, seed, world=world, parameters=parameters)
     for r in recorded:  # human or agent conclusions, never generated here
         if r.get("assessor", {}).get("type") not in ASSESSOR_TYPES - {"deterministic"}:
             raise ValueError("recorded assessments must name a human or agent assessor")
         assessments.append(r)
-    required = list(EVALUATORS) + list(required_assessors)
+    required = list(evaluators) + list(required_assessors)
     status = policy(assessments, required)
     found = [f for a in assessments for f in a.get("details", {}).get("failures", [])]
     return {"status": status, "assessments": assessments, "failures": found}
@@ -810,6 +874,8 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
     else:
         ordered = sorted(manifest["trials"], key=lambda t: t["seed"])
     th = thresholds(manifest)
+    names = scenario_evaluators(manifest)
+    world, parameters = grading_inputs(manifest)
     base = manifest_path.parent
     trials = []
     for t in ordered:
@@ -824,7 +890,7 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
                 "status": INSUFFICIENT,
                 "assessments": [
                     assessment(n, INSUFFICIENT, "evidence missing or digest mismatch", eid)
-                    for n in EVALUATORS
+                    for n in names
                 ],
             }
         else:
@@ -842,6 +908,9 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
                 (recorded or {}).get(eid, ()),
                 plan.get("required_assessors", ()),
                 seed_arg,
+                evaluators=names,
+                world=world,
+                parameters=parameters,
             )
         res.setdefault("failures", [])
         record = {

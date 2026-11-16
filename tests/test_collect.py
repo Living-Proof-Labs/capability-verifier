@@ -191,9 +191,9 @@ def test_scenario_package_pin_is_a_released_tag():
     text = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
     match = EVALUATOR_PIN.search(text)
     assert match, "declared evaluator pin must be a full released vX.Y.Z tag"
-    assert match.group("tag") == "v1.2.1"
+    assert match.group("tag") == "v1.3.0"
     assert "9c82a0b" not in text
-    assert importlib.metadata.version("livingproof-evaluator-scenario") == "1.2.1"
+    assert importlib.metadata.version("livingproof-evaluator-scenario") == "1.3.0"
 
 
 LOCK_SOURCE = re.compile(
@@ -248,8 +248,8 @@ def test_two_configurations_keep_their_own_entries_and_grades(tmp_path):
     shutil.copytree(STOCK, stock)
     play_docs = _scenario_documents(playground)
     stock_docs = _scenario_documents(stock)
-    assert play_docs[0]["evaluator"]["version"] == "1.2.1"
-    assert stock_docs[0]["evaluator"]["version"] == "1.2.1"
+    assert play_docs[0]["evaluator"]["version"] == "1.3.0"
+    assert stock_docs[0]["evaluator"]["version"] == "1.3.0"
     assert play_docs[0]["evaluator"]["display_name"] == "Scenario"
     assert play_docs[0]["descriptor"]["title"] == "Scenario"
     assert play_docs[0]["descriptor"]["short_title"] == "Scenario"

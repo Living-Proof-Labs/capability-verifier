@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Write the scenario evaluator's result files for one evidence manifest.
 
-Thresholds come from ``hallway.thresholds``. This does not edit the bundle.
+Thresholds come from ``hallway.thresholds``. A scenario graded on its world
+(walk-corner) also passes that world and its parameter file, from
+``hallway.grading_inputs``. This does not edit the bundle.
 The report job appends the files this writes.
 
     python tools/run_scenario_evaluator.py evidence/manifest.json \\
@@ -17,7 +19,7 @@ from pathlib import Path
 
 from livingproof_evaluator_scenario.result import write_run
 
-from capability_verifier.hallway import thresholds, unmet_scenario_supported
+from capability_verifier.hallway import grading_inputs, thresholds, unmet_scenario_supported
 
 
 def _now() -> str:
@@ -45,12 +47,15 @@ def main(argv: list[str] | None = None) -> int:
         note.write_text("no trial: precondition scenario_supported unmet\n", encoding="utf-8")
         print(note)
         return 0
+    world, parameters = grading_inputs(document)
     written = write_run(
         manifest,
         thresholds(document),
         Path(args[1]),
         started_at=started,
         completed_at=started,
+        world=world,
+        parameters=parameters,
     )
     for path in written:
         print(path)
