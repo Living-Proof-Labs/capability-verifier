@@ -14,7 +14,6 @@ import os
 import urllib.request
 
 import pytest
-
 from test_guidelines_pins import REPO, pinned_versions
 
 
