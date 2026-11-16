@@ -393,7 +393,9 @@ robot `FAIL`, and no trial is assessed. A record that names trials is graded as
 before. Trials recorded beside an unmet `scenario_supported` declaration are an
 error, not a silent override. The reporter bundle has no `UNSUPPORTED` status, so
 export skips the bundle and writes `reports/report.json`, `report.md`, `report.html`,
-`report.txt` and a `SHA256SUMS` of those files.
+`report.txt` and a `SHA256SUMS` of those files. `report.json` is report `1.0.0`.
+Each summary carries the scenario as `capability`, `system.id` as `robot/configuration`,
+and the verifier's `grade`, `k`, `n` and `required_passes`. There is no `source_bundle`.
 
     PYTHONPATH=src python tools/verify_hallway.py <evidence>/manifest.json <out> [--prototype] [--bundle-version 1.1.0]
     # exit 0: no test-system finding. exit 4: the finding was printed and the files were written.

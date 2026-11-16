@@ -29,6 +29,7 @@ import threading
 from pathlib import Path
 
 from capability_verifier import evaluate, hallway
+from capability_verifier.scenario_parameters import scenario_identity
 
 ROOT = Path(__file__).resolve().parents[1]
 # specs #30: human-readable mission and world text, passed through as-is into the bundle's
@@ -171,32 +172,56 @@ def _checksums(directory: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_unsupported_report(out: Path, result: dict) -> None:
+def _report_system(evidence: dict) -> dict:
+    """``system.id`` as the reporter writes it: ``robot/configuration``."""
+    robot = evidence.get("robot") if isinstance(evidence.get("robot"), dict) else {}
+    conf = evidence.get("configuration") if isinstance(evidence.get("configuration"), dict) else {}
+    robot_id = robot.get("id") if isinstance(robot.get("id"), str) and robot["id"] else "robot"
+    name = conf.get("name") if isinstance(conf.get("name"), str) and conf["name"] else ""
+    system = {"id": f"{robot_id}/{name}" if name else robot_id}
+    version = conf.get("version")
+    if isinstance(version, str) and version:
+        system["version"] = version
+    return system
+
+
+def _report_capability(evidence: dict) -> str:
+    """The scenario this run graded, not the hallway catalog's capability."""
+    identity = scenario_identity(evidence)
+    if identity is not None:
+        return identity[0]
+    return "scenario"
+
+
+def write_unsupported_report(out: Path, result: dict, evidence: dict) -> None:
     """Published report for an UNSUPPORTED grade. The reporter bundle is not written.
 
-    The bundle schema has no UNSUPPORTED status. ``reports/`` is the files the site
-    already consumes, and ``SHA256SUMS`` hashes those exact bytes.
+    ``report.json`` is report 1.0.0, the shape the site already reads. There is no
+    ``source_bundle``: the bundle schema has no UNSUPPORTED status. ``SHA256SUMS``
+    hashes the published bytes.
     """
     reports = out / "reports"
     reports.mkdir(parents=True)
     text = "\n".join(hallway.summary_lines(result)) + "\n"
-    grade = result["summary"]["grade"]
-    reason = result["summary"]["reason"]
+    summary = result["summary"]
     document = {
-        "grade": grade,
-        "rationale": reason,
+        "report_version": "1.0.0",
         "summaries": [
             {
-                "grade": grade,
-                "rationale": reason,
-                "failures": [],
+                "capability": _report_capability(evidence),
+                "system": _report_system(evidence),
+                "grade": summary["grade"],
+                "k": summary["k"],
+                "n": summary["n"],
+                "required_passes": summary["required_passes"],
                 "result_ids": [],
+                "failures": [],
+                "rationale": summary["reason"],
             }
         ],
-        "text": text,
     }
     (reports / "report.json").write_text(json.dumps(document, indent=2) + "\n")
-    (reports / "report.md").write_text(f"# {grade}\n\n{text}")
+    (reports / "report.md").write_text(f"# {summary['grade']}\n\n{text}")
     (reports / "report.txt").write_text(text)
     (reports / "report.html").write_text(
         "<!DOCTYPE html>\n<html><body><pre>" + html.escape(text) + "</pre></body></html>\n"
@@ -220,7 +245,8 @@ def _export(
     result = hallway.verify(manifest_path)  # raises ManifestError for JSON, fields, plan, trials
     if result["summary"]["grade"] == hallway.UNSUPPORTED:
         # The reporter bundle has no UNSUPPORTED status. The published report is still written.
-        write_unsupported_report(out, result)
+        evidence = json.loads(manifest_path.read_text())
+        write_unsupported_report(out, result, evidence)
         return result
     missing = absent_evidence(manifest_path, result)
     if missing:

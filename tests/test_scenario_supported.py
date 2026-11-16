@@ -247,6 +247,16 @@ def test_the_manifest_sim_mujoco_55_writes_is_unsupported(tmp_path, monkeypatch)
         text = (reports / name).read_text()
         assert "not supported" in text
         assert hallway.FAIL not in text
+    body = json.loads((reports / "report.json").read_text())
+    [row] = _site_outcome(body)
+    assert row == {
+        "capability": "walk-corner",
+        "system": "toy-robot/stock",
+        "grade": hallway.UNSUPPORTED,
+        "passed": exported["summary"]["k"],
+        "trials": exported["summary"]["n"],
+        "required": exported["summary"]["required_passes"],
+    }
     check = subprocess.run(
         ["sha256sum", "-c", "SHA256SUMS"],
         cwd=reports,
@@ -306,6 +316,38 @@ def test_a_normal_fail_record_is_unchanged(tmp_path):
     assert "not supported" not in _report(result)
 
 
+# Fields livingproof-verification site.outcome reads from report 1.0.0.
+# The check is copied here so this test does not pin that repository or a commit.
+_SITE_SUMMARY_FIELDS = ("capability", "system", "grade", "k", "n", "required_passes")
+
+
+def _site_outcome(report: dict) -> list[dict]:
+    """Rows site.outcome would return, or an assertion if the report is unreadable."""
+    assert report.get("report_version") == "1.0.0"
+    assert "source_bundle" not in report
+    summaries = report.get("summaries")
+    assert isinstance(summaries, list) and summaries
+    rows = []
+    for index, summary in enumerate(summaries):
+        assert isinstance(summary, dict), index
+        missing = [field for field in _SITE_SUMMARY_FIELDS if field not in summary]
+        system = summary.get("system")
+        if not isinstance(system, dict) or "id" not in system:
+            missing.append("system.id")
+        assert not missing, missing
+        rows.append(
+            {
+                "capability": summary["capability"],
+                "system": summary["system"]["id"],
+                "grade": summary["grade"],
+                "passed": summary["k"],
+                "trials": summary["n"],
+                "required": summary["required_passes"],
+            }
+        )
+    return rows
+
+
 def _tool():
     tool_path = Path(__file__).parents[1] / "tools" / "verify_hallway.py"
     loaded = importlib.util.spec_from_file_location("verify_hallway_supported", tool_path)
@@ -329,7 +371,13 @@ def test_export_writes_a_checksummed_report_and_no_bundle(tmp_path, monkeypatch)
         assert "not supported" in text
         assert hallway.FAIL not in text
     body = json.loads((reports / "report.json").read_text())
-    assert body["grade"] == hallway.UNSUPPORTED
+    [row] = _site_outcome(body)
+    assert row["capability"] == "walk-corner"
+    assert row["system"] == "unitree-g1/stock"
+    assert row["grade"] == hallway.UNSUPPORTED
+    assert row["passed"] == result["summary"]["k"]
+    assert row["trials"] == result["summary"]["n"]
+    assert row["required"] == result["summary"]["required_passes"]
     assert body["summaries"][0]["failures"] == []
     check = subprocess.run(
         ["sha256sum", "-c", "SHA256SUMS"],
