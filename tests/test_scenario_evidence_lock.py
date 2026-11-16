@@ -43,6 +43,10 @@ def _evidence_argv(tmp_path: Path, sim: str | None) -> list:
     robot = tmp_path / "robot"
     robot.mkdir()
     (robot / "uv.lock").write_text(_uv_lock(sim))
+    return _evidence_argv_in(tmp_path, robot)
+
+
+def _evidence_argv_in(tmp_path: Path, robot: Path) -> list:
     (robot / "verification.lock.json").write_text(json.dumps({"format": "evidence"}))
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -90,3 +94,38 @@ def test_the_wrapper_runs_the_same_evidence_step():
     wrapper = definition.procedure_text(ROOT, "walk-hallway")
     name = "Evidence (observations only"
     assert definition.step(wrapper, name) == definition.step(SCENARIO, name)
+
+
+def _editable_root_uv_lock(sim: str) -> str:
+    """The robots' uv.lock since setuptools-scm: the editable root package has no version."""
+    return (
+        _uv_lock(sim)
+        + '\n[[package]]\nname = "mcap"\nversion = "1.2.2"\n'
+        + '\n[[package]]\nname = "livingproof-unitree-g1"\nsource = { editable = "." }\n'
+    )
+
+
+def test_a_robot_whose_root_package_has_no_version_still_gets_lock(tmp_path):
+    """g1 v2.2.1, t1 and go1 v2.2.0 lock their own package with no version (setuptools-scm)."""
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    (robot / "uv.lock").write_text(_editable_root_uv_lock("3.2.1"))
+    argv = _evidence_argv_in(tmp_path, robot)
+    assert argv == [*EVIDENCE, "--lock", "verification.lock.json"]
+
+
+def test_media_and_bundle_capability_reads_a_root_package_with_no_version(tmp_path):
+    """The plan step reads the same uv.lock and must not stop on the versionless root."""
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    (robot / "uv.lock").write_text(_editable_root_uv_lock("3.2.1"))
+    releases = {"reporter": {"tag": "v3.10.1"}, "verifier": {"tag": "v1.24.0"}}
+    (robot / "verification.lock.json").write_text(json.dumps({"releases": releases}))
+    script = definition.step(SCENARIO, "Media and bundle capability")
+    outputs = definition.sh(
+        f"uv run --no-project --with packaging==26.3 -- bash -e <<'LP'\n{script}LP\n",
+        robot,
+        {},
+        tmp_path / "plan.out",
+    )
+    assert outputs == {"media-capable": "true", "bundle-version": "1.1.0"}
