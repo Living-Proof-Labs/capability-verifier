@@ -9,12 +9,12 @@ in y), so the simulator itself exited 4 and wrote the finding.
 The last three tests describe the gate this PR still lacks. They fail at add36d9.
 """
 
+import io
 import json
 import os
 import shutil
 import subprocess
 import tarfile
-import io
 from pathlib import Path
 
 import pytest
@@ -52,7 +52,8 @@ def _verifier_tree(dest: Path, commit: str | None) -> Path:
             capture_output=True,
             check=True,
         ).stdout
-        tarfile.open(fileobj=io.BytesIO(blob)).extractall(dest, filter="data")
+        with tarfile.open(fileobj=io.BytesIO(blob)) as archive:
+            archive.extractall(dest, filter="data")
     for name in (".specs", ".specs-hallway", ".venv"):
         if (ROOT / name).exists():
             (dest / name).symlink_to(ROOT / name)
@@ -66,7 +67,12 @@ def _assess(verifier: Path, evidence: Path):
     env.setdefault("LIVINGPROOF_VERIFIER_VERSION", "dev")
     script = definition.step(WORKFLOW, "Assess every trial")
     done = subprocess.run(
-        ["bash", "-e", "-c", script], cwd=verifier, env=env, capture_output=True, text=True
+        ["bash", "-e", "-c", script],
+        check=False,
+        cwd=verifier,
+        env=env,
+        capture_output=True,
+        text=True,
     )
     report = verifier / "verified" / "verification.json"
     return done, (json.loads(report.read_text()) if report.exists() else None)

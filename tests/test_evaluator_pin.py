@@ -14,8 +14,8 @@ import pytest
 from capability_verifier import evaluator_pin
 
 REPO = "Living-Proof-Labs/livingproof-evaluator-scenario"
-TAG = "v1.2.0"
-COMMIT = "c0b11bf0e3b555638baa064214793bae125e5a8b"
+TAG = "v1.2.1"
+COMMIT = "c6942f1b76ff86540e98639194a66795f242729a"
 OTHER = "a" * 40
 ROOT = Path(__file__).parents[1]
 
@@ -39,7 +39,7 @@ def _resolved(tag: str, commit: str, *, dotted_git: bool = True) -> str:
     return (
         "[[package]]\n"
         'name = "livingproof-evaluator-scenario"\n'
-        'version = "1.2.0"\n'
+        f'version = "{tag.removeprefix("v")}"\n'
         f'source = {{ git = "{source}" }}\n'
     )
 

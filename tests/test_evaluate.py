@@ -7,10 +7,10 @@ import os
 from pathlib import Path
 
 import pytest
-
-from capability_verifier import evaluate, hallway
 from test_hallway import FAILING, PLAN, TH, observation
 from test_hallway import _manifest as _write_manifest
+
+from capability_verifier import evaluate, hallway
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = {

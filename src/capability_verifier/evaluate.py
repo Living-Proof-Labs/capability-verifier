@@ -26,12 +26,17 @@ from __future__ import annotations
 
 import copy
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable, Protocol
+from typing import Protocol
 
 from . import hallway
-from .specs_ref import SPECS as SPECS  # noqa: F401  re-exported for result specs
-from .specs_ref import accepted_reference, contract_problem, reported_contract
+from .specs_ref import (
+    SPECS,  # noqa: F401  re-exported; callers read evaluate.SPECS
+    accepted_reference,
+    contract_problem,
+    reported_contract,
+)
 
 PASS, FAIL, INSUFFICIENT = hallway.PASS, hallway.FAIL, hallway.INSUFFICIENT
 INCOMPATIBLE = "INCOMPATIBLE"
@@ -141,7 +146,7 @@ def structured_failures(assessment: dict) -> list:
     details = assessment["provenance"].get("details", {})
     items = details.get("failures", []) if isinstance(details, dict) else None
     if not isinstance(items, list):
-        raise ValueError(f"Invalid structured failures in {assessment['id']}")
+        raise TypeError(f"Invalid structured failures in {assessment['id']}")
     for f in items:
         ok = (
             isinstance(f, dict)

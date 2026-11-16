@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """Run a declarative verification locally through the same steps as the reusable workflow.
 
@@ -52,13 +51,13 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import shlex
 import shutil
 import subprocess
 import sys
 import tomllib
+from pathlib import Path
 
 import yaml
 
@@ -152,13 +151,17 @@ def git(*args, cwd=None) -> str:
 def checkout(repository: str, ref: str, dest: Path) -> str:
     """Fetch only ``ref`` of ``repository`` into ``dest`` (detached); return the commit.
 
-    A reused ``dest`` is forced onto that commit. Tracked edits are discarded,
-    and untracked files other than ``.venv`` are removed.
+    A destination that is not yet a git checkout gets ``origin`` pointing at that
+    repository, which evidence reads when the lock has no ``robot.repo``. A reused
+    ``dest`` is forced onto the commit and keeps whatever ``origin`` it already has.
+    Tracked edits are discarded, and untracked files other than ``.venv`` are removed.
     """
+    url = f"{GITHUB}/{repository}.git"
     if not (dest / ".git").exists():
         dest.mkdir(parents=True, exist_ok=True)
         git("init", "-q", cwd=dest)
-    git("fetch", "-q", "--depth", "1", f"{GITHUB}/{repository}.git", ref, cwd=dest)
+        git("remote", "add", "origin", url, cwd=dest)
+    git("fetch", "-q", "--depth", "1", url, ref, cwd=dest)
     git("checkout", "-q", "-f", "--detach", "FETCH_HEAD", cwd=dest)
     git("clean", "-qfdx", "-e", ".venv", cwd=dest)
     return git("rev-parse", "HEAD", cwd=dest)
@@ -667,7 +670,7 @@ def sh(script: str, cwd: Path, env: dict, outputs: Path | None = None) -> dict:
         line for line in script.splitlines() if not line.startswith("python3 -m pip install")
     )
     print(f"$ ({cwd.name}) " + script.splitlines()[0], file=sys.stderr, flush=True)
-    done = subprocess.run(["bash", "-e", "-c", script], cwd=cwd, env=env)
+    done = subprocess.run(["bash", "-e", "-c", script], check=False, cwd=cwd, env=env)
     if done.returncode:
         raise DefinitionError(
             f"step failed (exit {done.returncode}) in {cwd.name}: {script.splitlines()[0]}"
