@@ -218,6 +218,12 @@ accepts those keys and does not require them. `read_lock` requires a `plan`
 object, `world.id` and `world.version`, and `plan.command_speed` for a
 `walk-hallway` scenario.
 
+A walk-corner lock (`scenario` `walk-corner@0.1.0`, `world.id` `hallway-corner`)
+names the world livingproof-sim-mujoco v3.2.1 vendors: `world.tag` `v1.3.0` of
+livingproof-worlds, not a later worlds tag with the same bytes, which that sim
+refuses. It must carry `world.sha256`: the grader refuses walk-corner evidence
+whose `lock.content.world.sha256` is missing or differs from the world it grades.
+
 <span id="lock-fields"></span>
 
 ## Field inventory
@@ -518,6 +524,10 @@ With `--workflow`, the job whose id equals the definition id must call
 procedure `walk-hallway`, or `.github/workflows/scenario.yml` at that commit for
 procedure `scenario`. `scenario.yml` runs the scenario and world the lock names
 (walk-corner, for example); `walk-hallway.yml` is the thin wrapper around it.
+Its evidence step passes the evidence document it wrote (`verification.lock.json`
+in the robot checkout) to livingproof-sim-mujoco with `--lock` when the robot's
+`uv.lock` has sim 3.0 or later, which requires it. A robot on sim v2.x gets the
+same command as before, without `--lock`.
 Owner and repository compare case-insensitively. The commit compares exactly.
 The job must pass the locked robot repository, the locked robot commit and the
 locked configurations. A commented-out pin does not count. Another job that

@@ -58,7 +58,7 @@ on:
           Path in the caller repository of a livingproof-verification-lock/0.2.0.
           When set, this lock is the only source for the run, even if the robot
           commit has verification.lock.json. The workflow writes the document
-          livingproof-sim-mujoco v2.1.1 evidence.py reads, points repin --check
+          livingproof-sim-mujoco evidence reads, points repin --check
           at this lock, and records the replaced robot lock's sha256. Empty
           leaves a robot verification.lock.json as the only source.
           PENDING_RELEASE in a caller lock still fails.
@@ -186,7 +186,7 @@ jobs:
           ref: ${{ github.sha }}
           path: caller
           persist-credentials: false
-      - name: Write evidence inputs for livingproof-sim-mujoco v2.1.1
+      - name: Write evidence inputs for livingproof-sim-mujoco
         id: evidence-inputs
         if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
         env:
@@ -262,7 +262,8 @@ jobs:
                   print(f"::warning::{what} {text} is a pre-release or dev release; treated as below {minimum}", file=sys.stderr)
                   return False
               return version >= Version(minimum)
-          packages = {p["name"]: p["version"] for p in tomllib.load(open("uv.lock", "rb"))["package"]}
+          # A robot's own editable package has no version in uv.lock (setuptools-scm).
+          packages = {p["name"]: p.get("version", "0") for p in tomllib.load(open("uv.lock", "rb"))["package"]}
           releases = json.load(open("verification.lock.json"))["releases"]
           reporter, verifier = releases["reporter"]["tag"], releases["verifier"]["tag"]
           runner = packages.get("livingproof-sim-mujoco", "0")
@@ -361,7 +362,7 @@ jobs:
           ref: ${{ github.sha }}
           path: caller
           persist-credentials: false
-      - name: Write evidence inputs for livingproof-sim-mujoco v2.1.1
+      - name: Write evidence inputs for livingproof-sim-mujoco
         if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
         env:
           VERIFICATION_LOCK: ${{ inputs.verification-lock }}
@@ -388,9 +389,22 @@ jobs:
         # Any other non-zero exit, including exit 4 without that finding, fails the step.
         env:
           ADAPTER: ${{ steps.adapter.outputs.ref }}
+        # livingproof-sim-mujoco >= 3.0 requires --lock: it gets the evidence document the
+        # plan wrote (verification.lock.json here). Robots on sim v2.x read that file
+        # themselves and keep the same command as before.
         run: |
+          set --
+          if python3 - <<'PY'
+          import sys, tomllib
+          packages = {p["name"]: p.get("version", "0") for p in tomllib.load(open("uv.lock", "rb"))["package"]}
+          major = packages.get("livingproof-sim-mujoco", "0").split(".")[0]
+          sys.exit(0 if major.isdigit() and int(major) >= 3 else 1)
+          PY
+          then
+            set -- --lock verification.lock.json
+          fi
           set +e
-          uv run --no-sync python -m livingproof_sim_mujoco.evidence "$ADAPTER" "$CONFIGURATION" "artifacts/evidence/$CONFIGURATION"
+          uv run --no-sync python -m livingproof_sim_mujoco.evidence "$ADAPTER" "$CONFIGURATION" "artifacts/evidence/$CONFIGURATION" "$@"
           code=$?
           set -e
           if [ -n "${GITHUB_OUTPUT:-}" ]; then
@@ -638,7 +652,7 @@ jobs:
           ref: ${{ github.sha }}
           path: caller
           persist-credentials: false
-      - name: Write evidence inputs for livingproof-sim-mujoco v2.1.1
+      - name: Write evidence inputs for livingproof-sim-mujoco
         if: ${{ inputs.verification-lock != '' || steps.robot-lock.outputs.present == 'false' }}
         env:
           VERIFICATION_LOCK: ${{ inputs.verification-lock }}
