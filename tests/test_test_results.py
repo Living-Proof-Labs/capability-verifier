@@ -41,7 +41,8 @@ JOB_PERMISSIONS = {
     "hallway-image-verify": {"contents": "read"},
     "hallway-image-pr": {"contents": "read"},
     "documentation": None,
-    "documentation-deploy": {"pages": "write", "id-token": "write"},
+    # contents: read is the freshness API only. This job does not get contents: write.
+    "documentation-deploy": {"contents": "read", "pages": "write", "id-token": "write"},
 }
 
 

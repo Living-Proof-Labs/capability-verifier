@@ -664,6 +664,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
+      contents: read
       pages: write
       id-token: write
     concurrency:
@@ -676,11 +677,17 @@ jobs:
       - name: Check current main inside deployment lock
         env:
           EXPECTED_SHA: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           python - <<'PYCODE'
           import json, os, urllib.request
+          token = os.environ['GITHUB_TOKEN']
           url = 'https://api.github.com/repos/Living-Proof-Labs/capability-verifier/git/ref/heads/main'
-          with urllib.request.urlopen(url, timeout=30) as response:
+          request = urllib.request.Request(
+              url,
+              headers={'Authorization': f'Bearer {token}'},
+          )
+          with urllib.request.urlopen(request, timeout=30) as response:
               current = json.load(response)['object']['sha']
           if current != os.environ['EXPECTED_SHA']:
               raise SystemExit('Refusing stale documentation: main advanced')
