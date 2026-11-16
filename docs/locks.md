@@ -134,7 +134,7 @@ writes `livingproof-verification-lock/0.1.0` to
 | `format` | `livingproof-verification-lock/0.1.0` |
 | `definition.sha256` | sha256 of the definition file bytes |
 | `definition.path` | The definition file name. `lock` writes it. `lock --check` does not read it. |
-| `procedure` | `walk-hallway` |
+| `procedure` | `walk-hallway` or `scenario` |
 | `robot.repository` | `OWNER/NAME` from the definition |
 | `robot.ref` | The branch, tag or commit that was resolved. `lock` writes it. `lock --check` does not read it. |
 | `robot.commit` | The fetched commit. `lock --check` requires 40 lowercase hexadecimal characters. |
@@ -164,7 +164,7 @@ configuration sha256s.
 | `format` | `livingproof-verification-lock/0.2.0` |
 | `definition.sha256` | sha256 of the definition file. `lock --check` compares it with the file bytes. |
 | `definition.path` | Accepted. `lock --check` does not read it. |
-| `procedure` | `walk-hallway` |
+| `procedure` | `walk-hallway` or `scenario` |
 | `scenario` | `name@version`, for example `walk-hallway@0.1.0` |
 | `robot.repository` | `OWNER/NAME`. `lock --check` requires it to equal the definition. |
 | `robot.ref` | Accepted. `lock --check` does not read it. |
@@ -192,7 +192,7 @@ configuration sha256s.
 | `configurations[].version` | `X.Y.Z` |
 | `configurations[].path` | A relative path inside the robot repository. An absolute path, or a path that contains `..`, fails before any fetch. |
 | `configurations[].sha256` | 64 lowercase hexadecimal characters. `lock --check` compares it with the file at the locked commit. |
-| `plan.command_speed` | A JSON number. A boolean fails. |
+| `plan.command_speed` | A JSON number. A boolean fails. Required when `scenario` is `walk-hallway@…`. Another scenario may leave it out (walk-corner takes its speed from its parameter file); when present it is still a JSON number. |
 | `evaluators.livingproof-evaluator-scenario.repository` | `OWNER/NAME` |
 | `evaluators.livingproof-evaluator-scenario.tag` | `vX.Y.Z`. The tag must resolve to the locked commit. |
 | `evaluators.livingproof-evaluator-scenario.commit` | 40 lowercase hexadecimal characters |
@@ -214,8 +214,15 @@ A `0.2.0` `world` or `plan` object may carry further keys. The evidence
 projection copies the object whole. The published robot files carry
 `world.repository`, `world.tag`, `world.commit`, `plan.trials`,
 `plan.trials.count`, `plan.seeds[]` and `plan.required_passes`. `read_lock`
-accepts those keys and does not require them. `read_lock` requires
-`plan.command_speed`, `world.id` and `world.version`.
+accepts those keys and does not require them. `read_lock` requires a `plan`
+object, `world.id` and `world.version`, and `plan.command_speed` for a
+`walk-hallway` scenario.
+
+A walk-corner lock (`scenario` `walk-corner@0.1.0`, `world.id` `hallway-corner`)
+names the world livingproof-sim-mujoco v3.2.1 vendors: `world.tag` `v1.3.0` of
+livingproof-worlds, not a later worlds tag with the same bytes, which that sim
+refuses. It must carry `world.sha256`: the grader refuses walk-corner evidence
+whose `lock.content.world.sha256` is missing or differs from the world it grades.
 
 <span id="lock-fields"></span>
 
@@ -368,7 +375,7 @@ from the two robot fixtures.
 
 The definition file is `livingproof-verification-definition/0.1.0`. `lock` and
 `lock --check` read it first. It needs `format`, `id` (lowercase letters, digits
-and dashes), `procedure` (`walk-hallway`), `robot.repository`, `robot.ref` and
+and dashes), `procedure` (`walk-hallway` or `scenario`), `robot.repository`, `robot.ref` and
 a non-empty `robot.configurations` list.
 
 `lock` resolves `robot.ref` with `git fetch` of that ref and records
@@ -485,6 +492,7 @@ of it. On the robot tree:
 - `configurations[{index}].sha256 must be 64 hex characters`
 - `configuration names must be unique`
 - `robot.configurations {names} are not in configurations`
+- `plan must be an object`
 - `plan.command_speed must be a number`
 - `world.{id|version} must be a string`
 - `world.sha256 must be 64 hex characters`
@@ -497,8 +505,8 @@ of it. On the robot tree:
 - `robot.lock must have path, sha256` on a `0.1.0` lock
 - `releases.verifier must have repository, tag, commit` on a `0.1.0` lock
 - `missing {key}`
-- `{key} must have {children}`, including `definition must have sha256`, `robot must have repository, commit, configurations, lock` (`0.1.0`), `robot must have repository, commit, configurations, adapter` (`0.2.0`), `releases must have verifier` (`0.1.0`), `releases must have specs, runner, verifier, reporter` (`0.2.0`), `plan must have command_speed`, `world must have id, version`, and `evaluators must have livingproof-evaluator-scenario`
-- `procedure must be one of ['walk-hallway']`
+- `{key} must have {children}`, including `definition must have sha256`, `robot must have repository, commit, configurations, lock` (`0.1.0`), `robot must have repository, commit, configurations, adapter` (`0.2.0`), `releases must have verifier` (`0.1.0`), `releases must have specs, runner, verifier, reporter` (`0.2.0`), `world must have id, version`, and `evaluators must have livingproof-evaluator-scenario`
+- `procedure must be one of ['scenario', 'walk-hallway']`
 - `format is not livingproof-verification-lock/0.1.0 or livingproof-verification-lock/0.2.0`
 - `{path}: not valid JSON ({error}); re-run lock and review`
 - `{path}: must be a JSON object; re-run lock and review`
@@ -512,7 +520,14 @@ of it. On the robot tree:
 `check()` reports its own problems on separate lines. `read_lock` joins its problems with `; ` and ends with `; re-run lock and review`.
 
 With `--workflow`, the job whose id equals the definition id must call
-`{verifier repository}/.github/workflows/walk-hallway.yml@{verifier commit}`.
+`{verifier repository}/.github/workflows/walk-hallway.yml@{verifier commit}` for
+procedure `walk-hallway`, or `.github/workflows/scenario.yml` at that commit for
+procedure `scenario`. `scenario.yml` runs the scenario and world the lock names
+(walk-corner, for example); `walk-hallway.yml` is the thin wrapper around it.
+Its evidence step passes the evidence document it wrote (`verification.lock.json`
+in the robot checkout) to livingproof-sim-mujoco with `--lock` when the robot's
+`uv.lock` has sim 3.0 or later, which requires it. A robot on sim v2.x gets the
+same command as before, without `--lock`.
 Owner and repository compare case-insensitively. The commit compares exactly.
 The job must pass the locked robot repository, the locked robot commit and the
 locked configurations. A commented-out pin does not count. Another job that
