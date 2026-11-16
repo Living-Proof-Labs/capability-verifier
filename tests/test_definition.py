@@ -1093,3 +1093,65 @@ def test_v2_check_refuses_an_evaluator_tag_that_is_not_the_locked_commit(
     _resolve_tag_as(monkeypatch, "b" * 40)
     with pytest.raises(SystemExit, match="not the locked commit"):
         d.check(path, tmp_path / "w2")
+
+
+# robot-capability-specs#40 step 12: a definition runs any scenario through scenario.yml.
+def _corner_lock(repo, definition):
+    lock = _v2_lock(repo, definition)
+    lock["procedure"] = "scenario"
+    lock["scenario"] = "walk-corner@0.1.0"
+    lock["world"] = {"id": "hallway-corner", "version": "0.1.0"}
+    lock["plan"] = {"trials": {"count": 1}}  # walk-corner's speed is its parameter file's
+    return lock
+
+
+def _scenario_definition(tmp_path):
+    path = _definition(tmp_path)
+    path.write_text(
+        path.read_text().replace('procedure = "walk-hallway"', 'procedure = "scenario"')
+    )
+    return path
+
+
+def test_the_scenario_procedure_is_scenario_yml_with_the_same_interface():
+    import yaml
+
+    assert d.PROCEDURES["scenario"] == ".github/workflows/scenario.yml"
+    assert d.SIGNATURES["scenario"] == d.SIGNATURES["walk-hallway"]
+    text = (Path(__file__).parents[1] / d.PROCEDURES["scenario"]).read_text()
+    call = yaml.safe_load(text)[True]["workflow_call"]
+    assert d.SIGNATURES["scenario"]["inputs"] <= set(call["inputs"])
+    assert d.SIGNATURES["scenario"]["outputs"] <= set(call["outputs"])
+
+
+def test_a_corner_lock_without_a_plan_speed_checks(tmp_path, thin_robot):
+    path = _scenario_definition(tmp_path)
+    lock = _write_v2(path, _corner_lock(thin_robot, path))
+    v = lock["releases"]["verifier"]
+    uses = f"{v['repository']}/.github/workflows/scenario.yml@{v['commit']}"
+    assert d.check(path, tmp_path / "w2", _workflow(tmp_path, lock, uses=uses)) == lock
+
+
+def test_a_corner_job_must_call_scenario_yml(tmp_path, thin_robot):
+    path = _scenario_definition(tmp_path)
+    lock = _write_v2(path, _corner_lock(thin_robot, path))
+    with pytest.raises(SystemExit, match="scenario.yml"):
+        d.check(path, tmp_path / "w2", _workflow(tmp_path, lock))
+
+
+def test_a_corner_plan_speed_when_present_is_still_a_number(tmp_path, thin_robot):
+    path = _scenario_definition(tmp_path)
+    lock = _corner_lock(thin_robot, path)
+    lock["plan"]["command_speed"] = True
+    _write_v2(path, lock)
+    with pytest.raises(SystemExit, match="plan.command_speed must be a number"):
+        d.read_lock(d.lock_path(path))
+
+
+def test_a_walk_hallway_lock_still_needs_the_plan_speed(tmp_path, thin_robot):
+    path = _definition(tmp_path)
+    lock = _v2_lock(thin_robot, path)
+    del lock["plan"]["command_speed"]
+    _write_v2(path, lock)
+    with pytest.raises(SystemExit, match="command_speed"):
+        d.read_lock(d.lock_path(path))
