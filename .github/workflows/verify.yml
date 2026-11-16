@@ -15,7 +15,7 @@ jobs:
       checks: write # Only for the test-report check; fork PR tokens remain read-only.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.4.0
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
@@ -25,7 +25,7 @@ jobs:
           node-version: '24.22.3'
       - name: Validate Renovate config
         run: npx --yes --package renovate@44.237.1 renovate-config-validator --strict
-      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
           version: '3.54.0'
       - name: Identify verifier source
@@ -38,7 +38,7 @@ jobs:
         run: task matrix:report
       - name: Retain installed reporter matrix outputs
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: execution-matrix-reports-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/matrix-report/
@@ -47,7 +47,7 @@ jobs:
       - name: Released execution matrix
         if: ${{ !cancelled() }}
         run: cat artifacts/matrix/summary.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: execution-matrix-${{ github.event.pull_request.head.sha || github.sha }}
@@ -55,14 +55,14 @@ jobs:
           retention-days: 14
           if-no-files-found: error
       - run: task demo:runs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: verifier-demo-inputs-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/demo-inputs/
           retention-days: 14
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4.6.2
         id: demo-bundles
         if: ${{ !cancelled() }}
         with:
@@ -78,7 +78,7 @@ jobs:
           echo "Five fixture demonstrations with manifests, evidence, four report formats and checksums. See the included CATALOG.md." >> "$GITHUB_STEP_SUMMARY"
           echo "[Download the catalog and portable ZIPs]($BUNDLE_URL)" >> "$GITHUB_STEP_SUMMARY"
       - run: task bundle
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4.6.2
         with:
           name: portable-results-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/bundle/
@@ -114,7 +114,7 @@ jobs:
           REPORT_PATH: artifacts/results.xml,artifacts/archives.xml
           PUBLISH_CHECK: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         run: python tools/test_results.py --name "$REPORT_NAME" --path "$REPORT_PATH" --publish-check "$PUBLISH_CHECK"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4.6.2
         if: always()
         with:
           name: test-results-${{ github.event.pull_request.head.sha || github.sha }}
@@ -135,15 +135,15 @@ jobs:
     container:
       image: ghcr.io/living-proof-labs/livingproof-capability-report:1.6.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.4.0
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
           version: '3.54.0'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4.3.0
         with:
           name: verifier-demo-inputs-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/demo-inputs
@@ -152,21 +152,21 @@ jobs:
           DEMO_VERSION: ${{ needs.verify.outputs.source-version }}
           DEMO_ARCH: ${{ matrix.architecture }}
         run: task -t Taskfile.reporter.yml test
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: verifier-${{ needs.verify.outputs.source-version }}-runs-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/demo-runs/
           retention-days: 14
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: archive-tests-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/archives.xml
           retention-days: 14
           if-no-files-found: error
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4.3.0
         with:
           name: portable-results-${{ github.event.pull_request.head.sha || github.sha }}
           path: bundle
@@ -190,7 +190,7 @@ jobs:
           assert decisions["v1.2.0-insufficient"] == "INSUFFICIENT_EVIDENCE"
           PYCODE
           (cd reports && sha256sum report.* > SHA256SUMS)
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4.6.2
         id: reports
         with:
           name: capability-reports-${{ matrix.architecture }}-${{ github.event.pull_request.head.sha || github.sha }}
@@ -221,11 +221,11 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.4.0
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4.3.0
         with:
           pattern: archive-tests-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: native-results
@@ -289,10 +289,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.4.0
         with:
           persist-credentials: false
-      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
           version: '3.54.0'
       # The report job may have run in an earlier attempt than this one (a "re-run failed jobs"
@@ -315,7 +315,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.release.outputs.git-tag }}
         run: task -t Taskfile.reporter.yml release
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4.3.0
         with:
           name: capability-reports-amd64-${{ github.sha }}
           path: reports
