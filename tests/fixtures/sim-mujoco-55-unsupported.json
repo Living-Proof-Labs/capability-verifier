@@ -1,0 +1,125 @@
+{
+  "format": "livingproof-hallway-evidence/2.0.0",
+  "run_id": "walk-corner-toy-robot-stock",
+  "created": "2026-11-16T00:00:00+00:00",
+  "lock": {
+    "path": "caller.lock.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "content": {
+      "plan": {
+        "trials": 20,
+        "seeds": [
+          1,
+          2
+        ],
+        "command_speed": 0.5,
+        "required_passes": 2
+      },
+      "scenario": "walk-corner@0.1.0",
+      "world": {
+        "id": "hallway-corner",
+        "version": "0.1.0"
+      },
+      "configurations": [
+        {
+          "name": "stock",
+          "path": "stock.json",
+          "version": "1.0.0",
+          "sha256": "7002a073e93c547d795b377644a1d8e28b069edc90a8d6d4cbfa71ebdc80c642"
+        }
+      ],
+      "releases": {
+        "runner": {
+          "tag": "v1.5.0",
+          "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "specs": {
+          "tag": "v2.0.2",
+          "commit": "16524cbfeef18ff0454ebf125668b010d38a3993"
+        }
+      }
+    }
+  },
+  "pending_release": [],
+  "plan": {
+    "command_speed": 0.5,
+    "trials": {
+      "count": 1
+    }
+  },
+  "start": {
+    "spawn": "spawn-entrance",
+    "pose": "nominal",
+    "offset": null
+  },
+  "preconditions": [
+    {
+      "name": "scenario_supported",
+      "met": false,
+      "detail": "walk-corner is not named by the robot manifest scenarios"
+    }
+  ],
+  "robot": {
+    "id": "toy-robot",
+    "profile_sha256": "316715049d7fb9ea518869490d42ebc96e279cf507c386d43407cf7fc97356ce",
+    "profile": {
+      "class": "humanoid",
+      "dimensions": {
+        "width": {
+          "value": 0.4,
+          "unit": "m"
+        }
+      },
+      "simulators": [
+        "mujoco"
+      ]
+    }
+  },
+  "configuration": {
+    "name": "stock",
+    "version": "1.0.0",
+    "sha256": "7002a073e93c547d795b377644a1d8e28b069edc90a8d6d4cbfa71ebdc80c642",
+    "profile": {
+      "locomotion": {
+        "fall_base_height": {
+          "value": 0.1,
+          "unit": "m"
+        }
+      },
+      "controller": {
+        "interface": "velocity_command"
+      }
+    }
+  },
+  "world": {
+    "id": "hallway-corner",
+    "version": "0.1.0"
+  },
+  "environment": {
+    "simulator": {
+      "id": "mujoco",
+      "version": "3.17.0",
+      "adapter": "livingproof-sim-mujoco",
+      "adapter_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "runner": {
+      "version": "2.1.1",
+      "tag": "v1.5.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "source_commit": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  "host": {
+    "wall_clock_s": 0.0,
+    "cpu": 1
+  },
+  "trials": {
+    "count": 1,
+    "results": [],
+    "reproducibility": {
+      "compared": false,
+      "identical": null,
+      "finding": null
+    }
+  }
+}

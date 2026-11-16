@@ -198,6 +198,65 @@ def _sim_unsupported(tmp_path: Path) -> Path:
     return _write(tmp_path, manifest)
 
 
+def _sim55_manifest(tmp_path: Path) -> Path:
+    """The manifest ``_record_unsupported`` writes at livingproof-sim-mujoco 3b5c638.
+
+    Field names and the walk-corner values come from that function and from
+    ``test_real_walk_corner_file_is_unsupported_before_the_world_fixture``.
+    ``scenario`` is on the lock, not the plan. The world has only id and version.
+    The stdout sentence is not stored.
+    """
+    source = Path(__file__).parents[1] / "tests" / "fixtures" / "sim-mujoco-55-unsupported.json"
+    manifest = json.loads(source.read_text())
+    assert manifest["world"] == {"id": "hallway-corner", "version": "0.1.0"}
+    assert "scenario" not in manifest["plan"]
+    assert manifest["lock"]["content"]["scenario"] == "walk-corner@0.1.0"
+    assert manifest["preconditions"] == [
+        {
+            "name": "scenario_supported",
+            "met": False,
+            "detail": "walk-corner is not named by the robot manifest scenarios",
+        }
+    ]
+    assert manifest["trials"]["results"] == []
+    assert RECORD not in source.read_text()
+    path = tmp_path / "manifest.json"
+    path.write_text(source.read_text())
+    return path
+
+
+def test_the_manifest_sim_mujoco_55_writes_is_unsupported(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    evidence = _sim55_manifest(tmp_path)
+    result = hallway.verify(evidence)
+    assert result["summary"]["grade"] == hallway.UNSUPPORTED
+    assert result["trials"] == []
+    assert result["failures"] == []
+    report = _report(result)
+    assert "not supported" in report
+    assert "walk-corner" in report
+    assert "toy-robot" in report
+    assert hallway.FAIL not in report
+    out = tmp_path / "verified"
+    exported = _tool().export(evidence, out, prototype=True)
+    assert exported["summary"]["grade"] == hallway.UNSUPPORTED
+    assert not (out / "bundle").exists()
+    reports = out / "reports"
+    for name in ("report.json", "report.md", "report.html", "report.txt"):
+        text = (reports / name).read_text()
+        assert "not supported" in text
+        assert hallway.FAIL not in text
+    check = subprocess.run(
+        ["sha256sum", "-c", "SHA256SUMS"],
+        cwd=reports,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert check.returncode == 0, check.stdout + check.stderr
+
+
 def test_sim_evidence_without_world_geometry_is_unsupported(tmp_path):
     """The #55 record is graded before clear_width is required."""
     result = hallway.verify(_sim_unsupported(tmp_path))
