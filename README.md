@@ -386,11 +386,14 @@ The commit in that file is the commit the tag resolved to, recorded as evidence.
 While the lock says `"tag": "UNRELEASED"`, `HALLWAY_SPECS_SOURCE` must name a local
 checkout. A release changes the `"tag"` line. The fetch checks that tag, not the commit.
 
-Evidence that holds the record `UNSUPPORTED: precondition scenario_supported unmet`
-and names no trials is graded `UNSUPPORTED`. The report says that robot and scenario
-are not supported. That grade is not a robot `FAIL`, and no trial is assessed. A
-record that names trials is graded as before. The reporter bundle still has no
-unsupported status, so export writes no bundle for that run.
+Evidence whose preconditions say `scenario_supported` is unmet, and which names no
+trial results, is graded `UNSUPPORTED` before world geometry is required. The report
+names that robot and scenario and says they are not supported. That grade is not a
+robot `FAIL`, and no trial is assessed. A record that names trials is graded as
+before. Trials recorded beside an unmet `scenario_supported` declaration are an
+error, not a silent override. The reporter bundle has no `UNSUPPORTED` status, so
+export skips the bundle and writes `reports/report.json`, `report.md`, `report.html`,
+`report.txt` and a `SHA256SUMS` of those files.
 
     PYTHONPATH=src python tools/verify_hallway.py <evidence>/manifest.json <out> [--prototype] [--bundle-version 1.1.0]
     # exit 0: no test-system finding. exit 4: the finding was printed and the files were written.

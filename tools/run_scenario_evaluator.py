@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from capability_verifier.hallway import thresholds
+from capability_verifier.hallway import unmet_scenario_supported
 from livingproof_evaluator_scenario.result import write_run
 
 
@@ -34,6 +35,16 @@ def main(argv: list[str] | None = None) -> int:
     manifest = Path(args[0])
     started = args[2] if len(args) == 3 else _now()
     document = json.loads(manifest.read_text(encoding="utf-8"))
+    trials = document.get("trials") if isinstance(document, dict) else None
+    results = trials.get("results") if isinstance(trials, dict) else None
+    if unmet_scenario_supported(document) is not None and results == []:
+        # No trial ran, so there is no evaluator result. A note keeps the artifact upload.
+        destination = Path(args[1])
+        destination.mkdir(parents=True, exist_ok=True)
+        note = destination / "UNSUPPORTED.txt"
+        note.write_text("no trial: precondition scenario_supported unmet\n", encoding="utf-8")
+        print(note)
+        return 0
     written = write_run(
         manifest,
         thresholds(document),

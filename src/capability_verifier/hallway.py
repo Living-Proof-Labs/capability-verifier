@@ -393,14 +393,19 @@ def fits_width(manifest: dict) -> dict:
     }
 
 
-def _no_trials(manifest: dict) -> bool:
-    """True when the evidence names no trial result to grade."""
+def _trial_results(manifest: dict) -> list | None:
+    """Recorded trial rows, or None when the evidence does not carry that list."""
     trials = manifest.get("trials")
     if isinstance(trials, list):
-        return not trials
+        return trials
     if isinstance(trials, dict) and isinstance(trials.get("results"), list):
-        return not trials["results"]
-    return False
+        return trials["results"]
+    return None
+
+
+def _no_trials(manifest: dict) -> bool:
+    """True when the evidence names no trial result to grade."""
+    return _trial_results(manifest) == []
 
 
 def _holds_text(value, text: str) -> bool:
@@ -414,8 +419,28 @@ def _holds_text(value, text: str) -> bool:
 
 
 def holds_scenario_supported_record(manifest: dict) -> bool:
-    """The unmet ``scenario_supported`` record, and no trials were recorded."""
+    """The unmet ``scenario_supported`` sentence, and no trials were recorded."""
     return _no_trials(manifest) and _holds_text(manifest, SCENARIO_SUPPORTED_RECORD)
+
+
+def unmet_scenario_supported(manifest: dict) -> dict | None:
+    """The declared unmet ``scenario_supported`` precondition, without world geometry.
+
+    sim-mujoco records ``{"name": "scenario_supported", "met": false}`` and does not
+    copy the stdout sentence into the file. A world that was never loaded has only
+    ``id`` and ``version``.
+    """
+    preconditions = manifest.get("preconditions")
+    if not isinstance(preconditions, list):
+        return None
+    for item in preconditions:
+        if not isinstance(item, dict) or item.get("name") != "scenario_supported":
+            continue
+        if item.get("required", True) is False or item.get("met") is not False:
+            continue
+        detail = item.get("detail") if isinstance(item.get("detail"), str) else ""
+        return {"name": "scenario_supported", "detail": detail}
+    return None
 
 
 def _robot_label(manifest: dict) -> str:
@@ -693,6 +718,46 @@ def _with_findings(result: dict, findings: list | None) -> dict:
     return result
 
 
+def _finding_copies(manifest: dict) -> list | None:
+    """Evidence 2.0.0 findings, or None when this manifest has no such record.
+
+    An unmet ``scenario_supported`` manifest may omit geometry and still carry the
+    reproducibility object. A missing object is not a finding.
+    """
+    if manifest.get("format") != EVIDENCE_V2:
+        return None
+    trials = manifest.get("trials")
+    report = trials.get("reproducibility") if isinstance(trials, dict) else None
+    if not isinstance(report, dict) or "finding" not in report:
+        return []
+    finding = report["finding"]
+    return [dict(finding)] if finding else []
+
+
+def _unsupported_result(manifest: dict, unmet: dict) -> dict:
+    """UNSUPPORTED before any trial. The reporter bundle is not built here."""
+    plan = manifest.get("plan") if isinstance(manifest.get("plan"), dict) else {}
+    n, need = planned_counts(plan)
+    return _with_findings(
+        {
+            "plan": plan,
+            "policy": POLICY,
+            "trials": [],
+            "unsupported": unmet,
+            "summary": {
+                "k": 0,
+                "n": n,
+                "required_passes": need,
+                "grade": UNSUPPORTED,
+                "reason": unsupported_reason(manifest, unmet),
+                "aggregation": AGGREGATION,
+            },
+            "failures": [],
+        },
+        _finding_copies(manifest),
+    )
+
+
 def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
     """Assess every trial named by the evidence manifest.
 
@@ -704,36 +769,26 @@ def verify(manifest_path: Path, recorded: dict | None = None) -> dict:
         manifest = json.loads(manifest_path.read_text())
     except json.JSONDecodeError as e:
         raise ManifestError(f"manifest is not valid JSON: {e}") from None
+    # scenario_supported is decided before world geometry. sim-mujoco writes the
+    # precondition and a world of id and version only, with no trial results and
+    # without copying the stdout sentence into the file.
+    declared = unmet_scenario_supported(manifest)
+    recorded_trials = _trial_results(manifest)
+    if declared is not None and recorded_trials:
+        raise ManifestError(
+            "precondition scenario_supported is unmet and trials were recorded. "
+            "That disagreement is an error, not a robot FAIL and not UNSUPPORTED"
+        )
+    if declared is not None and recorded_trials == []:
+        return _unsupported_result(manifest, declared)
+    if holds_scenario_supported_record(manifest):
+        return _unsupported_result(manifest, {"name": "scenario_supported", "detail": ""})
     validate_manifest(manifest)
     plan = manifest["plan"]
-    # Grade the recorded sentence before resolving parameters or reading trials.
-    # No trial ran, so this is not a robot failure.
-    if holds_scenario_supported_record(manifest):
-        unmet = {"name": "scenario_supported", "detail": ""}
-    else:
-        unmet = unmet_precondition(manifest)
+    unmet = unmet_precondition(manifest)
     if unmet is not None:
         # Declared unsupported: no trial is read or graded, whatever the manifest lists.
-        reason = unsupported_reason(manifest, unmet)
-        n, need = planned_counts(plan)
-        return _with_findings(
-            {
-                "plan": plan,
-                "policy": POLICY,
-                "trials": [],
-                "unsupported": unmet,
-                "summary": {
-                    "k": 0,
-                    "n": n,
-                    "required_passes": need,
-                    "grade": UNSUPPORTED,
-                    "reason": reason,
-                    "aggregation": AGGREGATION,
-                },
-                "failures": [],
-            },
-            reproducibility_findings(manifest),
-        )
+        return _unsupported_result(manifest, unmet)
     v2 = manifest["format"] == EVIDENCE_V2
     if v2:
         count = plan["trials"]["count"]

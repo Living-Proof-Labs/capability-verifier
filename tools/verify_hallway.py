@@ -15,6 +15,8 @@ so the verify job fails. Exit 4 is that finding. A robot grade with no finding i
 """
 
 import argparse
+import hashlib
+import html
 import json
 import os
 import re
@@ -159,6 +161,50 @@ def description(path: Path = DESCRIPTION, commit: str | None = None) -> dict | N
     return {"source": source, **text}
 
 
+def _checksums(directory: Path) -> str:
+    """``sha256sum`` lines for every file already in ``directory``, names sorted."""
+    lines = []
+    for path in sorted(directory.iterdir()):
+        if path.is_file():
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            lines.append(f"{digest}  {path.name}")
+    return "\n".join(lines) + "\n"
+
+
+def write_unsupported_report(out: Path, result: dict) -> None:
+    """Published report for an UNSUPPORTED grade. The reporter bundle is not written.
+
+    The bundle schema has no UNSUPPORTED status. ``reports/`` is the files the site
+    already consumes, and ``SHA256SUMS`` hashes those exact bytes.
+    """
+    reports = out / "reports"
+    reports.mkdir(parents=True)
+    text = "\n".join(hallway.summary_lines(result)) + "\n"
+    grade = result["summary"]["grade"]
+    reason = result["summary"]["reason"]
+    document = {
+        "grade": grade,
+        "rationale": reason,
+        "summaries": [
+            {
+                "grade": grade,
+                "rationale": reason,
+                "failures": [],
+                "result_ids": [],
+            }
+        ],
+        "text": text,
+    }
+    (reports / "report.json").write_text(json.dumps(document, indent=2) + "\n")
+    (reports / "report.md").write_text(f"# {grade}\n\n{text}")
+    (reports / "report.txt").write_text(text)
+    (reports / "report.html").write_text(
+        "<!DOCTYPE html>\n<html><body><pre>" + html.escape(text) + "</pre></body></html>\n"
+    )
+    (reports / "SHA256SUMS").write_text(_checksums(reports))
+    (out / "verification.json").write_text(json.dumps(result, indent=2) + "\n")
+
+
 def _export(
     manifest_path: Path,
     out: Path,
@@ -173,8 +219,9 @@ def _export(
         raise SystemExit("hallway lock is UNRELEASED; pass --prototype to export a labelled bundle")
     result = hallway.verify(manifest_path)  # raises ManifestError for JSON, fields, plan, trials
     if result["summary"]["grade"] == hallway.UNSUPPORTED:
-        # The reporter bundle has no unsupported result yet (verifier #20); export nothing.
-        raise SystemExit(f"{hallway.UNSUPPORTED}: {result['summary']['reason']}; no bundle written")
+        # The reporter bundle has no UNSUPPORTED status. The published report is still written.
+        write_unsupported_report(out, result)
+        return result
     missing = absent_evidence(manifest_path, result)
     if missing:
         result["missing_evidence"] = missing
