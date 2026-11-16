@@ -54,12 +54,14 @@ ARG VERIFICATION_LOCK_URL=https://raw.githubusercontent.com/Living-Proof-Labs/li
 ENV UV_PYTHON_DOWNLOADS=never UV_CACHE_DIR=/opt/uv-cache UV_LINK_MODE=copy \
     MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa \
     PATH=/opt/lpl/bin:$PATH
+# Installed from /tmp/cv so uv pip reads its [tool.uv] override-dependencies (one
+# livingproof-scenario-parameters URL for sim v3.2.5 and evaluator-scenario v1.3.0).
 COPY pyproject.toml uv.lock /tmp/cv/
 COPY src /tmp/cv/src
 RUN set -eu; \
     uv venv -q /opt/lpl; \
-    VIRTUAL_ENV=/opt/lpl uv pip install --no-cache -q \
-      "livingproof @ git+https://github.com/Living-Proof-Labs/livingproof@${LIVINGPROOF_REF}" /tmp/cv; \
+    (cd /tmp/cv && VIRTUAL_ENV=/opt/lpl uv pip install --no-cache -q \
+      "livingproof @ git+https://github.com/Living-Proof-Labs/livingproof@${LIVINGPROOF_REF}" .); \
     rm -rf /tmp/cv; \
     python3 -c 'import sys, urllib.request; sys.stdout.buffer.write(urllib.request.urlopen(sys.argv[1], timeout=60).read())' \
       "$VERIFICATION_LOCK_URL" > /tmp/lock.json; \
