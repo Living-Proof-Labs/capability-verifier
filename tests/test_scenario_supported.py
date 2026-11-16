@@ -1,0 +1,216 @@
+# SPDX-License-Identifier: Apache-2.0
+"""An unmet scenario_supported record is UNSUPPORTED, and the report says not supported.
+
+robot-capability-specs v2.3.0: a scenario that requires ``scenario_supported`` and is
+not declared is graded before any trial. The evidence record is
+``UNSUPPORTED: precondition scenario_supported unmet`` with no trials. That grade is
+never FAIL and is never a robot failure. A record with trials grades as before.
+"""
+
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+
+import pytest
+
+from capability_verifier import hallway
+
+RECORD = "UNSUPPORTED: precondition scenario_supported unmet"
+ROBOT = "unitree-g1"
+
+
+def _observation(**changes):
+    observation = {
+        "format": hallway.OBSERVATION_FORMAT,
+        "end": "crossed_exit",
+        "duration_s": 12.0,
+        "exit_time": 12.0,
+        "max_abs_lateral": {"value": 0.21, "time": 7.3},
+        "min_base_height": {"value": 0.71, "time": 3.0},
+        "wall_contacts": [],
+        "trace": {
+            "columns": ["t", "x", "y", "z", "wall_distance"],
+            "samples": [
+                [0.0, -2.5, 0.0, 0.75, 0.3],
+                [9.8, 1.0, 0.21, 0.74, 0.041],
+                [10.1, 1.2, 0.21, 0.73, 0.05],
+                [12.0, 3.0, 0.1, 0.74, 0.2],
+            ],
+        },
+    }
+    observation.update(changes)
+    return observation
+
+
+def _failing_lateral():
+    return _observation(max_abs_lateral={"value": 0.62, "time": 10.1})
+
+
+def _profile():
+    return {
+        "robot": {
+            "id": ROBOT,
+            "profile": {"class": "humanoid", "dimensions": {"width": 0.42}},
+        },
+        "configuration": {
+            "name": "stock",
+            "version": "1.1.0",
+            "profile": {"locomotion": {"fall_base_height": 0.5}},
+        },
+        "world": {
+            "id": "hallway-open",
+            "version": "0.1.0",
+            "clear_width": 1.4,
+            "route_length": 5.5,
+        },
+        "preconditions": [
+            {"name": "fits_width", "met": True, "detail": "0.42 + 2 x 0.05 = 0.52 m vs 1.4 m"}
+        ],
+    }
+
+
+def _write(tmp_path: Path, manifest: dict) -> Path:
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    return path
+
+
+def _v1(tmp_path: Path, *, scenario: str, record: str | None, failing: bool, trials: int) -> Path:
+    """One seeded plan. ``trials`` 0 with the record is the no-trial case that grades FAIL today."""
+    seeds = list(range(1, trials + 1))
+    rows = []
+    for seed in seeds:
+        body = _failing_lateral() if failing else _observation()
+        name = f"trial-{seed:02d}.json"
+        target = tmp_path / name
+        target.write_text(json.dumps(body))
+        rows.append(
+            {"seed": seed, "path": name, "sha256": hashlib.sha256(target.read_bytes()).hexdigest()}
+        )
+    manifest = {
+        "format": hallway.MANIFEST_FORMAT,
+        "plan": {
+            "scenario": scenario,
+            "trials": trials,
+            "seeds": seeds,
+            "command_speed": 0.5,
+            "required_passes": 1,
+        },
+        **_profile(),
+        "trials": rows,
+    }
+    if record is not None:
+        manifest["record"] = record
+    return _write(tmp_path, manifest)
+
+
+def _v2_record(tmp_path: Path, scenario: str) -> Path:
+    """The simulator shape: the record, a planned trial, and no trial results."""
+    manifest = {
+        "format": hallway.EVIDENCE_V2,
+        "plan": {"scenario": scenario, "command_speed": 0.5, "trials": {"count": 1}},
+        **_profile(),
+        "trials": {
+            "count": 1,
+            "results": [],
+            "reproducibility": {"compared": False, "identical": None, "finding": None},
+        },
+        "record": RECORD,
+    }
+    manifest["world"] = {
+        "id": "hallway-corner",
+        "version": "0.1.0",
+        "clear_width": 1.5,
+        "route_length": 5.5,
+    }
+    return _write(tmp_path, manifest)
+
+
+def _report(result: dict) -> str:
+    return "\n".join(hallway.summary_lines(result))
+
+
+def test_the_scenario_supported_record_grades_unsupported(tmp_path):
+    """walk-corner evidence that holds the record, with no trials, is UNSUPPORTED."""
+    result = hallway.verify(_v2_record(tmp_path, "walk-corner@0.1.0"))
+    summary = result["summary"]
+    assert summary["grade"] == hallway.UNSUPPORTED
+    assert summary["grade"] != hallway.FAIL
+    assert result["trials"] == []
+    assert result["failures"] == []
+    report = _report(result)
+    assert "not supported" in report
+    assert "walk-corner" in report
+    assert ROBOT in report
+    assert hallway.FAIL not in report
+
+
+def test_a_no_trial_record_never_grades_fail(tmp_path):
+    """No completed trials and the record is not a robot FAIL.
+
+    With the record ignored, k of N on an empty plan is FAIL. The record stays UNSUPPORTED.
+    """
+    path = _v1(tmp_path, scenario="walk-hallway@0.1.0", record=RECORD, failing=False, trials=0)
+    result = hallway.verify(path)
+    assert result["summary"]["grade"] == hallway.UNSUPPORTED
+    assert result["summary"]["grade"] != hallway.FAIL
+    assert result["trials"] == []
+    assert result["failures"] == []
+    report = _report(result)
+    assert "not supported" in report
+    assert "walk-hallway" in report
+    assert hallway.FAIL not in report
+
+
+def test_an_unmet_scenario_supported_precondition_says_not_supported(tmp_path):
+    """The structured precondition, even beside a passing trial file, is not a robot result."""
+    path = _v1(tmp_path, scenario="walk-hallway@0.1.0", record=None, failing=False, trials=1)
+    manifest = json.loads(path.read_text())
+    manifest["preconditions"].append({"name": "scenario_supported", "met": False})
+    path.write_text(json.dumps(manifest))
+    result = hallway.verify(path)
+    assert result["summary"]["grade"] == hallway.UNSUPPORTED
+    assert result["summary"]["grade"] != hallway.FAIL
+    assert result["trials"] == []
+    assert result["failures"] == []
+    report = _report(result)
+    assert "not supported" in report
+    assert hallway.FAIL not in report
+
+
+def test_a_normal_pass_record_is_unchanged(tmp_path):
+    result = hallway.verify(
+        _v1(tmp_path, scenario="walk-hallway@0.1.0", record=None, failing=False, trials=1)
+    )
+    assert result["summary"]["grade"] == hallway.PASS
+    assert result["failures"] == []
+    assert "not supported" not in _report(result)
+
+
+def test_a_normal_fail_record_is_unchanged(tmp_path):
+    result = hallway.verify(
+        _v1(tmp_path, scenario="walk-hallway@0.1.0", record=None, failing=True, trials=1)
+    )
+    assert result["summary"]["grade"] == hallway.FAIL
+    assert result["failures"]
+    assert result["trials"][0]["status"] == hallway.FAIL
+    assert "not supported" not in _report(result)
+
+
+def _tool():
+    tool_path = Path(__file__).parents[1] / "tools" / "verify_hallway.py"
+    loaded = importlib.util.spec_from_file_location("verify_hallway_supported", tool_path)
+    tool = importlib.util.module_from_spec(loaded)
+    loaded.loader.exec_module(tool)
+    return tool
+
+
+def test_export_says_not_supported_and_writes_no_bundle(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    out = tmp_path / "verified"
+    with pytest.raises(SystemExit, match="not supported") as err:
+        _tool().export(_v2_record(tmp_path, "walk-corner@0.1.0"), out, prototype=True)
+    assert hallway.FAIL not in str(err.value)
+    assert not out.exists()
