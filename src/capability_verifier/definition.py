@@ -81,23 +81,28 @@ V2_SHAPE = {
     "robot": ("repository", "commit", "configurations", "adapter"),
     "releases": ("specs", "runner", "verifier", "reporter"),
     "scenario": (),
-    "plan": ("command_speed",),
+    "plan": (),
     "world": ("id", "version"),
     "configurations": (),
     "evaluators": ("livingproof-evaluator-scenario",),
 }
 DEFINITION_FORMAT = "livingproof-verification-definition/0.1.0"
-PROCEDURES = {"walk-hallway": ".github/workflows/walk-hallway.yml"}
+# walk-hallway.yml is the thin wrapper existing callers keep. scenario.yml runs whatever
+# scenario and world the lock names (robot-capability-specs#40): walk-corner uses it.
+PROCEDURES = {
+    "walk-hallway": ".github/workflows/walk-hallway.yml",
+    "scenario": ".github/workflows/scenario.yml",
+}
 # A procedure is recognised by its interface, not its file name: a reusable-workflow call that
 # passes these inputs, or a local workflow that declares these workflow_call inputs and outputs,
 # runs the procedure under whatever name it has. tests/test_definition.py keeps these equal to
 # walk-hallway.yml's own workflow_call interface.
-SIGNATURES = {
-    "walk-hallway": {
-        "inputs": frozenset({"repository", "ref", "configurations"}),
-        "outputs": frozenset({"configurations", "report-artifacts"}),
-    }
+_INTERFACE = {
+    "inputs": frozenset({"repository", "ref", "configurations"}),
+    "outputs": frozenset({"configurations", "report-artifacts"}),
 }
+# The wrapper forwards scenario.yml's interface unchanged, so both share it.
+SIGNATURES = {"walk-hallway": _INTERFACE, "scenario": _INTERFACE}
 SHA = re.compile(r"[0-9a-f]{40}")
 REPO = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 GITHUB = os.environ.get("LIVINGPROOF_GIT_BASE", "https://github.com")
@@ -455,8 +460,16 @@ def _v2_details(lock: dict) -> list[str]:
     if missing:
         problems.append(f"robot.configurations {missing} are not in configurations")
     plan = lock.get("plan")
-    speed = plan.get("command_speed") if isinstance(plan, dict) else None
-    if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+    if not isinstance(plan, dict):
+        problems.append("plan must be an object")
+        plan = {}
+    # walk-hallway records its speed in the plan. Another scenario (walk-corner) may leave
+    # it to the scenario's parameter file; when present it is still a number.
+    hallway = isinstance(scenario, str) and scenario.split("@", 1)[0] == "walk-hallway"
+    speed = plan.get("command_speed")
+    if (hallway or "command_speed" in plan) and (
+        isinstance(speed, bool) or not isinstance(speed, (int, float))
+    ):
         problems.append("plan.command_speed must be a number")
     world = lock.get("world")
     if isinstance(world, dict):
