@@ -50,7 +50,7 @@ def test_released_pins_are_tags():
     project = (ROOT / "pyproject.toml").read_text()
     assert (
         "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/"
-        "livingproof-evaluator-scenario.git@v1.2.1"
+        "livingproof-evaluator-scenario.git@v1.3.0"
     ) in project
     assert (
         "livingproof-scenario-parameters @ git+https://github.com/Living-Proof-Labs/"
@@ -62,7 +62,7 @@ def test_released_pins_are_tags():
     ) in project
     assert "TODO" not in project
     worlds = json.loads((ROOT / "worlds.lock.json").read_text())
-    assert worlds["tag"] == "v1.2.0"
+    assert worlds["tag"] == "v1.3.7"
     assert worlds["repository"] == "https://github.com/Living-Proof-Labs/livingproof-worlds"
     # The sim run-manifest world digest is not a pin and is not checked here.
     assert "sha256" not in worlds

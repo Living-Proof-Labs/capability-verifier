@@ -6,6 +6,10 @@ what the tag resolved to. File hashes still have to match. A released lock has
 ``"tag": "vX.Y.Z"`` and is cloned from the repository. Until the catalog is
 released the lock says ``"tag": "UNRELEASED"``; then a local checkout named by
 ``HALLWAY_SPECS_SOURCE`` supplies the files and must match the file hashes.
+
+The livingproof-worlds release in ``worlds.lock.json`` is fetched the same way, into
+``.worlds``: a scenario graded on its world (walk-corner) reads ``world.json`` from it.
+Its tag must resolve to the locked commit and its files must match the lock.
 """
 
 import hashlib
@@ -55,3 +59,32 @@ for name, expected in lock["files"].items():
         raise SystemExit(f"Catalog content differs from the lock: {name}")
 label = lock["tag"] if released else f"UNRELEASED {head[:7]} (prototype)"
 print(f"Verified scenario catalog {label} at {head}")
+
+worlds = json.loads((root / "worlds.lock.json").read_text())
+worlds_dir = root / ".worlds"
+if not worlds_dir.exists():
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "advice.detachedHead=false",
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            "--branch",
+            worlds["tag"],
+            worlds["repository"] + ".git",
+            str(worlds_dir),
+        ],
+        check=True,
+    )
+worlds_head = subprocess.check_output(
+    ["git", "-C", str(worlds_dir), "rev-parse", "HEAD"], text=True
+).strip()
+if worlds_head != worlds["commit"]:
+    raise SystemExit(f"Worlds checkout is {worlds_head}, not {worlds['tag']} {worlds['commit']}")
+for name, expected in worlds["files"].items():
+    if hashlib.sha256((worlds_dir / name).read_bytes()).hexdigest() != expected:
+        raise SystemExit(f"Worlds content differs from the lock: {name}")
+print(f"Verified worlds {worlds['tag']} at {worlds_head}")

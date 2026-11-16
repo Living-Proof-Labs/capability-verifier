@@ -9,6 +9,7 @@ decimals the parameter file names. Callers pass those numbers to the evaluator.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -19,6 +20,8 @@ FROZEN_EVIDENCE = {
     "livingproof-hallway-evidence/1.0.0": "walk-hallway@0.1.0",
     "livingproof-hallway-evidence/2.0.0": "walk-hallway@0.1.0",
 }
+# The frozen scenario: graded on the frozen straight route, with no world document.
+FROZEN_SCENARIO = "walk-hallway"
 _CACHE: dict[str, dict] = {}
 
 
@@ -79,6 +82,61 @@ def load_parameters(manifest: dict | None = None, root: Path | None = None) -> d
     return document
 
 
+def uses_world(manifest: dict) -> bool:
+    """True when the scenario's route and places come from its world document.
+
+    walk-hallway (and evidence that names no scenario) keeps the frozen straight route,
+    so its grading and stored bytes are unchanged.
+    """
+    identity = scenario_identity(manifest)
+    return identity is not None and identity[0] != FROZEN_SCENARIO
+
+
+def check_names(manifest: dict | None = None, root: Path | None = None) -> tuple[str, ...]:
+    """The scenario's checks, in its parameter file's order."""
+    return tuple(c["evaluator"] for c in load_parameters(manifest, root)["checks"])
+
+
+def command_speed(manifest: dict, root: Path | None = None):
+    """The speed the evidence recorded, else the parameter file's (walk-corner has no plan speed)."""
+    plan = manifest.get("plan") if isinstance(manifest.get("plan"), dict) else {}
+    if "command_speed" in plan:
+        return plan["command_speed"]
+    return load_parameters(manifest, root)["parameters"]["command_speed"]["value"]
+
+
+def worlds_root(root: Path | None = None) -> Path:
+    return (repo_root() if root is None else root) / ".worlds"
+
+
+def world_document(world: dict, sha256: str | None = None, root: Path | None = None) -> dict:
+    """``world.json`` for ``world`` (id and version) from the locked livingproof-worlds release.
+
+    ``sha256`` is the world digest the run lock recorded. Different bytes are refused:
+    the run was not on the world this verifier grades with.
+    """
+    path = (
+        worlds_root(root)
+        / "worlds"
+        / str(world.get("id"))
+        / str(world.get("version"))
+        / "world.json"
+    )
+    if not path.is_file():
+        raise ScenarioParameterError(
+            f"world {world.get('id')} {world.get('version')} is not in the worlds checkout "
+            f"({path}). Run: python tools/fetch_hallway_specs.py"
+        )
+    raw = path.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    if sha256 is not None and digest != sha256:
+        raise ScenarioParameterError(
+            f"world {world.get('id')} {world.get('version')} in the run lock has sha256 "
+            f"{sha256}, not the locked worlds release's {digest}"
+        )
+    return json.loads(raw)
+
+
 def raw_inputs(manifest: dict) -> dict:
     """Quantities the evidence already carries. Route length is not recomputed."""
     robot = manifest["robot"]["profile"]
@@ -98,6 +156,7 @@ def acceptance(manifest: dict, root: Path | None = None) -> dict:
 
     ``plan.command_speed`` is the speed the evidence recorded. The parameter file's
     expression and rounding are applied to that speed, which is 0.5 for walk-hallway.
+    Evidence whose plan has no speed (walk-corner) uses the parameter file's value.
     """
     document = copy.deepcopy(load_parameters(manifest, root))
     world = document.get("world") if isinstance(document.get("world"), dict) else {}
@@ -110,8 +169,7 @@ def acceptance(manifest: dict, root: Path | None = None) -> dict:
             f"parameter file is for {world.get('id')} {world.get('content_version')}, "
             f"not {got.get('id')} {got.get('version')}"
         )
-    speed = manifest["plan"]["command_speed"]
-    document["parameters"]["command_speed"]["value"] = speed
+    document["parameters"]["command_speed"]["value"] = command_speed(manifest, root)
     problems = reference_errors(document)
     if problems:
         raise ScenarioParameterError("; ".join(problems))

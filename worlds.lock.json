@@ -1,5 +1,9 @@
 {
   "repository": "https://github.com/Living-Proof-Labs/livingproof-worlds",
-  "tag": "v1.2.0",
-  "commit": "ace98f1a7251f1f61fdf999d090b1e91c3dc258a"
+  "tag": "v1.3.7",
+  "commit": "8c49d6d13283cbeec26e484b85fddd469e879600",
+  "files": {
+    "worlds/hallway-corner/0.1.0/world.json": "8393881e8b38a090f51c3a424ca444623a901f642f75186cb4d41ac7482898f5",
+    "worlds/hallway-open/0.1.0/world.json": "d60bb8aa6a72c8403fb6674cc9d803962c1484bc3e163527988e8c57ccec775c"
+  }
 }

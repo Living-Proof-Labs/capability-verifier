@@ -1,0 +1,7 @@
+{
+  "note": "Real walk-corner 0.1.0 runs on world hallway-corner 0.1.0, one trial each, recorded by Cody for robot-capability-specs#40 step 11c from released robot tags. The run lock names scenario walk-corner@0.1.0, world sha256 8393881e8b38a090f51c3a424ca444623a901f642f75186cb4d41ac7482898f5 (livingproof-worlds worlds/hallway-corner/0.1.0/world.json) and specs v2.3.0. The plan has no command_speed: walk-corner's speed is the parameter file's 0.5 m/s.",
+  "g1-stock": {"robot": "livingproof-unitree-g1 v2.2.1 (6872598)", "configuration": "stock", "runner": "livingproof-sim-mujoco v3.2.1 (f9c326f)"},
+  "t1-stock": {"robot": "livingproof-booster-t1 v2.2.0 (8e09bb8)", "configuration": "stock", "runner": "livingproof-sim-mujoco v3.2.0 (4ff1760)"},
+  "go1-playground": {"robot": "livingproof-unitree-go1 v2.2.0 (c2fc81f)", "configuration": "playground", "runner": "livingproof-sim-mujoco v3.2.0 (4ff1760)"},
+  "unsupported": {"source": "livingproof-evaluator-scenario v1.3.0 tests/fixtures/sim-v3.2.0-route/unsupported/manifest.json", "robot": "livingproof-unitree-g1 main 00c0dd8 manifest (walk-corner not declared)", "configuration": "stock", "result": "UNSUPPORTED: scenario_supported unmet, no trials"}
+}

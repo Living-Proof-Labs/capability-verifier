@@ -7,10 +7,10 @@ license = "Apache-2.0"
 dependencies = [
     "pyyaml==6.0.3",
     # Released tags only. robot-capability-specs v2.2.0, livingproof-worlds v1.2.0
-    # (worlds.lock.json), livingproof-sim-mujoco v2.1.1, livingproof-evaluator-scenario v1.2.1.
-    # The parameter package stays on v2.2.0: evaluator v1.2.1 and sim v2.1.1 require that
+    # (worlds.lock.json), livingproof-sim-mujoco v2.1.1, livingproof-evaluator-scenario v1.3.0.
+    # The parameter package stays on v2.2.0: evaluator v1.3.0 and sim v2.1.1 require that
     # git URL, and the package bytes are the same at v2.3.0. The catalog lock is v2.3.0.
-    "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git@v1.2.1",
+    "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git@v1.3.0",
     "livingproof-scenario-parameters @ git+https://github.com/Living-Proof-Labs/robot-capability-specs@v2.2.0#subdirectory=python",
     "livingproof-sim-mujoco @ git+https://github.com/Living-Proof-Labs/livingproof-sim-mujoco.git@v2.1.1",
 ]
