@@ -60,7 +60,11 @@ def required_evaluators(spec: dict) -> tuple:
 FAILURE_KEYS = {"check", "observed", "limit", "unit", "t", "seed"}
 # Optional keys: ``wall`` names a contacted wall; ``via`` names how a trial left the hallway
 # (a wall, or ``exit-outside-segment``).
-FAILURE_OPTIONAL_KEYS = {"wall", "via"}
+FAILURE_OPTIONAL_KEYS = {"wall", "via", "place"}
+# specs#40: passes-through-places (walk-corner's ``corner-turned``) is an order check. Its
+# failure names the ``place`` that was missed or entered late, and its ``limit`` is the exit
+# crossing time, which is null when the robot never crossed the exit. A null limit is valid
+# only on such a failure.
 # cv #36: each failed trial names one primary failure by a fixed category precedence, and
 # keeps every other failure as secondary. This is a deterministic label, not a root-cause
 # claim: per-check maxima cannot establish cause, and an earlier time is chronology only.
@@ -167,7 +171,7 @@ def structured_failures(assessment: dict) -> list:
             and FAILURE_KEYS <= set(f) <= FAILURE_KEYS | FAILURE_OPTIONAL_KEYS
             and f["check"] == assessment["evaluator"]
             and (f["observed"] is None or _number(f["observed"]))
-            and _number(f["limit"])
+            and (_number(f["limit"]) or (f["limit"] is None and "place" in f))
             and isinstance(f["unit"], str)
             and f["unit"]
             and (f["t"] is None or _number(f["t"]))

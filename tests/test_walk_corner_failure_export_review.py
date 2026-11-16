@@ -35,7 +35,9 @@ def _never_turned(tmp_path):
     manifest = json.loads((run / "manifest.json").read_text())
     trial = run / manifest["trials"]["results"][0]["path"]
     observation = json.loads(trial.read_text())
-    corner = next(p for p in hallway.world_document(manifest["world"])["places"] if p["name"] == "corner")
+    corner = next(
+        p for p in hallway.world_document(manifest["world"])["places"] if p["name"] == "corner"
+    )
     xs = [v[0] for v in corner["polygon"]] if "polygon" in corner else [-0.75, 0.75]
     ys = [v[1] for v in corner["polygon"]] if "polygon" in corner else [-0.75, 0.75]
     observation["trace"]["samples"] = [
