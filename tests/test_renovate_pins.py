@@ -5,10 +5,15 @@ The runtime image has no Node, so this does not execute Renovate. It checks the
 rules' match fields against the files and package names Renovate extracts.
 Renovate rewrites a uv git source's packageName to the GitHub repository while
 depName stays the project name, so the fixture rule matches both.
+
+Runtime dependencies stay enabled. The shared preset's rangeStrategy pin records
+them as exact ``==`` versions, and pyproject.toml, the repin fixture, and
+uv.lock name the same release.
 """
 
 import json
 import re
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +33,12 @@ PRESET = re.compile(
     r"github>Living-Proof-Labs/collaboration-guidelines:renovate-preset#v[0-9]+\.[0-9]+\.[0-9]+"
 )
 GIT_SOURCE = re.compile(r'livingproof-sim-mujoco = \{ git = "https://github.com/([^"]+?)\.git"')
+EXACT_PIN = re.compile(
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)"
+    r"(?:\[[A-Za-z0-9._-]+(?:,[A-Za-z0-9._-]+)*\])?"
+    r"==(?P<version>\d+(?:\.\d+)+)$"
+)
+FIXTURE_UNPINNED = "livingproof-sim-mujoco[torch]"
 
 
 def config():
@@ -106,10 +117,80 @@ def test_legacy_reporter_image_is_only_the_verify_workflow_pin():
     assert tagged == [(REPORTER_FILE, legacy)]
 
 
+def exact_pins(dependencies):
+    """Map each ``name==version`` dependency to that version. Extras stay on the name."""
+    found = {}
+    for item in dependencies:
+        if not isinstance(item, str):
+            continue
+        match = EXACT_PIN.fullmatch(item.strip())
+        if match is None:
+            continue
+        name = match.group("name")
+        assert name not in found, name
+        found[name] = match.group("version")
+    return found
+
+
+def locked_versions(lock):
+    found = {}
+    for item in lock["package"]:
+        name = item.get("name")
+        version = item.get("version")
+        if not isinstance(name, str) or not isinstance(version, str):
+            continue
+        assert found.get(name, version) == version, name
+        found[name] = version
+    return found
+
+
 def test_runtime_dependencies_are_not_disabled():
-    runtime = (ROOT / RUNTIME_FILE).read_text()
-    assert f'"{RUNTIME_PACKAGE}>=' in runtime
-    assert "livingproof-capability-report @ " in runtime
+    """Renovate still versions runtime dependencies, now as exact pins.
+
+    ``rangeStrategy: pin`` replaces a ``>=`` range with ``==``. The dependency
+    stays out of the disabled rules, and the project, the repin fixture, and
+    uv.lock agree on the version. A bare name or a range does not pass.
+    """
+    project = tomllib.loads((ROOT / RUNTIME_FILE).read_text(encoding="utf-8"))
+    fixture = tomllib.loads((ROOT / FIXTURE_FILE).read_text(encoding="utf-8"))
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+
+    for item in project["project"]["dependencies"]:
+        if not isinstance(item, str) or " @ " in item:
+            continue
+        assert EXACT_PIN.fullmatch(item.strip()), item
+
+    runtime = exact_pins(project["project"]["dependencies"])
+    assert RUNTIME_PACKAGE in runtime
+    version = runtime[RUNTIME_PACKAGE]
+    fixture_dependencies = fixture["project"]["dependencies"]
+    assert exact_pins(fixture_dependencies)[RUNTIME_PACKAGE] == version
+    unpinned = [
+        item
+        for item in fixture_dependencies
+        if isinstance(item, str) and EXACT_PIN.fullmatch(item.strip()) is None
+    ]
+    assert unpinned == [FIXTURE_UNPINNED]
+
+    resolved = locked_versions(lock)
+    assert RUNTIME_PACKAGE in resolved
+    assert resolved[RUNTIME_PACKAGE] == version
+    for name, pin in exact_pins(fixture_dependencies).items():
+        if name in resolved:
+            assert pin == resolved[name], name
+
+    root_package = next(item for item in lock["package"] if item["name"] == "capability-verifier")
+    assert {"name": RUNTIME_PACKAGE} in root_package["dependencies"]
+    declared = [
+        item
+        for item in root_package["metadata"]["requires-dist"]
+        if item["name"] == RUNTIME_PACKAGE
+    ]
+    assert len(declared) == 1
+    assert declared[0]["specifier"] == f"=={version}"
+
+    dev = project["dependency-groups"]["dev"]
+    assert any(isinstance(item, str) and item.startswith(f"{RUNTIME_REPORTER} @ ") for item in dev)
     disabled = set()
     for rule in disabled_rules():
         disabled.update(names(rule))
