@@ -47,7 +47,7 @@ requires-dist = [
     { name = "livingproof-evaluator-scenario", git = "https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git?rev=v1.2.1" },
     { name = "livingproof-scenario-parameters", git = "https://github.com/Living-Proof-Labs/robot-capability-specs?subdirectory=python&rev=v2.2.0" },
     { name = "livingproof-sim-mujoco", git = "https://github.com/Living-Proof-Labs/livingproof-sim-mujoco.git?rev=v2.1.1" },
-    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "pyyaml", specifier = "==6.0.3" },
 ]
 
 [package.metadata.requires-dev]
