@@ -2,10 +2,10 @@
 """Declarative verification definitions: lock, check and the shared workflow steps."""
 
 import json
-from pathlib import Path
 import shutil
 import subprocess
 import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -80,7 +80,11 @@ def _workflow(tmp_path, lock, job="g1-stock", **change):
 def test_lock_records_the_robot_commit_lock_digest_and_releases(tmp_path, robot):
     lock = _lock(tmp_path, _definition(tmp_path))
     head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=robot, capture_output=True, text=True
+        ["git", "rev-parse", "HEAD"],
+        check=False,
+        cwd=robot,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     assert lock["robot"]["commit"] == head
     assert lock["robot"]["configurations"] == ["stock"]

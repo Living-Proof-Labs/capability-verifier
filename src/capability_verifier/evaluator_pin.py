@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """Compare a lock's evaluator pin with the verifier that installs it.
 
@@ -10,11 +9,11 @@ a commit. Both must match the lock, and the tag must resolve to that commit.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import re
 import subprocess
 import sys
 import tomllib
+from pathlib import Path
 
 from capability_verifier.repin import resolve as resolve_tag
 

@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Check-run API failures warn; JUnit failures still fail. No live API calls."""
 
+import importlib.util
+import xml.etree.ElementTree as ET
 from http.client import HTTPMessage
 from io import BytesIO
-import importlib.util
 from pathlib import Path
 from urllib.error import HTTPError
-import xml.etree.ElementTree as ET
 
 import pytest
 import yaml

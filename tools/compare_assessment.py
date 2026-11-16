@@ -11,7 +11,6 @@ from pathlib import Path
 
 from capability_verifier import evaluate
 
-
 DERIVED = ("primary_failure", "secondary_failures")
 
 

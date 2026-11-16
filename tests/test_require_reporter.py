@@ -8,7 +8,7 @@ import pytest
 
 TOOLS = Path(__file__).resolve().parents[1] / "tools"
 sys.path.insert(0, str(TOOLS))
-import run_archives  # noqa: E402
+import run_archives
 
 HINT = "install reporter 1.6.0 (grade was removed in 3.0.0)"
 
@@ -61,6 +61,7 @@ def test_check_demo_exits_with_the_message_not_a_traceback(tmp_path):
             "--junit",
             str(tmp_path / "j.xml"),
         ],
+        check=False,
         capture_output=True,
         text=True,
         env={**os.environ, "PATH": str(tmp_path)},

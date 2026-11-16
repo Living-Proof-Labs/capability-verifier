@@ -120,7 +120,8 @@ def test_the_spellings_section_names_the_patterns():
     assert "A tag without the leading `v` fails" in section
     assert d.SHA.fullmatch("a" * 40) and not d.SHA.fullmatch("A" * 40)
     assert d.FILE_SHA.fullmatch("ab" * 32) and not d.FILE_SHA.fullmatch("sha256:" + "ab" * 32)
-    from capability_verifier.repin import DIGEST as IMAGE, TAG
+    from capability_verifier.repin import DIGEST as IMAGE
+    from capability_verifier.repin import TAG
 
     assert IMAGE.fullmatch("sha256:" + "ab" * 32) and not IMAGE.fullmatch("ab" * 32)
     assert TAG.fullmatch("v1.2.3") and not TAG.fullmatch("1.2.3")

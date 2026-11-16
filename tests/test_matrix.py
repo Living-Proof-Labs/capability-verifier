@@ -8,8 +8,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from export_matrix import export  # noqa: E402
-from matrix_sources import contracts, executors, verify_source  # noqa: E402
+from export_matrix import export
+from matrix_sources import contracts, executors, verify_source
 
 
 @pytest.fixture(scope="module")
