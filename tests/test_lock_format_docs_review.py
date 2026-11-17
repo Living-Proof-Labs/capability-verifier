@@ -176,3 +176,29 @@ def test_the_evaluator_tag_and_robot_path_sections_name_the_rules():
     assert "before `jq`" in path
     assert "When `EVIDENCE_SOURCE` is `caller`" in path
     assert "When `EVIDENCE_SOURCE` is anything else, including empty and `robot`" in path
+
+
+def test_v2_accepts_a_tag_only_run_integrity_pin(tmp_path):
+    """evaluators.livingproof-evaluator-run is optional and tag-only: no commit required."""
+    lock = _minimal_v2()
+    lock["evaluators"]["livingproof-evaluator-run"] = {
+        "repository": "Living-Proof-Labs/livingproof-evaluator-run",
+        "tag": "v1.0.0",
+    }
+    assert _read_error(lock, tmp_path) is None
+
+
+def test_v2_refuses_a_run_integrity_pin_without_a_release_tag(tmp_path):
+    lock = _minimal_v2()
+    lock["evaluators"]["livingproof-evaluator-run"] = {
+        "repository": "Living-Proof-Labs/livingproof-evaluator-run",
+        "tag": "1.0.0",
+    }
+    error = _read_error(lock, tmp_path)
+    assert error is not None
+    assert "evaluators.livingproof-evaluator-run.tag must be a vX.Y.Z release tag" in error
+
+
+def test_v2_still_accepts_a_lock_that_omits_the_run_integrity_pin(tmp_path):
+    """Existing 0.2.0 locks without the pin stay valid; the workflow defaults the tag."""
+    assert _read_error(_minimal_v2(), tmp_path) is None

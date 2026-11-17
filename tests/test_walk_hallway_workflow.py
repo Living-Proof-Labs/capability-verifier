@@ -1694,3 +1694,33 @@ def test_scenario_evaluator_refuses_a_build_that_reports_a_dev_version(tmp_path)
     assert done.returncode != 0, done.stdout
     assert f"reports 0.1.dev1, not the locked {_PIN_TAG}" in done.stderr
     assert "package-marker" not in done.stdout
+
+
+def test_run_integrity_job_is_enabled_and_checks_out_the_v1_0_0_tag():
+    """The job is on by default and checks out evaluators.livingproof-evaluator-run by tag.
+
+    The pin is tag-only (no commit). When the lock omits the pin, plan defaults
+    to Living-Proof-Labs/livingproof-evaluator-run @ v1.0.0 so the job still runs.
+    """
+    import yaml
+
+    refs = _step("Refs from verification.lock.json")
+    assert "run-integrity-commit=" not in refs
+    assert "Living-Proof-Labs/livingproof-evaluator-run" in refs
+    assert 'tag="v1.0.0"' in refs or "tag=v1.0.0" in refs or "tag='v1.0.0'" in refs
+    assert "run-integrity-tag=" in refs
+    assert "run-integrity-commit:" not in STEPS
+    assert "needs.plan.outputs.run-integrity-commit" not in STEPS
+    assert "ref: ${{ needs.plan.outputs.run-integrity-tag }}" in STEPS
+
+    doc = yaml.safe_load(WORKFLOW)
+    job = doc["jobs"]["run-integrity"]
+    assert job["if"] == "${{ !cancelled() }}"
+    assert "run-integrity-commit" not in doc["jobs"]["plan"]["outputs"]
+    checkout = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Run Integrity evaluator at the locked pin"
+    )
+    assert checkout["with"]["ref"] == "${{ needs.plan.outputs.run-integrity-tag }}"
+    assert checkout["with"]["repository"] == "${{ needs.plan.outputs.run-integrity-repository }}"
