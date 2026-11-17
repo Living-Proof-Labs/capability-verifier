@@ -143,3 +143,21 @@ def test_nested_bindings_are_refused_before_anything_is_written(tmp_path, world,
     with pytest.raises(SystemExit, match="sources."):
         _place(lock, robot, tmp_path)
     assert _written(robot) == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".GIT/hooks/post-checkout",
+        "./.Git/config",
+        "VERIFICATION.LOCK.JSON",
+        evidence_lock.CALLER_LOCK_NAME.upper(),
+    ],
+)
+def test_reserved_names_are_refused_in_any_case(tmp_path, path):
+    robot = _robot(tmp_path)
+    lock = _lock_with_sources()
+    lock["sources"]["world"]["path"] = path
+    with pytest.raises(SystemExit, match="reserved"):
+        _place(lock, robot, tmp_path)
+    assert _written(robot) == []
