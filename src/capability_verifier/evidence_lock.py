@@ -38,7 +38,7 @@ def evidence_document(lock: dict) -> dict:
     missing = [key for key in EVIDENCE_FIELDS if key != "format" and key not in lock]
     if missing:
         raise SystemExit(f"verification lock is missing {', '.join(missing)}")
-    return {
+    document = {
         "format": ROBOT_LOCK_FORMAT,
         "scenario": lock["scenario"],
         "releases": lock["releases"],
@@ -46,6 +46,11 @@ def evidence_document(lock: dict) -> dict:
         "configurations": lock["configurations"],
         "plan": lock["plan"],
     }
+    # Source-file bindings the simulator consumes (livingproof-verification#119).
+    # Optional on locks that predate sources; copied through when the caller declares them.
+    if "sources" in lock:
+        document["sources"] = lock["sources"]
+    return document
 
 
 def write_evidence_document(lock: dict, dest: Path) -> dict:
