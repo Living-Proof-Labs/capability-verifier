@@ -13,6 +13,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
+
 FORMAT = "livingproof-verification-refusal/0.1"
 STATUS = "REFUSED"
 CODES = frozenset({"integrity", "schema", "vocabulary"})
@@ -183,53 +185,7 @@ def _vocabulary_refusal(entry: dict, request: dict) -> dict | None:
     )
 
 
-def _is_type(value, expected: str) -> bool:
-    if expected == "object":
-        return isinstance(value, dict)
-    if expected == "array":
-        return isinstance(value, list)
-    if expected == "string":
-        return isinstance(value, str)
-    if expected == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if expected == "number":
-        return isinstance(value, int | float) and not isinstance(value, bool)
-    if expected == "boolean":
-        return isinstance(value, bool)
-    if expected == "null":
-        return value is None
-    return True
-
-
 def _schema_errors(instance, schema) -> list[str]:
-    """Required fields, types, const, enum, properties and additionalProperties.
-
-    Enough to reject a parameter file against the schema the caller passed.
-    This is not a complete JSON Schema implementation.
-    """
-    if not isinstance(schema, dict):
-        return ["schema is not an object"]
-    expected = schema.get("type")
-    if expected is not None and not _is_type(instance, expected):
-        return [f"value is not a {expected}"]
-    if "const" in schema and instance != schema["const"]:
-        return ["value does not match the required const"]
-    if "enum" in schema and instance not in schema["enum"]:
-        return ["value is not one of the allowed values"]
-    problems: list[str] = []
-    if isinstance(instance, dict):
-        required = schema.get("required") or []
-        missing = [name for name in required if name not in instance]
-        if missing:
-            problems.append("missing required fields")
-        properties = schema.get("properties") or {}
-        additional = schema.get("additionalProperties", True)
-        for name, value in instance.items():
-            if name in properties:
-                problems.extend(_schema_errors(value, properties[name]))
-            elif additional is False:
-                problems.append("unexpected field")
-    if isinstance(instance, list) and isinstance(schema.get("items"), dict):
-        for item in instance:
-            problems.extend(_schema_errors(item, schema["items"]))
-    return problems
+    """Draft 2020-12 validation, including $ref, against the schema the caller passed."""
+    validator = Draft202012Validator(schema)
+    return [error.message for error in validator.iter_errors(instance)]

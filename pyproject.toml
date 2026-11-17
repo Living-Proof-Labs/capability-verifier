@@ -14,6 +14,7 @@ dependencies = [
     "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git@v1.3.0",
     "livingproof-scenario-parameters @ git+https://github.com/Living-Proof-Labs/robot-capability-specs@v2.3.0#subdirectory=python",
     "livingproof-sim-mujoco @ git+https://github.com/Living-Proof-Labs/livingproof-sim-mujoco.git@v3.2.5",
+    "jsonschema==4.26.0",
 ]
 
 [project.entry-points."livingproof.capability.commands"]

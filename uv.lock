@@ -28,6 +28,7 @@ name = "capability-verifier"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "jsonschema" },
     { name = "livingproof-evaluator-scenario" },
     { name = "livingproof-scenario-parameters" },
     { name = "livingproof-sim-mujoco" },
@@ -47,6 +48,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "jsonschema", specifier = "==4.26.0" },
     { name = "livingproof-evaluator-scenario", git = "https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario.git?rev=v1.3.0" },
     { name = "livingproof-scenario-parameters", git = "https://github.com/Living-Proof-Labs/robot-capability-specs?subdirectory=python&rev=v2.3.0" },
     { name = "livingproof-sim-mujoco", git = "https://github.com/Living-Proof-Labs/livingproof-sim-mujoco.git?rev=v3.2.5" },
