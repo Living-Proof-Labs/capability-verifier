@@ -42,7 +42,7 @@ def document(
     """A ``livingproof-verification-refusal/0.1`` document."""
     if code not in CODES:
         raise ValueError(f"refusal code must be one of {sorted(CODES)}, not {code!r}")
-    if not isinstance(sentence, str) or not sentence.endswith(".") or sentence.count(".") != 1:
+    if not isinstance(sentence, str) or not sentence.endswith(".") or "\n" in sentence:
         raise ValueError("refusal sentence must be one sentence ending with a period")
     body = {
         "format": FORMAT,
