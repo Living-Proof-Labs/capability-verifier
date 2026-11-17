@@ -56,6 +56,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -787,7 +788,9 @@ def evaluator_install_problems(lock: dict, dest: Path) -> list[str]:
     return evaluator_pin.evaluator_pin_problems(pin["repository"], pin["tag"], pin["commit"], dest)
 
 
-def prepare_evidence_inputs(lock: dict, robot: Path, caller_lock: Path) -> dict:
+def prepare_evidence_inputs(
+    lock: dict, robot: Path, caller_lock: Path, *, work: Path | None = None
+) -> dict:
     """Env for the plan steps.
 
     A ``0.2.0`` lock is the caller's verification lock. It controls the run even when
@@ -812,6 +815,8 @@ def prepare_evidence_inputs(lock: dict, robot: Path, caller_lock: Path) -> dict:
     for line in evidence_lock.evidence_source_lines(digest):
         print(line, file=sys.stderr)
     (robot / evidence_lock.CALLER_LOCK_NAME).write_bytes(caller_lock.read_bytes())
+    work_dir = work if work is not None else Path(tempfile.mkdtemp(prefix="source-files-"))
+    evidence_lock.place_source_files(lock, robot, work_dir)
     return {"EVIDENCE_SOURCE": "caller"}
 
 
@@ -830,7 +835,7 @@ def run(definition: Path, out: Path, *, reporter: str = "docker") -> dict:
     wf = procedure_text(verifier, lock["procedure"])
     gh = {"MUJOCO_GL": "osmesa", "PYOPENGL_PLATFORM": "osmesa"}
     # plan job: the configurations must be in the lock, every ref a released tag.
-    evidence_env = prepare_evidence_inputs(lock, robot, lock_path(definition))
+    evidence_env = prepare_evidence_inputs(lock, robot, lock_path(definition), work=work)
     only = json.dumps(lock["robot"]["configurations"])
     sh(
         step(wf, "Refs from verification.lock.json"),

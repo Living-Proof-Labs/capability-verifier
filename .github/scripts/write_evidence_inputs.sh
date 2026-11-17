@@ -49,7 +49,8 @@ run_writer() {
   PYTHONPATH="$src/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m capability_verifier.evidence_lock "$@"
 }
 
-set -- --lock "$lock_path" --out "$robot/verification.lock.json"
+work=${SOURCE_WORK:-$(mktemp -d)}
+set -- --lock "$lock_path" --out "$robot/verification.lock.json" --robot "$robot" --work "$work"
 if [ "${COPY_CALLER_LOCK:-}" = "1" ]; then
   set -- "$@" --copy-caller "$robot/caller-verification.lock.json"
 fi
