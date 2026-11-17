@@ -172,6 +172,33 @@ def test_corner_bundle_names_walk_corner_and_passes(tmp_path, monkeypatch, bundl
         assert worst["corner-exit-reached"]["observed"] == 11.98
 
 
+def test_declared_corner_bundle_uses_the_walk_corner_description(tmp_path, monkeypatch):
+    """--declared must read walk-corner's description, not walk-hallway's (cv#146, lpv#116)."""
+    monkeypatch.setenv("LIVINGPROOF_VERIFIER_VERSION", "1.4.2")
+    monkeypatch.setenv("SOURCE_COMMIT", "0" * 40)
+    evidence = tmp_path / "evidence"
+    shutil.copytree(CORNER / "go1-playground", evidence)
+    manifest = evidence / "manifest.json"
+    document = json.loads(manifest.read_text())
+    catalog = json.loads((ROOT / "hallway-specs.lock.json").read_text())
+    specs = document["lock"]["content"]["releases"]["specs"]
+    specs["repository"] = "Living-Proof-Labs/robot-capability-specs"
+    specs["files"] = {
+        path: digest
+        for path, digest in catalog["files"].items()
+        if path.startswith("specs/scenarios/walk-corner/") and path.endswith(".json")
+    }
+    manifest.write_text(json.dumps(document))
+    out = tmp_path / "verified"
+    _tool().export(manifest, out, False, "1.1.0", declared=True)
+    bundle = json.loads((out / "bundle" / "manifest.json").read_text())
+    source = bundle["description"]["source"]
+    assert source["path"] == "specs/scenarios/walk-corner/description.json"
+    assert bundle["description"]["scenario"] == {"id": "walk-corner", "revision": "0.1.0"}
+    assert bundle["description"]["world"]["id"] == "hallway-corner"
+    assert bundle["description"]["world"]["content_version"] == "0.1.0"
+
+
 def test_required_evaluators_come_from_the_scenario_parameter_file():
     spec = {"capability": "walk-corner", "revision": "0.1.0"}
     assert evaluate.required_evaluators(spec) == tuple(CORNER_CHECKS)
