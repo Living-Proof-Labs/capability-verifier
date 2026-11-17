@@ -20,8 +20,15 @@ STATUS = "REFUSED"
 CODES = frozenset({"integrity", "schema", "vocabulary"})
 REFUSAL_NAME = "refusal.json"
 GRADE_NAME = "verification.json"
+# Packaged with this module until step 4 moves it into robot-capability-specs.
+SCHEMA_FILE = Path(__file__).with_name("livingproof-verification-refusal-0.1.schema.json")
 # Non-zero: no grade is written. 2 is a refusal, not a crash.
 REFUSAL_EXIT = 2
+
+
+def document_schema() -> dict:
+    """The livingproof-verification-refusal/0.1 JSON Schema shipped with this module."""
+    return json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))
 
 
 def document(
@@ -54,6 +61,7 @@ def emit(out: Path, refusal: dict) -> Path:
     """Write ``refusal.json`` under ``out``. Never writes ``verification.json``."""
     if refusal.get("format") != FORMAT or refusal.get("status") != STATUS:
         raise ValueError("emit requires a livingproof-verification-refusal/0.1 document")
+    Draft202012Validator(document_schema()).validate(refusal)
     dest = Path(out)
     dest.mkdir(parents=True, exist_ok=True)
     path = dest / REFUSAL_NAME
