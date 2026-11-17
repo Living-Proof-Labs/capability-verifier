@@ -153,3 +153,48 @@ def test_assess_does_not_clobber_an_earlier_result(tmp_path):
         elif code != REFUSAL_EXIT:
             errors.append(f"{name}: unexpected exit {code}")
     assert not errors, "; ".join(errors)
+
+
+def test_occupied_destination_never_returns_without_a_new_result(tmp_path):
+    """Returning normally on an occupied destination must produce a new result elsewhere.
+
+    Otherwise the earlier verification.json or refusal.json is the only result a
+    caller can find for this invocation. Raising FileExistsError is the clean refusal.
+    """
+    from capability_verifier.declared import assess
+
+    for name, seed, tamper in (
+        ("pass-grade", _seed_pass, False),
+        ("pass-refuse", _seed_pass, True),
+        ("refusal-grade", _seed_refusal, False),
+        ("refusal-refuse", _seed_refusal, True),
+    ):
+        root = tmp_path / name
+        specs_root, worlds_root, manifest = _setup(root)
+        if tamper:
+            world = worlds_root / "worlds" / "hallway-corner" / "0.1.0" / "world.json"
+            world.write_bytes(world.read_bytes() + b"\n")
+        out = root / "out"
+        seed(out)
+        try:
+            assess(manifest, out, specs_root=specs_root, worlds_root=worlds_root)
+        except FileExistsError:
+            continue
+        fresh = [
+            path
+            for path in root.rglob("*.json")
+            if path.name in (GRADE_NAME, REFUSAL_NAME) and path.parent != out
+        ]
+        assert fresh, f"{name}: returned with only the earlier result in {out.name}"
+
+
+def test_undeclared_parameters_digest_is_an_integrity_refusal(tmp_path):
+    specs_root = base._specs_root(tmp_path, base._parameters(scenario_id="walk-corner"))
+    worlds_root = base._worlds_root(tmp_path)
+    specs = {k: v for k, v in base.SPECS_V230.items() if k not in ("sha256", "files")}
+    manifest = base._evidence(tmp_path, scenario="walk-corner@0.1.0", specs=specs)
+    out = tmp_path / "out"
+    code = base._assess(manifest, out, specs_root=specs_root, worlds_root=worlds_root)
+    assert code == REFUSAL_EXIT, "no declared digest must not self-certify"
+    assert not (out / GRADE_NAME).exists()
+    assert _refusal(out)["code"] == "integrity"
