@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 
 import pytest
 from test_evidence_lock import _robot_lock, v2_from_robot
@@ -112,3 +113,30 @@ def test_prepare_evidence_inputs_places_source_files(tmp_path, capsys, monkeypat
     assert written["sources"] == lock["sources"]
     assert (robot / WORLD_PATH).read_bytes() == WORLD_BYTES
     assert (robot / PARAMETERS_PATH).read_bytes() == PARAMETERS_BYTES
+
+
+def test_place_source_files_refuses_an_in_root_alias_into_git(tmp_path):
+    """A directory symlink to .git is reserved even when the binding path is not lexical .git."""
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    (robot / ".git").mkdir()
+    os.symlink(".git", robot / "alias")
+    lock = _lock_with_sources()
+    lock["sources"]["world"]["path"] = "alias/new-source.json"
+    with pytest.raises(SystemExit, match="sources.world"):
+        evidence_lock.place_source_files(lock, robot, tmp_path / "work", fetch=_fetch)
+    assert not (robot / ".git" / "new-source.json").exists()
+    assert not (robot / PARAMETERS_PATH).exists()
+
+
+def test_place_source_files_refuses_an_in_root_alias_to_the_evidence_lock(tmp_path):
+    """A symlink to the evidence lock is reserved even when the binding names the alias."""
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    os.symlink(evidence_lock.ROBOT_LOCK_NAME, robot / "alias")
+    lock = _lock_with_sources()
+    lock["sources"]["world"]["path"] = "alias"
+    with pytest.raises(SystemExit, match="sources.world"):
+        evidence_lock.place_source_files(lock, robot, tmp_path / "work", fetch=_fetch)
+    assert not (robot / evidence_lock.ROBOT_LOCK_NAME).exists()
+    assert not (robot / PARAMETERS_PATH).exists()
