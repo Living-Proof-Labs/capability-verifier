@@ -14,9 +14,11 @@ locks pinned for the four current robots is copied through.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 FORMAT_V2 = "livingproof-verification-lock/0.2.0"
@@ -51,6 +53,142 @@ def evidence_document(lock: dict) -> dict:
     if "sources" in lock:
         document["sources"] = lock["sources"]
     return document
+
+
+FILE_SHA = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _relative_robot_path(path: object) -> bool:
+    if not isinstance(path, str) or not path:
+        return False
+    return not Path(path).is_absolute() and ".." not in Path(path).parts
+
+
+def _source_entry(lock: dict, kind: str) -> dict | None:
+    sources = lock.get("sources")
+    if not isinstance(sources, dict) or kind not in sources:
+        return None
+    entry = sources[kind]
+    if not isinstance(entry, dict):
+        raise SystemExit(f"sources.{kind} must be an object with path and sha256")
+    if not _relative_robot_path(entry.get("path")):
+        raise SystemExit(
+            f"sources.{kind} path must stay inside the robot repository, got {entry.get('path')!r}"
+        )
+    digest = entry.get("sha256")
+    if not isinstance(digest, str) or not FILE_SHA.fullmatch(digest):
+        raise SystemExit(f"sources.{kind} sha256 must be 64 hex characters, got {digest!r}")
+    return entry
+
+
+def _upstream(lock: dict, kind: str) -> tuple[str, str, str]:
+    """Repository, commit and path of the released file that ``sources.{kind}`` names."""
+    if kind == "world":
+        world = lock["world"]
+        return (
+            world["repository"],
+            world["commit"],
+            f"worlds/{world['id']}/{world['version']}/world.json",
+        )
+    specs = lock["releases"]["specs"]
+    scenario = str(lock["scenario"]).split("@", 1)[0]
+    return (
+        specs["repository"],
+        specs["commit"],
+        f"specs/scenarios/{scenario}/parameters.json",
+    )
+
+
+def _fetch_source_file(repository: str, commit: str, path: str, work: Path) -> bytes:
+    from capability_verifier.definition import show
+
+    return show(repository, commit, path, work)
+
+
+def _reserved_source_path(path: str) -> bool:
+    """True when a binding names the evidence lock, the caller lock, or anything under ``.git/``.
+
+    Comparison is case-insensitive so ``.GIT/…`` or ``VERIFICATION.LOCK.JSON``
+    are reserved on case-insensitive filesystems as well as in CI.
+    """
+    relative = Path(path)
+    reserved = {ROBOT_LOCK_NAME.casefold(), CALLER_LOCK_NAME.casefold()}
+    return relative.as_posix().casefold() in reserved or (
+        relative.parts[:1] and relative.parts[0].casefold() == ".git"
+    )
+
+
+def _file_ancestor(dest: Path, robot: Path) -> Path | None:
+    """An existing ancestor of ``dest`` below ``robot`` that is not a directory."""
+    for parent in dest.parents:
+        if parent == robot:
+            return None
+        if not parent.is_relative_to(robot):
+            return None
+        if parent.exists() and not parent.is_dir():
+            return parent
+    return None
+
+
+def place_source_files(lock: dict, robot: Path, work: Path, *, fetch=None) -> None:
+    """Write ``sources.world`` and ``sources.parameters`` into ``robot``, verifying sha256.
+
+    Locks that omit ``sources`` are left unchanged. Bytes come from the locked
+    world or specs release, then are placed at the binding's path in the robot root.
+    An existing destination is left in place only when it is a regular file with
+    exactly those bytes; reserved paths (lexical and resolved, case-insensitive),
+    colliding or nested bindings, a path through an existing file, and
+    directories are refused before anything is written.
+    """
+    get = fetch or _fetch_source_file
+    robot = robot.resolve()
+    placements: list[tuple[str, dict, Path, bytes]] = []
+    for kind in ("world", "parameters"):
+        entry = _source_entry(lock, kind)
+        if entry is None:
+            continue
+        repository, commit, upstream = _upstream(lock, kind)
+        raw = get(repository, commit, upstream, work)
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest != entry["sha256"]:
+            raise SystemExit(
+                f"sources.{kind} sha256 mismatch for {entry['path']}: "
+                f"expected {entry['sha256']}, got {digest}"
+            )
+        dest = (robot / entry["path"]).resolve()
+        if not dest.is_relative_to(robot):
+            raise SystemExit(
+                f"sources.{kind} path must stay inside the robot repository, got {entry['path']!r}"
+            )
+        placements.append((kind, entry, dest, raw))
+
+    destinations: dict[Path, tuple[str, str]] = {}
+    for kind, entry, dest, raw in placements:
+        path = entry["path"]
+        other = destinations.get(dest)
+        if other is not None:
+            raise SystemExit(f"sources.{kind} path {path} collides with sources.{other[0]}")
+        for other_dest, (other_kind, other_path) in destinations.items():
+            if dest.is_relative_to(other_dest):
+                raise SystemExit(f"sources.{kind} path {path} is inside sources.{other_kind}")
+            if other_dest.is_relative_to(dest):
+                raise SystemExit(f"sources.{other_kind} path {other_path} is inside sources.{kind}")
+        destinations[dest] = (kind, path)
+        resolved = dest.relative_to(robot).as_posix()
+        if _reserved_source_path(path) or _reserved_source_path(resolved):
+            raise SystemExit(f"sources.{kind} path {path} is reserved")
+        if _file_ancestor(dest, robot) is not None:
+            raise SystemExit(f"sources.{kind} path {path} runs through a file")
+        if dest.exists() and dest.is_dir():
+            raise SystemExit(f"sources.{kind} path {path} is a directory")
+        if dest.exists() and not (dest.is_file() and dest.read_bytes() == raw):
+            raise SystemExit(f"sources.{kind} would overwrite existing path {path}")
+
+    for kind, entry, dest, raw in placements:
+        if dest.exists() and dest.is_file() and dest.read_bytes() == raw:
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(raw)
 
 
 def write_evidence_document(lock: dict, dest: Path) -> dict:
@@ -100,6 +238,8 @@ def main(argv=None) -> int:
         "--overridden-sha256",
         help="sha256 of the robot verification.lock.json this write replaces",
     )
+    parser.add_argument("--robot", type=Path, help="robot root that receives source files")
+    parser.add_argument("--work", type=Path, help="checkout directory used to fetch source files")
     args = parser.parse_args(argv)
     try:
         raw = args.lock.read_bytes()
@@ -113,6 +253,9 @@ def main(argv=None) -> int:
         note_overridden_robot_lock(args.out, args.overridden_sha256)
     if args.copy_caller is not None:
         args.copy_caller.write_bytes(raw)
+    if args.robot is not None:
+        work = args.work or Path(tempfile.mkdtemp(prefix="source-files-"))
+        place_source_files(lock, args.robot, work)
     return 0
 
 
