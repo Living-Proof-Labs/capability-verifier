@@ -119,8 +119,8 @@ def place_source_files(lock: dict, robot: Path, work: Path, *, fetch=None) -> No
     Locks that omit ``sources`` are left unchanged. Bytes come from the locked
     world or specs release, then are placed at the binding's path in the robot root.
     An existing destination is left in place only when it is a regular file with
-    exactly those bytes; reserved paths, colliding bindings, and directories
-    are refused before anything is written.
+    exactly those bytes; reserved paths (lexical and resolved), colliding
+    bindings, and directories are refused before anything is written.
     """
     get = fetch or _fetch_source_file
     robot = robot.resolve()
@@ -151,7 +151,8 @@ def place_source_files(lock: dict, robot: Path, work: Path, *, fetch=None) -> No
         if other is not None:
             raise SystemExit(f"sources.{kind} path {path} collides with sources.{other}")
         destinations[dest] = kind
-        if _reserved_source_path(path):
+        resolved = dest.relative_to(robot).as_posix()
+        if _reserved_source_path(path) or _reserved_source_path(resolved):
             raise SystemExit(f"sources.{kind} path {path} is reserved")
         if dest.exists() and dest.is_dir():
             raise SystemExit(f"sources.{kind} path {path} is a directory")
