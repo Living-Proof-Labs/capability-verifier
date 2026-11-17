@@ -18,6 +18,7 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from declared_digest import declare_parameters_digest
 
 from capability_verifier import definition
 
@@ -62,6 +63,7 @@ def _verifier_tree(dest: Path, commit: str | None) -> Path:
 
 def _assess(verifier: Path, evidence: Path):
     shutil.copytree(evidence, verifier / "evidence")
+    declare_parameters_digest(verifier / "evidence", verifier / ".specs-hallway")
     env = os.environ.copy()
     env.update(BUNDLE_VERSION="1.1.0", SOURCE_COMMIT="0" * 40)
     env.setdefault("LIVINGPROOF_VERIFIER_VERSION", "dev")
@@ -152,6 +154,13 @@ def test_finding_fails_the_job_with_the_base_release_verifier(tmp_path):
     without job_exit must not turn a disagreement into a green verify job."""
     evidence = _evidence_step(tmp_path, 4, FIX / "disagree")
     done, report = _assess(_verifier_tree(tmp_path / "v", BASE), evidence)
+    # The current assess step passes --declared, which v1.20.0 does not have. In
+    # CI the workflow and tools are the same verifier commit, so that flag is
+    # only passed to a verifier that accepts it. A mismatched old tool must
+    # still leave the job red.
+    if report is None:
+        assert done.returncode != 0, "verify job is green, so report and PR comment run"
+        return
     assert report["findings"], "the base verifier still records the finding"
     assert done.returncode != 0, "verify job is green, so report and PR comment run"
 

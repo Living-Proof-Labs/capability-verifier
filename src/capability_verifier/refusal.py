@@ -2,9 +2,8 @@
 """livingproof-verification-refusal/0.1 document and emitter.
 
 A pre-grade gate writes this document and exits non-zero instead of writing
-``verification.json``. This module is not called from the live hallway path;
-step 4 of livingproof-verification#100 is the wiring, and it waits on a
-product decision.
+``verification.json``. ``declared.assess`` (livingproof-verification#100 step 4)
+runs these gates against the caller lock's declared catalog.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, SchemaError
 
 FORMAT = "livingproof-verification-refusal/0.1"
 STATUS = "REFUSED"
@@ -140,7 +139,36 @@ def _schema_refusal(entry: dict) -> dict | None:
     path = Path(entry["path"])
     schema = entry.get("schema")
     if schema is None and entry.get("schema_path"):
-        schema = json.loads(Path(entry["schema_path"]).read_text(encoding="utf-8"))
+        source = Path(entry["schema_path"])
+        try:
+            schema = json.loads(source.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return document(
+                code="schema",
+                role=role,
+                declared=declared,
+                sentence="The parameter schema file was not found.",
+            )
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            actual = file_digest(source) if source.is_file() else None
+            return document(
+                code="schema",
+                role=role,
+                declared=declared,
+                actual_digest=actual,
+                sentence="The parameter schema file is not valid JSON.",
+            )
+    try:
+        Draft202012Validator.check_schema(schema)
+    except (SchemaError, TypeError, ValueError, AttributeError):
+        actual = file_digest(path) if path.is_file() else None
+        return document(
+            code="schema",
+            role=role,
+            declared=declared,
+            actual_digest=actual,
+            sentence="The parameter schema is not a valid JSON Schema.",
+        )
     raw = path.read_bytes()
     actual = hashlib.sha256(raw).hexdigest()
     try:

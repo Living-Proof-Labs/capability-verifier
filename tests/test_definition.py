@@ -372,8 +372,8 @@ def test_missing_step_is_an_error():
 def test_an_older_catalog_step_name_still_runs():
     """Locks that check out an older workflow still name the catalog step Walk-hallway."""
     old = IMPLEMENTATION.replace(
-        "Scenario catalog from the verifier's own lock",
-        "Walk-hallway catalog from the verifier's own lock",
+        "Scenario catalog from the declared lock",
+        "Walk-hallway catalog from the declared lock",
     )
     script = d.first_step(old, ("Scenario catalog", "Walk-hallway catalog"))
     assert "fetch_hallway_specs.py" in script

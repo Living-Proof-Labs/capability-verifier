@@ -8,6 +8,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from declared_digest import declare_parameters_digest
+
 from capability_verifier import definition
 
 WORKFLOW = (Path(__file__).parents[1] / ".github/workflows/scenario.yml").read_text()
@@ -466,11 +468,11 @@ def test_scenario_evaluator_is_a_parallel_job_and_the_report_collects_by_pattern
     assert extracted + "\n" == source
 
 
-# The verify job's catalog step. fetch_hallway_specs.py reads hallway-specs.lock.json
-# in the verifier checkout and checks the tag and file hashes. No other command.
+# The verify job's catalog step. fetch_hallway_specs.py --from reads the evidence
+# lock's declared specs commit and world digest. No other command.
 _HALLWAY_CATALOG_STEP = {
-    "name": "Scenario catalog from the verifier's own lock",
-    "run": "uv run --no-sync python tools/fetch_hallway_specs.py",
+    "name": "Scenario catalog from the declared lock",
+    "run": "uv run --no-sync python tools/fetch_hallway_specs.py --from evidence/manifest.json",
 }
 
 
@@ -679,7 +681,7 @@ def test_verify_writes_the_bundle_version_from_the_plan(tmp_path):
     new = _run(tmp_path / "b", script, "uv", "1.1.0")
     assert new == [
         (
-            "run --no-sync python tools/verify_hallway.py --bundle-version 1.1.0 "
+            "run --no-sync python tools/verify_hallway.py --declared --bundle-version 1.1.0 "
             "evidence/manifest.json verified"
         )
     ]
@@ -1064,6 +1066,7 @@ def _run_evidence(tmp_path, code, fixture=None):
 def _run_verify(work: Path):
     """Run the assess step under ``bash -e``, which is how ``definition.sh`` runs it."""
     root = Path(__file__).parents[1]
+    declare_parameters_digest(work / "evidence", root / ".specs-hallway")
     for name in ("src", "tools", "pyproject.toml", "uv.lock", "hallway-specs.lock.json", ".venv"):
         target = root / name
         if target.exists():
