@@ -15,6 +15,13 @@ from pathlib import Path
 from livingproof_evaluator_scenario.checks import EVALUATORS
 
 FORMAT = "livingproof-verification-refusal/0.1"
+ROOT = Path(__file__).parents[1]
+PARAMETERS_SCHEMA = (
+    ROOT / ".specs-hallway" / "specs" / "scenarios" / "scenario-parameters.schema.json"
+)
+HALLWAY_PARAMETERS = (
+    ROOT / ".specs-hallway" / "specs" / "scenarios" / "walk-hallway" / "parameters.json"
+)
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -152,6 +159,26 @@ def test_an_unknown_check_id_exits_nonzero_and_writes_no_grade(tmp_path):
         out,
         code="vocabulary",
         role="checks",
+        declared=_identity(path, digest),
+        actual_digest=digest,
+    )
+
+
+def test_an_empty_scenario_id_is_refused_against_the_official_schema(tmp_path):
+    """The pinned specs v2.3.0 schema rejects an empty scenario.id; the gate must too."""
+    document = json.loads(HALLWAY_PARAMETERS.read_text(encoding="utf-8"))
+    document["scenario"]["id"] = ""
+    path = _write(tmp_path / "parameters.json", document)
+    digest = _sha(path)
+    out = tmp_path / "out"
+    request = _request(
+        path, digest, schema=json.loads(PARAMETERS_SCHEMA.read_text(encoding="utf-8"))
+    )
+    assert _emitter().run(request, out) != 0
+    _assert_refusal(
+        out,
+        code="schema",
+        role="parameters",
         declared=_identity(path, digest),
         actual_digest=digest,
     )
