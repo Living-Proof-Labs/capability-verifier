@@ -18,6 +18,7 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from declared_digest import declare_parameters_digest
 
 from capability_verifier import definition
 
@@ -62,6 +63,7 @@ def _verifier_tree(dest: Path, commit: str | None) -> Path:
 
 def _assess(verifier: Path, evidence: Path):
     shutil.copytree(evidence, verifier / "evidence")
+    declare_parameters_digest(verifier / "evidence", verifier / ".specs-hallway")
     env = os.environ.copy()
     env.update(BUNDLE_VERSION="1.1.0", SOURCE_COMMIT="0" * 40)
     env.setdefault("LIVINGPROOF_VERIFIER_VERSION", "dev")

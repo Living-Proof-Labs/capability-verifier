@@ -8,6 +8,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from declared_digest import declare_parameters_digest
+
 from capability_verifier import definition
 
 WORKFLOW = (Path(__file__).parents[1] / ".github/workflows/scenario.yml").read_text()
@@ -1064,6 +1066,7 @@ def _run_evidence(tmp_path, code, fixture=None):
 def _run_verify(work: Path):
     """Run the assess step under ``bash -e``, which is how ``definition.sh`` runs it."""
     root = Path(__file__).parents[1]
+    declare_parameters_digest(work / "evidence", root / ".specs-hallway")
     for name in ("src", "tools", "pyproject.toml", "uv.lock", "hallway-specs.lock.json", ".venv"):
         target = root / name
         if target.exists():

@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 from capability_verifier import hallway
-from capability_verifier.refusal import GRADE_NAME, file_digest, run
+from capability_verifier.refusal import GRADE_NAME, run
 from capability_verifier.scenario_parameters import checkout, scenario_identity, uses_world
 
 # Check ids this evaluator implements: walk-hallway and walk-corner.
@@ -67,6 +67,7 @@ def assess(
     worlds_root = Path(worlds_root)
     code = refuse(manifest_path, out, specs_root=specs_root, worlds_root=worlds_root)
     if code != 0:
+        (out / GRADE_NAME).unlink(missing_ok=True)
         return code
     with checkout(specs_root, worlds_root):
         result = hallway.verify(manifest_path)
@@ -94,42 +95,50 @@ def _scenario_id(manifest: dict) -> str:
     return identity[0]
 
 
+def _parameters_digest(specs: dict, parameters_path: str) -> str | None:
+    """The declared parameters digest: ``files[<path>]``, else ``sha256``."""
+    files = specs.get("files") if isinstance(specs.get("files"), dict) else {}
+    digest = files.get(parameters_path)
+    if isinstance(digest, str):
+        return digest
+    digest = specs.get("sha256")
+    return digest if isinstance(digest, str) else None
+
+
 def _request(manifest: dict, specs_root: Path, worlds_root: Path) -> dict:
     content = _lock_content(manifest)
     specs = _specs_declared(content)
     scenario_id = _scenario_id(manifest)
-    param_path = specs_root / "specs" / "scenarios" / scenario_id / "parameters.json"
+    rel_path = f"specs/scenarios/{scenario_id}/parameters.json"
+    param_path = specs_root / rel_path
     schema_path = specs_root / "specs" / "scenarios" / "scenario-parameters.schema.json"
-    declared_parameters = {
-        **specs,
-        "path": f"specs/scenarios/{scenario_id}/parameters.json",
-    }
-    files: list[dict] = []
-    if not param_path.is_file() or isinstance(declared_parameters.get("sha256"), str):
-        files.append(
-            {
-                "role": "parameters",
-                "path": param_path,
-                "declared": declared_parameters,
-            }
-        )
+    declared_parameters = {**specs, "path": rel_path}
+    digest = _parameters_digest(specs, rel_path)
+    if digest is not None:
+        declared_parameters["sha256"] = digest
+    # Always include the parameters file. A missing declared digest is an
+    # integrity refusal; do not self-certify from the file's own bytes.
+    files: list[dict] = [
+        {
+            "role": "parameters",
+            "path": param_path,
+            "declared": declared_parameters,
+        }
+    ]
     world_entry = _world_file(manifest, content, worlds_root)
     if world_entry is not None:
         files.append(world_entry)
     request: dict = {"files": files}
     if param_path.is_file():
-        declared = dict(declared_parameters)
-        if not isinstance(declared.get("sha256"), str):
-            declared["sha256"] = file_digest(param_path)
         request["schema"] = {
             "role": "parameters",
             "path": param_path,
             "schema_path": schema_path,
-            "declared": declared,
+            "declared": declared_parameters,
         }
         request["vocabulary"] = {
             "role": "checks",
-            "declared": declared,
+            "declared": declared_parameters,
             "check_ids": _check_ids(param_path),
             "supported_check_ids": list(SUPPORTED_CHECK_IDS),
         }

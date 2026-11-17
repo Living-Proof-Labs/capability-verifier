@@ -78,6 +78,14 @@ def _specs_root(
     return root
 
 
+def _declared_specs(specs: dict, specs_root: Path, scenario_id: str) -> dict:
+    """Declare the parameters digest as real caller locks do in specs.files."""
+    rel = f"specs/scenarios/{scenario_id}/parameters.json"
+    declared = dict(specs)
+    declared["files"] = {**(declared.get("files") or {}), rel: _sha(specs_root / rel)}
+    return declared
+
+
 def _worlds_root(tmp_path: Path) -> Path:
     root = tmp_path / "worlds-checkout"
     dest = root / "worlds" / "hallway-corner" / "0.1.0"
@@ -127,7 +135,11 @@ def test_new_scenario_supplied_as_data_grades_without_catalog_entry(tmp_path, mo
     parameters = _parameters(scenario_id="walk-data")
     specs_root = _specs_root(tmp_path, parameters)
     worlds_root = _worlds_root(tmp_path)
-    manifest = _evidence(tmp_path, scenario="walk-data@0.1.0", specs=SPECS_V230)
+    manifest = _evidence(
+        tmp_path,
+        scenario="walk-data@0.1.0",
+        specs=_declared_specs(SPECS_V230, specs_root, "walk-data"),
+    )
     out = tmp_path / "out"
     _guard_catalog_locks(monkeypatch)
     code = _assess(manifest, out, specs_root=specs_root, worlds_root=worlds_root)
@@ -144,7 +156,11 @@ def test_tampered_bytes_refuse(tmp_path):
     world = worlds_root / "worlds" / "hallway-corner" / "0.1.0" / "world.json"
     world.write_bytes(world.read_bytes() + b"\n")
     assert _sha(world) != CORNER_WORLD_SHA
-    manifest = _evidence(tmp_path, scenario="walk-corner@0.1.0", specs=SPECS_V230)
+    manifest = _evidence(
+        tmp_path,
+        scenario="walk-corner@0.1.0",
+        specs=_declared_specs(SPECS_V230, specs_root, "walk-corner"),
+    )
     out = tmp_path / "out"
     code = _assess(manifest, out, specs_root=specs_root, worlds_root=worlds_root)
     assert code == REFUSAL_EXIT
@@ -158,7 +174,11 @@ def test_schema_reject_refuses(tmp_path):
     parameters = _parameters(scenario_id="walk-corner", empty_id=True)
     specs_root = _specs_root(tmp_path, parameters, path_id="walk-corner")
     worlds_root = _worlds_root(tmp_path)
-    manifest = _evidence(tmp_path, scenario="walk-corner@0.1.0", specs=SPECS_V230)
+    manifest = _evidence(
+        tmp_path,
+        scenario="walk-corner@0.1.0",
+        specs=_declared_specs(SPECS_V230, specs_root, "walk-corner"),
+    )
     out = tmp_path / "out"
     code = _assess(manifest, out, specs_root=specs_root, worlds_root=worlds_root)
     assert code == REFUSAL_EXIT
@@ -172,7 +192,11 @@ def test_unknown_check_id_refuses(tmp_path):
     parameters = _parameters(scenario_id="walk-corner", check_ids=["hallway-hover"])
     specs_root = _specs_root(tmp_path, parameters)
     worlds_root = _worlds_root(tmp_path)
-    manifest = _evidence(tmp_path, scenario="walk-corner@0.1.0", specs=SPECS_V230)
+    manifest = _evidence(
+        tmp_path,
+        scenario="walk-corner@0.1.0",
+        specs=_declared_specs(SPECS_V230, specs_root, "walk-corner"),
+    )
     out = tmp_path / "out"
     code = _assess(manifest, out, specs_root=specs_root, worlds_root=worlds_root)
     assert code == REFUSAL_EXIT
@@ -206,7 +230,11 @@ def test_corner_v2_3_0_still_grades(tmp_path, monkeypatch):
     parameters = json.loads(CORNER_PARAMETERS.read_text(encoding="utf-8"))
     specs_root = _specs_root(tmp_path, parameters)
     worlds_root = _worlds_root(tmp_path)
-    manifest = _evidence(tmp_path, scenario="walk-corner@0.1.0", specs=SPECS_V230)
+    manifest = _evidence(
+        tmp_path,
+        scenario="walk-corner@0.1.0",
+        specs=_declared_specs(SPECS_V230, specs_root, "walk-corner"),
+    )
     out = tmp_path / "out"
     _guard_catalog_locks(monkeypatch)
     code = _assess(manifest, out, specs_root=specs_root, worlds_root=worlds_root)
