@@ -85,6 +85,8 @@ V2_SHAPE = {
     "world": ("id", "version"),
     "configurations": (),
     "evaluators": ("livingproof-evaluator-scenario",),
+    # TODO: pin evaluators.livingproof-evaluator-run once
+    # livingproof-evaluator-run has a tagged release (PR #4 is not released yet).
 }
 DEFINITION_FORMAT = "livingproof-verification-definition/0.1.0"
 # walk-hallway.yml is the thin wrapper existing callers keep. scenario.yml runs whatever
