@@ -80,6 +80,25 @@ def test_written_evidence_inputs_equal_the_robot_file(tmp_path):
     assert json.loads(dest.read_text()) == document
 
 
+def test_evidence_document_copies_source_file_bindings(tmp_path):
+    """A 0.2.0 caller lock's sources.world and sources.parameters must reach the evidence lock.
+
+    livingproof-verification#119: the translation must not drop these bindings.
+    """
+    sources = {
+        "world": {"path": "world.json", "sha256": "11" * 32},
+        "parameters": {"path": "parameters.json", "sha256": "22" * 32},
+    }
+    lock = v2_from_robot(_robot_lock())
+    lock["sources"] = sources
+    document = evidence_lock.evidence_document(lock)
+    assert document["sources"] == sources
+    dest = tmp_path / "verification.lock.json"
+    written = evidence_lock.write_evidence_document(lock, dest)
+    assert written["sources"] == sources
+    assert json.loads(dest.read_text())["sources"] == sources
+
+
 def test_a_0_1_0_lock_is_not_an_evidence_source():
     with pytest.raises(SystemExit, match="0\\.2\\.0"):
         evidence_lock.evidence_document({"format": d.FORMAT, "releases": {}})
