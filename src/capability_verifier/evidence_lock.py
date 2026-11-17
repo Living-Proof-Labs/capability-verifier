@@ -106,11 +106,28 @@ def _fetch_source_file(repository: str, commit: str, path: str, work: Path) -> b
 
 
 def _reserved_source_path(path: str) -> bool:
-    """True when a binding names the evidence lock, the caller lock, or anything under ``.git/``."""
+    """True when a binding names the evidence lock, the caller lock, or anything under ``.git/``.
+
+    Comparison is case-insensitive so ``.GIT/…`` or ``VERIFICATION.LOCK.JSON``
+    are reserved on case-insensitive filesystems as well as in CI.
+    """
     relative = Path(path)
-    return relative.as_posix() in {ROBOT_LOCK_NAME, CALLER_LOCK_NAME} or relative.parts[:1] == (
-        ".git",
+    reserved = {ROBOT_LOCK_NAME.casefold(), CALLER_LOCK_NAME.casefold()}
+    return relative.as_posix().casefold() in reserved or (
+        relative.parts[:1] and relative.parts[0].casefold() == ".git"
     )
+
+
+def _file_ancestor(dest: Path, robot: Path) -> Path | None:
+    """An existing ancestor of ``dest`` below ``robot`` that is not a directory."""
+    for parent in dest.parents:
+        if parent == robot:
+            return None
+        if not parent.is_relative_to(robot):
+            return None
+        if parent.exists() and not parent.is_dir():
+            return parent
+    return None
 
 
 def place_source_files(lock: dict, robot: Path, work: Path, *, fetch=None) -> None:
@@ -119,8 +136,9 @@ def place_source_files(lock: dict, robot: Path, work: Path, *, fetch=None) -> No
     Locks that omit ``sources`` are left unchanged. Bytes come from the locked
     world or specs release, then are placed at the binding's path in the robot root.
     An existing destination is left in place only when it is a regular file with
-    exactly those bytes; reserved paths (lexical and resolved), colliding
-    bindings, and directories are refused before anything is written.
+    exactly those bytes; reserved paths (lexical and resolved, case-insensitive),
+    colliding or nested bindings, a path through an existing file, and
+    directories are refused before anything is written.
     """
     get = fetch or _fetch_source_file
     robot = robot.resolve()
@@ -144,16 +162,23 @@ def place_source_files(lock: dict, robot: Path, work: Path, *, fetch=None) -> No
             )
         placements.append((kind, entry, dest, raw))
 
-    destinations: dict[Path, str] = {}
+    destinations: dict[Path, tuple[str, str]] = {}
     for kind, entry, dest, raw in placements:
         path = entry["path"]
         other = destinations.get(dest)
         if other is not None:
-            raise SystemExit(f"sources.{kind} path {path} collides with sources.{other}")
-        destinations[dest] = kind
+            raise SystemExit(f"sources.{kind} path {path} collides with sources.{other[0]}")
+        for other_dest, (other_kind, other_path) in destinations.items():
+            if dest.is_relative_to(other_dest):
+                raise SystemExit(f"sources.{kind} path {path} is inside sources.{other_kind}")
+            if other_dest.is_relative_to(dest):
+                raise SystemExit(f"sources.{other_kind} path {other_path} is inside sources.{kind}")
+        destinations[dest] = (kind, path)
         resolved = dest.relative_to(robot).as_posix()
         if _reserved_source_path(path) or _reserved_source_path(resolved):
             raise SystemExit(f"sources.{kind} path {path} is reserved")
+        if _file_ancestor(dest, robot) is not None:
+            raise SystemExit(f"sources.{kind} path {path} runs through a file")
         if dest.exists() and dest.is_dir():
             raise SystemExit(f"sources.{kind} path {path} is a directory")
         if dest.exists() and not (dest.is_file() and dest.read_bytes() == raw):
