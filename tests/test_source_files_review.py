@@ -111,3 +111,35 @@ def test_a_path_that_names_a_directory_is_refused_clearly(tmp_path, path):
     lock["sources"]["world"]["path"] = path
     with pytest.raises(SystemExit, match="sources.world"):
         _place(lock, robot, tmp_path)
+
+
+def _written(robot):
+    return sorted(p.relative_to(robot).as_posix() for p in robot.rglob("*") if p.is_file())
+
+
+def test_a_path_through_an_existing_file_is_refused_clearly(tmp_path):
+    robot = _robot(tmp_path)
+    (robot / "pyproject.toml").write_text("[project]\n")
+    lock = _lock_with_sources()
+    lock["sources"]["world"]["path"] = "pyproject.toml/world.json"
+    with pytest.raises(SystemExit, match="sources.world"):
+        _place(lock, robot, tmp_path)
+    assert _written(robot) == ["pyproject.toml"]
+    assert (robot / "pyproject.toml").read_text() == "[project]\n"
+
+
+@pytest.mark.parametrize(
+    "world,parameters",
+    [
+        pytest.param("locked", "locked/parameters.json", id="world-is-parent-of-parameters"),
+        pytest.param("locked/world.json", "locked", id="parameters-is-parent-of-world"),
+    ],
+)
+def test_nested_bindings_are_refused_before_anything_is_written(tmp_path, world, parameters):
+    robot = _robot(tmp_path)
+    lock = _lock_with_sources()
+    lock["sources"]["world"]["path"] = world
+    lock["sources"]["parameters"]["path"] = parameters
+    with pytest.raises(SystemExit, match="sources."):
+        _place(lock, robot, tmp_path)
+    assert _written(robot) == []
