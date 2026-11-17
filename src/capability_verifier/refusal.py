@@ -2,9 +2,8 @@
 """livingproof-verification-refusal/0.1 document and emitter.
 
 A pre-grade gate writes this document and exits non-zero instead of writing
-``verification.json``. This module is not called from the live hallway path;
-step 4 of livingproof-verification#100 is the wiring, and it waits on a
-product decision.
+``verification.json``. ``declared.assess`` (livingproof-verification#100 step 4)
+runs these gates against the caller lock's declared catalog.
 """
 
 from __future__ import annotations

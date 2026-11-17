@@ -29,7 +29,8 @@ import threading
 from pathlib import Path
 
 from capability_verifier import evaluate, hallway
-from capability_verifier.scenario_parameters import scenario_identity
+from capability_verifier.declared import refuse as refuse_declared
+from capability_verifier.scenario_parameters import checkout, scenario_identity
 
 ROOT = Path(__file__).resolve().parents[1]
 # specs #30: human-readable mission and world text, passed through as-is into the bundle's
@@ -99,6 +100,7 @@ def export(
     prototype: bool = False,
     bundle_version: str = "1.0.0",
     description_path: Path = DESCRIPTION,
+    declared: bool = False,
 ) -> dict:
     """Build into a sibling temporary directory and move it to ``out`` only on success."""
     out = Path(out)
@@ -119,8 +121,18 @@ def export(
         signal.signal(signal.SIGTERM, terminated)
     try:
         result = _export(
-            Path(manifest_path), staging, prototype, producer_id, bundle_version, description_path
+            Path(manifest_path),
+            staging,
+            prototype,
+            producer_id,
+            bundle_version,
+            description_path,
+            declared,
         )
+    except DeclaredRefusal as e:
+        staging.chmod(0o755)
+        staging.rename(out)
+        raise SystemExit(e.code) from None
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -231,6 +243,33 @@ def write_unsupported_report(out: Path, result: dict, evidence: dict) -> None:
     (out / "verification.json").write_text(json.dumps(result, indent=2) + "\n")
 
 
+class DeclaredRefusal(Exception):
+    """A caller-lock catalog refusal was written; keep the staging directory."""
+
+    def __init__(self, code: int):
+        self.code = code
+
+
+def _catalog_lock(evidence: dict) -> dict:
+    """The bundle spec identity from the evidence's declared specs, not the verifier catalog."""
+    lock = evidence.get("lock") if isinstance(evidence.get("lock"), dict) else {}
+    content = lock.get("content") if isinstance(lock.get("content"), dict) else {}
+    releases = content.get("releases") if isinstance(content.get("releases"), dict) else {}
+    specs = releases.get("specs") if isinstance(releases.get("specs"), dict) else {}
+    repository = specs.get("repository") or ""
+    if repository and not str(repository).startswith("http"):
+        repository = f"https://github.com/{repository}"
+    identity = scenario_identity(evidence)
+    capability, revision = identity if identity is not None else ("walk-hallway", "0.1.0")
+    return {
+        "repository": repository,
+        "tag": specs.get("tag") or "",
+        "commit": specs.get("commit") or "",
+        "capability": capability,
+        "revision": revision,
+    }
+
+
 def _export(
     manifest_path: Path,
     out: Path,
@@ -238,12 +277,35 @@ def _export(
     producer_id,
     bundle_version: str = "1.0.0",
     description_path: Path = DESCRIPTION,
+    declared: bool = False,
 ) -> dict:
-    lock = json.loads((ROOT / "hallway-specs.lock.json").read_text())
+    if declared:
+        code = refuse_declared(
+            manifest_path,
+            out,
+            specs_root=ROOT / ".specs-hallway",
+            worlds_root=ROOT / ".worlds",
+        )
+        if code:
+            raise DeclaredRefusal(code)
+        evidence = json.loads(manifest_path.read_text())
+        lock = _catalog_lock(evidence)
+    else:
+        lock = json.loads((ROOT / "hallway-specs.lock.json").read_text())
     released = re.fullmatch(r"v\d+\.\d+\.\d+", lock["tag"]) is not None
-    if not released and not prototype:
+    # The UNRELEASED gate is for the verifier's own catalog lock, not a caller pin.
+    if not declared and not released and not prototype:
         raise SystemExit("hallway lock is UNRELEASED; pass --prototype to export a labelled bundle")
-    result = hallway.verify(manifest_path)  # raises ManifestError for JSON, fields, plan, trials
+    if declared:
+        # Write the declared tag and commit as they are; do not invent v0.0.0.
+        released = True
+    if declared:
+        with checkout(ROOT / ".specs-hallway", ROOT / ".worlds"):
+            result = hallway.verify(manifest_path)
+    else:
+        result = hallway.verify(
+            manifest_path
+        )  # raises ManifestError for JSON, fields, plan, trials
     if result["summary"]["grade"] == hallway.UNSUPPORTED:
         # The reporter bundle has no UNSUPPORTED status. The published report is still written.
         evidence = json.loads(manifest_path.read_text())
@@ -426,6 +488,11 @@ if __name__ == "__main__":
     p.add_argument("out", type=Path)
     p.add_argument("--prototype", action="store_true")
     p.add_argument(
+        "--declared",
+        action="store_true",
+        help="assess against the evidence lock's declared specs commit and world digest",
+    )
+    p.add_argument(
         "--bundle-version",
         choices=BUNDLE_VERSIONS,
         default="1.0.0",
@@ -434,7 +501,7 @@ if __name__ == "__main__":
     )
     a = p.parse_args()
     try:
-        r = export(a.manifest, a.out, a.prototype, a.bundle_version)
+        r = export(a.manifest, a.out, a.prototype, a.bundle_version, declared=a.declared)
     except hallway.ManifestError as e:
         raise SystemExit(f"invalid evidence manifest {a.manifest}: {e}") from None
     except ProducerError as e:

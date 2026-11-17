@@ -11,6 +11,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from livingproof_scenario_parameters import ScenarioParameterError, reference_errors, resolve
@@ -23,6 +25,20 @@ FROZEN_EVIDENCE = {
 # The frozen scenario: graded on the frozen straight route, with no world document.
 FROZEN_SCENARIO = "walk-hallway"
 _CACHE: dict[str, dict] = {}
+_DECLARED_SPECS: ContextVar[Path | None] = ContextVar("declared_specs_root", default=None)
+_DECLARED_WORLDS: ContextVar[Path | None] = ContextVar("declared_worlds_root", default=None)
+
+
+@contextmanager
+def checkout(specs_root: Path | None = None, worlds_root: Path | None = None):
+    """Read parameters and world documents from a caller-lock checkout."""
+    t1 = _DECLARED_SPECS.set(None if specs_root is None else Path(specs_root))
+    t2 = _DECLARED_WORLDS.set(None if worlds_root is None else Path(worlds_root))
+    try:
+        yield
+    finally:
+        _DECLARED_SPECS.reset(t1)
+        _DECLARED_WORLDS.reset(t2)
 
 
 def repo_root() -> Path:
@@ -52,6 +68,9 @@ def scenario_identity(manifest: dict) -> tuple[str, str] | None:
 
 
 def parameters_path(scenario_id: str, root: Path | None = None) -> Path:
+    catalog = _DECLARED_SPECS.get()
+    if catalog is not None:
+        return catalog / "specs" / "scenarios" / scenario_id / "parameters.json"
     base = repo_root() if root is None else root
     return base / ".specs-hallway" / "specs" / "scenarios" / scenario_id / "parameters.json"
 
@@ -106,6 +125,9 @@ def command_speed(manifest: dict, root: Path | None = None):
 
 
 def worlds_root(root: Path | None = None) -> Path:
+    catalog = _DECLARED_WORLDS.get()
+    if catalog is not None:
+        return catalog
     return (repo_root() if root is None else root) / ".worlds"
 
 

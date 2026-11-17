@@ -467,12 +467,12 @@ jobs:
       - if: needs.plan.outputs.verifier-image == ''
         run: python3 -m pip install --user uv==0.13.6
       - run: uv sync --locked
-      - name: Scenario catalog from the verifier's own lock
-        run: uv run --no-sync python tools/fetch_hallway_specs.py
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
           path: evidence
+      - name: Scenario catalog from the declared lock
+        run: uv run --no-sync python tools/fetch_hallway_specs.py --from evidence/manifest.json
       - name: Assess every trial (bundle 1.1.0 also carries the verifier's decisions)
         # The locked verifier writes the summary. This step then exits 4 when the
         # manifest carries a test-system finding, including when that verifier returns 0.
@@ -481,7 +481,7 @@ jobs:
           BUNDLE_VERSION: ${{ needs.plan.outputs.bundle-version }}
         run: |
           set +e
-          PYTHONPATH=src uv run --no-sync python tools/verify_hallway.py --bundle-version "$BUNDLE_VERSION" evidence/manifest.json verified
+          PYTHONPATH=src uv run --no-sync python tools/verify_hallway.py --declared --bundle-version "$BUNDLE_VERSION" evidence/manifest.json verified
           code=$?
           set -e
           if [ "$code" -ne 0 ]; then
@@ -531,12 +531,12 @@ jobs:
       - if: needs.plan.outputs.verifier-image == ''
         run: python3 -m pip install --user uv==0.13.6
       - run: uv sync --locked
-      - name: Scenario catalog from the verifier's own lock
-        run: uv run --no-sync python tools/fetch_hallway_specs.py
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
           path: evidence
+      - name: Scenario catalog from the declared lock
+        run: uv run --no-sync python tools/fetch_hallway_specs.py --from evidence/manifest.json
       - name: Scenario evaluator package at the locked pin
         if: needs.plan.outputs.evaluator-commit != ''
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
