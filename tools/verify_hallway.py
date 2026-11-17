@@ -338,8 +338,11 @@ def _export(
     }
     conf = evidence["configuration"]
     # The catalog commit is stated only for the locked catalog's own file.
+    # Choose the file for this run's scenario. The default path is walk-hallway's;
+    # under --declared, lock.capability is already that scenario, so a mismatch
+    # check would skip the remap (capability-verifier#146).
     catalog = Path(description_path) == DESCRIPTION
-    if catalog and capability != lock["capability"]:
+    if catalog:
         description_path = DESCRIPTION.parents[1] / capability / "description.json"
     text = description(description_path, lock["commit"] if catalog else None)
     if text is not None and (
