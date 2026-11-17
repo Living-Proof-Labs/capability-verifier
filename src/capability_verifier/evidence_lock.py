@@ -105,14 +105,26 @@ def _fetch_source_file(repository: str, commit: str, path: str, work: Path) -> b
     return show(repository, commit, path, work)
 
 
+def _reserved_source_path(path: str) -> bool:
+    """True when a binding names the evidence lock, the caller lock, or anything under ``.git/``."""
+    relative = Path(path)
+    return relative.as_posix() in {ROBOT_LOCK_NAME, CALLER_LOCK_NAME} or relative.parts[:1] == (
+        ".git",
+    )
+
+
 def place_source_files(lock: dict, robot: Path, work: Path, *, fetch=None) -> None:
     """Write ``sources.world`` and ``sources.parameters`` into ``robot``, verifying sha256.
 
     Locks that omit ``sources`` are left unchanged. Bytes come from the locked
     world or specs release, then are placed at the binding's path in the robot root.
+    An existing destination is left in place only when it is a regular file with
+    exactly those bytes; reserved paths, colliding bindings, and directories
+    are refused before anything is written.
     """
     get = fetch or _fetch_source_file
     robot = robot.resolve()
+    placements: list[tuple[str, dict, Path, bytes]] = []
     for kind in ("world", "parameters"):
         entry = _source_entry(lock, kind)
         if entry is None:
@@ -130,6 +142,25 @@ def place_source_files(lock: dict, robot: Path, work: Path, *, fetch=None) -> No
             raise SystemExit(
                 f"sources.{kind} path must stay inside the robot repository, got {entry['path']!r}"
             )
+        placements.append((kind, entry, dest, raw))
+
+    destinations: dict[Path, str] = {}
+    for kind, entry, dest, raw in placements:
+        path = entry["path"]
+        other = destinations.get(dest)
+        if other is not None:
+            raise SystemExit(f"sources.{kind} path {path} collides with sources.{other}")
+        destinations[dest] = kind
+        if _reserved_source_path(path):
+            raise SystemExit(f"sources.{kind} path {path} is reserved")
+        if dest.exists() and dest.is_dir():
+            raise SystemExit(f"sources.{kind} path {path} is a directory")
+        if dest.exists() and not (dest.is_file() and dest.read_bytes() == raw):
+            raise SystemExit(f"sources.{kind} would overwrite existing path {path}")
+
+    for kind, entry, dest, raw in placements:
+        if dest.exists() and dest.is_file() and dest.read_bytes() == raw:
+            continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(raw)
 
