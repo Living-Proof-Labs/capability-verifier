@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Living-Proof-Labs/capability-verifier/src/capability_verifier/livingproof-verification-refusal-0.1.schema.json",
+  "title": "livingproof-verification-refusal/0.1",
+  "description": "A pre-grade refusal written instead of verification.json. status is REFUSED, code is integrity, schema or vocabulary, and sentence is one sentence (it ends with a period and contains no newline). actual_digest is present only when a file was read. This schema lives with the capability-verifier emitter until step 4 of livingproof-verification#100 moves it into robot-capability-specs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "status", "code", "role", "declared", "sentence"],
+  "properties": {
+    "format": {
+      "const": "livingproof-verification-refusal/0.1"
+    },
+    "status": {
+      "const": "REFUSED"
+    },
+    "code": {
+      "type": "string",
+      "enum": ["integrity", "schema", "vocabulary"]
+    },
+    "role": {
+      "type": "string",
+      "minLength": 1
+    },
+    "declared": {
+      "type": "object"
+    },
+    "actual_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "sentence": {
+      "type": "string",
+      "pattern": "^[^\\n]+\\.$"
+    }
+  }
+}
