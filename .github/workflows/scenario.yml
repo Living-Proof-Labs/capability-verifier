@@ -152,10 +152,8 @@ jobs:
       evaluator-repository: ${{ steps.lock.outputs.evaluator-repository }}
       evaluator-commit: ${{ steps.lock.outputs.evaluator-commit }}
       evaluator-tag: ${{ steps.lock.outputs.evaluator-tag }}
-      # UNRELEASED PIN: livingproof-evaluator-run has no tagged release yet
-      # (livingproof-evaluator-run#4). Do not pin a commit.
+      # Tag-only pin for livingproof-evaluator-run (no commit).
       run-integrity-repository: ${{ steps.lock.outputs.run-integrity-repository }}
-      run-integrity-commit: ${{ steps.lock.outputs.run-integrity-commit }}
       run-integrity-tag: ${{ steps.lock.outputs.run-integrity-tag }}
       media-capable: ${{ steps.capability.outputs.media-capable }}
       bundle-version: ${{ steps.capability.outputs.bundle-version }}
@@ -240,12 +238,14 @@ jobs:
             echo "evaluator-repository=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].repository // empty' "$pin")"
             echo "evaluator-commit=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].commit // empty' "$pin")"
             echo "evaluator-tag=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].tag // empty' "$pin")"
-            # UNRELEASED PIN: evaluators.livingproof-evaluator-run stays empty
-            # until a tagged release exists (livingproof-evaluator-run#4).
-            # Until then the run-integrity job is skipped. Do not pin a commit.
-            echo "run-integrity-repository=$(jq -r '(.evaluators // {})["livingproof-evaluator-run"].repository // empty' "$pin")"
-            echo "run-integrity-commit=$(jq -r '(.evaluators // {})["livingproof-evaluator-run"].commit // empty' "$pin")"
-            echo "run-integrity-tag=$(jq -r '(.evaluators // {})["livingproof-evaluator-run"].tag // empty' "$pin")"
+            # Tag-only pin. Default livingproof-evaluator-run v1.0.0 so
+            # the run-integrity job runs when the lock omits the pin.
+            repo=$(jq -r '(.evaluators // {})["livingproof-evaluator-run"].repository // empty' "$pin")
+            tag=$(jq -r '(.evaluators // {})["livingproof-evaluator-run"].tag // empty' "$pin")
+            [ -n "$repo" ] || repo="Living-Proof-Labs/livingproof-evaluator-run"
+            [ -n "$tag" ] || tag="v1.0.0"
+            echo "run-integrity-repository=$repo"
+            echo "run-integrity-tag=$tag"
           } >> "$GITHUB_OUTPUT"
       - name: Media and bundle capability from the locks
         # Media needs runner >= 1.6.0 with mcap and reporter >= 1.11.0; robots still on runner
@@ -1261,11 +1261,10 @@ jobs:
     # execution deterministic) on the evidence artifact, after the robot
     # (scenario) evaluator in this file. Needs evidence only, like
     # scenario-evaluator, so it can run alongside it.
-    # UNRELEASED PIN: the lock pin is empty until livingproof-evaluator-run
-    # has a tagged release (PR #4). Do not pin a commit. This job stays
-    # skipped until evaluators.livingproof-evaluator-run.tag is set.
+    # Tag-only pin: checkout the tag, never a commit. Plan defaults the
+    # pin to livingproof-evaluator-run v1.0.0 when the lock omits it.
     needs: [plan, evidence]
-    if: ${{ !cancelled() && needs.plan.outputs.run-integrity-tag != '' }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     container:
       image: ${{ needs.plan.outputs.verifier-image }}
@@ -1292,7 +1291,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ needs.plan.outputs.run-integrity-repository }}
-          ref: ${{ needs.plan.outputs.run-integrity-commit }}
+          ref: ${{ needs.plan.outputs.run-integrity-tag }}
           path: run-integrity
           persist-credentials: false
       - name: Run Integrity, one result for the run

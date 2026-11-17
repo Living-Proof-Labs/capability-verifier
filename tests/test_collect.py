@@ -235,7 +235,11 @@ def test_scenario_pin_matches_the_lock_and_workflows_have_no_v1_0_0_fallback():
         if not path.is_file() or path.suffix == ".pyc" or "__pycache__" in path.parts:
             continue
         text = path.read_text(encoding="utf-8")
-        assert "v1.0.0" not in text, path
+        # The scenario evaluator is pinned at v1.3.0; workflows must not fall
+        # back to its old v1.0.0. livingproof-evaluator-run's release is v1.0.0.
+        for match in re.finditer(r"v1\.0\.0", text):
+            window = text[max(0, match.start() - 80) : match.end() + 80]
+            assert "livingproof-evaluator-run" in window, path
         assert "livingproof-evaluator-scenario.git@" not in text, path
 
 

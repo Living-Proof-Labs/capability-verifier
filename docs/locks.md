@@ -197,6 +197,12 @@ configuration sha256s.
 | `evaluators.livingproof-evaluator-scenario.tag` | `vX.Y.Z`. The tag must resolve to the locked commit. |
 | `evaluators.livingproof-evaluator-scenario.commit` | 40 lowercase hexadecimal characters |
 
+`evaluators.livingproof-evaluator-run` is optional. When present it is a
+tag-only pin: `repository` (`OWNER/NAME`) and `tag` (`vX.Y.Z`). There is
+no commit field. When the lock omits the pin, the walk-hallway
+run-integrity job defaults to `Living-Proof-Labs/livingproof-evaluator-run`
+at `v1.0.0`.
+
 `releases.specs.digest`, `releases.runner.digest`, `releases.verifier.digest`
 and `evaluators.livingproof-evaluator-scenario.digest` are optional. A `digest`
 must match the `sha256:` spelling. `releases.specs.image`, `releases.runner.image`,
