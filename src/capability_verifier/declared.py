@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 from capability_verifier import hallway
-from capability_verifier.refusal import GRADE_NAME, run
+from capability_verifier.refusal import GRADE_NAME, REFUSAL_NAME, run
 from capability_verifier.scenario_parameters import checkout, scenario_identity, uses_world
 
 # Check ids this evaluator implements: walk-hallway and walk-corner.
@@ -60,14 +60,18 @@ def assess(
 
     On refusal: write ``refusal.json``, write no ``verification.json``, return 2.
     On success: write ``verification.json`` and return 0.
+    If ``out`` already holds a ``verification.json`` or ``refusal.json``, raise
+    ``FileExistsError`` and write or delete nothing (Aaron's never-clobber
+    decision on livingproof-verification#100).
     """
     manifest_path = Path(manifest_path)
     out = Path(out)
     specs_root = Path(specs_root)
     worlds_root = Path(worlds_root)
+    if (out / GRADE_NAME).is_file() or (out / REFUSAL_NAME).is_file():
+        raise FileExistsError(f"{out} already holds a verification or refusal")
     code = refuse(manifest_path, out, specs_root=specs_root, worlds_root=worlds_root)
     if code != 0:
-        (out / GRADE_NAME).unlink(missing_ok=True)
         return code
     with checkout(specs_root, worlds_root):
         result = hallway.verify(manifest_path)
