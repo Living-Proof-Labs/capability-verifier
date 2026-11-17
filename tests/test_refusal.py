@@ -12,6 +12,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
 from livingproof_evaluator_scenario.checks import EVALUATORS
 
 FORMAT = "livingproof-verification-refusal/0.1"
@@ -182,3 +183,46 @@ def test_an_empty_scenario_id_is_refused_against_the_official_schema(tmp_path):
         declared=_identity(path, digest),
         actual_digest=digest,
     )
+
+
+def _emitted_refusals(tmp_path: Path) -> list[dict]:
+    """Every refusal shape the emitter writes today: both integrity forms, schema, vocabulary."""
+    refusal = _emitter()
+    documents = []
+
+    tampered = _write(tmp_path / "tampered.json", _valid_parameters())
+    out = tmp_path / "out-tampered"
+    request = _request(tampered, "0" * 64)
+    assert refusal.run(request, out) != 0
+    documents.append(json.loads((out / "refusal.json").read_text()))
+
+    present = _write(tmp_path / "present.json", _valid_parameters())
+    missing_req = _request(present, _sha(present))
+    missing_req["files"][0]["path"] = str(tmp_path / "absent.json")
+    out = tmp_path / "out-missing"
+    assert refusal.run(missing_req, out) != 0
+    documents.append(json.loads((out / "refusal.json").read_text()))
+
+    invalid = _write(tmp_path / "invalid.json", {"format": "livingproof-scenario-parameters/0.1"})
+    out = tmp_path / "out-schema"
+    request = _request(invalid, _sha(invalid), check_ids=["hallway-exit-reached"])
+    assert refusal.run(request, out) != 0
+    documents.append(json.loads((out / "refusal.json").read_text()))
+
+    unknown = _write(tmp_path / "unknown.json", _valid_parameters(["hallway-hover"]))
+    out = tmp_path / "out-vocabulary"
+    request = _request(unknown, _sha(unknown), check_ids=["hallway-hover"])
+    assert refusal.run(request, out) != 0
+    documents.append(json.loads((out / "refusal.json").read_text()))
+
+    return documents
+
+
+def test_every_emitted_refusal_matches_the_document_schema(tmp_path):
+    schema = _emitter().document_schema()
+    validator = Draft202012Validator(schema)
+    documents = _emitted_refusals(tmp_path)
+    assert {document["code"] for document in documents} == {"integrity", "schema", "vocabulary"}
+    assert sum(1 for document in documents if document["code"] == "integrity") == 2
+    for document in documents:
+        validator.validate(document)
