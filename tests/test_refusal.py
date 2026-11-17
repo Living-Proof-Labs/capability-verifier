@@ -12,6 +12,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
 from jsonschema import Draft202012Validator
 from livingproof_evaluator_scenario.checks import EVALUATORS
 
@@ -108,7 +109,7 @@ def _assert_refusal(out: Path, *, code: str, role: str, declared: dict, actual_d
     assert document["role"] == role
     assert document["declared"] == declared
     assert document["sentence"].endswith(".")
-    assert document["sentence"].count(".") == 1
+    assert "\n" not in document["sentence"]
     if actual_digest is None:
         assert "actual_digest" not in document
     else:
@@ -226,3 +227,21 @@ def test_every_emitted_refusal_matches_the_document_schema(tmp_path):
     assert sum(1 for document in documents if document["code"] == "integrity") == 2
     for document in documents:
         validator.validate(document)
+
+
+@pytest.mark.parametrize("unknown", ["hallway.hover", "probe-v1.2"])
+def test_a_dotted_unknown_check_id_is_a_vocabulary_refusal(tmp_path, unknown):
+    path = _write(tmp_path / "parameters.json", _valid_parameters([unknown]))
+    digest = _sha(path)
+    out = tmp_path / "out"
+    request = _request(path, digest, check_ids=[unknown])
+    assert _emitter().run(request, out) != 0
+    document = _assert_refusal(
+        out,
+        code="vocabulary",
+        role="checks",
+        declared=_identity(path, digest),
+        actual_digest=digest,
+    )
+    assert unknown in document["sentence"]
+    Draft202012Validator(_emitter().document_schema()).validate(document)
