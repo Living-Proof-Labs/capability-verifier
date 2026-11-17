@@ -88,14 +88,68 @@ def test_caller_schema_that_is_not_a_valid_schema_is_a_schema_refusal(tmp_path):
     _schema_refuses(tmp_path, b'{"type": 5}')
 
 
-def test_refusal_clears_an_earlier_verification_json(tmp_path):
-    specs_root, worlds_root, manifest = _setup(tmp_path)
-    world = worlds_root / "worlds" / "hallway-corner" / "0.1.0" / "world.json"
-    world.write_bytes(world.read_bytes() + b"\n")
-    out = tmp_path / "out"
+def _snapshot(directory: Path) -> dict[str, bytes]:
+    return {path.name: path.read_bytes() for path in sorted(directory.iterdir()) if path.is_file()}
+
+
+def _seed_pass(out: Path) -> None:
     out.mkdir()
     (out / GRADE_NAME).write_text('{"summary": {"grade": "PASS"}}\n', encoding="utf-8")
-    code = base._assess(manifest, out, specs_root=specs_root, worlds_root=worlds_root)
-    assert code == REFUSAL_EXIT
-    assert _refusal(out)["code"] == "integrity"
-    assert not (out / GRADE_NAME).exists(), "a stale grade sits beside the refusal"
+
+
+def _seed_refusal(out: Path) -> None:
+    out.mkdir()
+    (out / REFUSAL_NAME).write_text(
+        '{"status": "REFUSED", "code": "integrity"}\n', encoding="utf-8"
+    )
+
+
+def test_assess_does_not_clobber_an_earlier_result(tmp_path):
+    """An old PASS (or refusal) is never presented as this run's result, and never erased.
+
+    Replaces test_refusal_clears_an_earlier_verification_json under Rivet's
+    authorization (issuecomment-6941712983): Aaron's never-clobber decision
+    on livingproof-verification#100 supersedes deleting a stale grade.
+    """
+    from capability_verifier.declared import assess
+
+    cases = (
+        ("pass-then-grade", _seed_pass, False),
+        ("pass-then-refuse", _seed_pass, True),
+        ("refusal-then-grade", _seed_refusal, False),
+        ("refusal-then-refuse", _seed_refusal, True),
+    )
+    errors: list[str] = []
+    for name, seed, tamper in cases:
+        root = tmp_path / name
+        specs_root, worlds_root, manifest = _setup(root)
+        if tamper:
+            world = worlds_root / "worlds" / "hallway-corner" / "0.1.0" / "world.json"
+            world.write_bytes(world.read_bytes() + b"\n")
+        out = root / "out"
+        seed(out)
+        before = _snapshot(out)
+        raised = None
+        code = None
+        try:
+            code = assess(manifest, out, specs_root=specs_root, worlds_root=worlds_root)
+        except FileExistsError as err:
+            raised = err
+        after = _snapshot(out)
+        if after != before:
+            errors.append(f"{name}: occupied destination was changed")
+            continue
+        if raised is not None:
+            continue
+        if code == 0:
+            siblings = [path for path in out.parent.iterdir() if path != out and path.is_dir()]
+            if not any(
+                (path / GRADE_NAME).is_file() or (path / REFUSAL_NAME).is_file()
+                for path in siblings
+            ):
+                errors.append(
+                    f"{name}: success at the occupied destination would present the earlier result"
+                )
+        elif code != REFUSAL_EXIT:
+            errors.append(f"{name}: unexpected exit {code}")
+    assert not errors, "; ".join(errors)
