@@ -1,0 +1,8 @@
+{
+  "issue": "Living-Proof-Labs/livingproof-verification#100",
+  "step": 1,
+  "note": "Characterization only: today's T1 hallway evidence names specs v2.0.2, while the verifier catalog (hallway-specs.lock.json) is v2.3.0. Export writes the catalog into every bundle result's spec and copies the caller pin through on the evidence lock. No released behaviour is changed. Evidence bytes live in tests/fixtures/lpv-run-43402628666/booster-t1-stock/evidence (run 43402628666). existing-hallway-corner-sha256.json records the committed hallway and corner fixture digests so those trees stay byte-stable.",
+  "evidence": "tests/fixtures/lpv-run-43402628666/booster-t1-stock/evidence",
+  "catalog": "tests/fixtures/issue-100/catalog/hallway-specs.lock.json",
+  "caller_pin": "tests/fixtures/issue-100/evidence-specs.json"
+}
