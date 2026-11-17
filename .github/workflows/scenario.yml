@@ -152,6 +152,9 @@ jobs:
       evaluator-repository: ${{ steps.lock.outputs.evaluator-repository }}
       evaluator-commit: ${{ steps.lock.outputs.evaluator-commit }}
       evaluator-tag: ${{ steps.lock.outputs.evaluator-tag }}
+      # Tag-only pin for livingproof-evaluator-run (no commit).
+      run-integrity-repository: ${{ steps.lock.outputs.run-integrity-repository }}
+      run-integrity-tag: ${{ steps.lock.outputs.run-integrity-tag }}
       media-capable: ${{ steps.capability.outputs.media-capable }}
       bundle-version: ${{ steps.capability.outputs.bundle-version }}
     steps:
@@ -235,6 +238,14 @@ jobs:
             echo "evaluator-repository=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].repository // empty' "$pin")"
             echo "evaluator-commit=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].commit // empty' "$pin")"
             echo "evaluator-tag=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].tag // empty' "$pin")"
+            # Tag-only pin. Default livingproof-evaluator-run v1.0.0 so
+            # the run-integrity job runs when the lock omits the pin.
+            repo=$(jq -r '(.evaluators // {})["livingproof-evaluator-run"].repository // empty' "$pin")
+            tag=$(jq -r '(.evaluators // {})["livingproof-evaluator-run"].tag // empty' "$pin")
+            [ -n "$repo" ] || repo="Living-Proof-Labs/livingproof-evaluator-run"
+            [ -n "$tag" ] || tag="v1.0.0"
+            echo "run-integrity-repository=$repo"
+            echo "run-integrity-tag=$tag"
           } >> "$GITHUB_OUTPUT"
       - name: Media and bundle capability from the locks
         # Media needs runner >= 1.6.0 with mcap and reporter >= 1.11.0; robots still on runner
@@ -789,7 +800,7 @@ jobs:
   report:
     # Runs without links when media is off or failed; links never change a decision.
     # scenario-evaluator must succeed: its entry is part of the stored run.
-    needs: [plan, verify, scenario-evaluator, media]
+    needs: [plan, verify, scenario-evaluator, media, run-integrity]
     if: ${{ !cancelled() && needs.verify.result == 'success' && needs.scenario-evaluator.result == 'success' }}
     runs-on: ubuntu-24.04
     strategy:
@@ -822,6 +833,11 @@ jobs:
           Each file whose ``format`` is ``livingproof-evaluator-result/1.*`` is appended
           whole to the trial named by ``scenario.trial_id``. Documents are not merged
           with each other. The report groups them by ``evaluator.id``.
+
+          A result whose ``evaluator.kind`` is ``integrity`` is run-level: it is stored
+          on the assessment, keyed by ``evaluator.id``. More than one integrity
+          evaluator per run is kept. A failed integrity result marks each assessment
+          run ``INCONCLUSIVE`` and never changes the robot grade.
 
           A result that cites ``thresholds.json`` keeps that input reference. The file
           at the cited path is copied into the report output, and its SHA-256 has to
@@ -865,6 +881,9 @@ jobs:
               belongs to another configuration. It is left untouched. Documents that do
               match are appended whole and are not merged with each other.
 
+              An integrity result has no trial id. It is kept on
+              ``assessment.integrity_results``, keyed by ``evaluator.id``.
+
               Each appended document that cites ``thresholds.json`` is checked against
               the file at that URI, relative to the result file. When ``report_dir`` is
               set, the matching bytes are copied there under the cited relative path.
@@ -892,21 +911,28 @@ jobs:
                   if isinstance(result, dict) and isinstance(result.get("id"), str):
                       by_id[result["id"]] = result
               matched = []
+              integrity_docs: list[dict] = []
+              trial_appended = 0
               exports: dict[str, bytes] = {}
               for path, document in found:
-                  scenario = document.get("scenario")
-                  trial_id = scenario.get("trial_id") if isinstance(scenario, dict) else None
-                  result = by_id.get(trial_id)
                   evaluator = document.get("evaluator")
                   name = evaluator.get("id") if isinstance(evaluator, dict) else None
                   tally = (counts if counts is not None else {}).setdefault(
                       name if isinstance(name, str) and name else "(no evaluator id)",
                       {"appended": 0, "skipped": 0},
                   )
+                  if _is_integrity(document):
+                      tally["appended"] += 1
+                      integrity_docs.append(document)
+                      continue
+                  scenario = document.get("scenario")
+                  trial_id = scenario.get("trial_id") if isinstance(scenario, dict) else None
+                  result = by_id.get(trial_id)
                   if result is None:
                       tally["skipped"] += 1
                       continue
                   tally["appended"] += 1
+                  trial_appended += 1
                   _take_thresholds(path, document, directory, exports)
                   matched.append((trial_id, result, document))
               for trial_id, result, document in matched:
@@ -917,8 +943,14 @@ jobs:
                   if not isinstance(entries, list):
                       raise TypeError(f"result {trial_id!r} evaluator_results is not a list")
                   entries.append(document)
+              _attach_integrity(bundle, integrity_docs)
               if report_dir is not None:
-                  _write_thresholds(Path(report_dir), exports)
+                  report = Path(report_dir)
+                  _write_thresholds(report, exports)
+                  _write_integrity_lines(report, bundle)
+              # Used by main() so a run-level result cannot hide a missing trial result.
+              if counts is not None:
+                  counts["_trial_appended"] = trial_appended
               return bundle
 
 
@@ -1035,6 +1067,80 @@ jobs:
                   dest.write_bytes(data)
 
 
+          def _is_integrity(document: dict) -> bool:
+              evaluator = document.get("evaluator")
+              return isinstance(evaluator, dict) and evaluator.get("kind") == "integrity"
+
+
+          def _integrity_failed(document: dict) -> bool:
+              payload = document.get("integrity") if isinstance(document.get("integrity"), dict) else {}
+              run = payload.get("run") if isinstance(payload.get("run"), dict) else {}
+              if run.get("success") is False or run.get("conclusion") == "INCONCLUSIVE":
+                  return True
+              status = run.get("test_system_status")
+              return isinstance(status, str) and status != "COMPLETED"
+
+
+          def _attach_integrity(bundle: dict, documents: list[dict]) -> None:
+              if not documents:
+                  return
+              assessment = bundle.get("assessment")
+              if not isinstance(assessment, dict):
+                  assessment = {}
+                  bundle["assessment"] = assessment
+              stored = assessment.get("integrity_results")
+              if stored is None:
+                  stored = {}
+                  assessment["integrity_results"] = stored
+              if not isinstance(stored, dict):
+                  raise TypeError("assessment integrity_results is not a mapping")
+              failed = False
+              for document in documents:
+                  evaluator = document.get("evaluator") if isinstance(document.get("evaluator"), dict) else {}
+                  name = evaluator.get("id")
+                  key = name if isinstance(name, str) and name else "(no evaluator id)"
+                  stored[key] = document
+                  if _integrity_failed(document):
+                      failed = True
+              if not failed:
+                  return
+              runs = assessment.get("runs") if isinstance(assessment.get("runs"), list) else []
+              for run in runs:
+                  if isinstance(run, dict):
+                      run["conclusion"] = "INCONCLUSIVE"
+
+
+          def integrity_report_lines(bundle: dict) -> list[str]:
+              """Plain report lines for each stored run-level integrity result."""
+              assessment = bundle.get("assessment") if isinstance(bundle.get("assessment"), dict) else {}
+              stored = assessment.get("integrity_results") if isinstance(assessment, dict) else None
+              if not isinstance(stored, dict):
+                  return []
+              lines = []
+              for key, document in stored.items():
+                  if not isinstance(document, dict):
+                      continue
+                  evaluator = document.get("evaluator") if isinstance(document.get("evaluator"), dict) else {}
+                  name = evaluator.get("display_name")
+                  if not isinstance(name, str) or not name.strip():
+                      name = key
+                  payload = document.get("integrity") if isinstance(document.get("integrity"), dict) else {}
+                  run = payload.get("run") if isinstance(payload.get("run"), dict) else {}
+                  status = run.get("test_system_status")
+                  if not isinstance(status, str) or not status:
+                      status = "UNKNOWN"
+                  lines.append(f"{name}: {status}")
+              return lines
+
+
+          def _write_integrity_lines(report_dir: Path, bundle: dict) -> None:
+              lines = integrity_report_lines(bundle)
+              if not lines:
+                  return
+              report_dir.mkdir(parents=True, exist_ok=True)
+              (report_dir / "integrity-lines.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
           def main(argv: list[str] | None = None) -> int:
               args = list(sys.argv[1:] if argv is None else argv)
               if len(args) != 3:
@@ -1051,6 +1157,7 @@ jobs:
               except ThresholdCitationError as exc:
                   print(str(exc), file=sys.stderr)
                   return 1
+              trial_appended = counts.pop("_trial_appended", 0)
               for name in sorted(counts):
                   tally = counts[name]
                   print(
@@ -1060,7 +1167,7 @@ jobs:
               trials = sum(1 for result in bundle["results"] if isinstance(result, dict))
               if trials == 0:
                   print("no trials in this bundle, so no evaluator result to append")
-              elif sum(tally["appended"] for tally in counts.values()) == 0:
+              elif trial_appended == 0:
                   pattern = os.environ.get("EVALUATOR_RESULTS_PATTERN") or "(EVALUATOR_RESULTS_PATTERN unset)"
                   print(
                       f"no evaluator result was appended to this bundle's {trials} trial(s). "
@@ -1106,6 +1213,12 @@ jobs:
           livingproof-capability-report render verified/bundle/manifest.json "$@" --format markdown -o reports/report.md
           livingproof-capability-report render verified/bundle/manifest.json "$@" --format html -o reports/report.html
           livingproof-capability-report render reports/report.json > reports/report.txt
+          if [ -f reports/integrity-lines.txt ]; then
+            printf '\n' >> reports/report.md
+            cat reports/integrity-lines.txt >> reports/report.md
+            printf '\n' >> reports/report.txt
+            cat reports/integrity-lines.txt >> reports/report.txt
+          fi
           (cd reports && sha256sum report.* > SHA256SUMS)
           (cd reports && find . -type f -name thresholds.json -print | sed 's#^\./##' | LC_ALL=C sort | while IFS= read -r file; do sha256sum "$file" >> SHA256SUMS; done)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1142,3 +1255,57 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: livingproof-capability-report comment --repo "$REPO" --pr "$PR" reports/*/report.md
+
+  run-integrity:
+    # Second evaluator job: livingproof-run-integrity (kind integrity,
+    # execution deterministic) on the evidence artifact, after the robot
+    # (scenario) evaluator in this file. Needs evidence only, like
+    # scenario-evaluator, so it can run alongside it.
+    # Tag-only pin: checkout the tag, never a commit. Plan defaults the
+    # pin to livingproof-evaluator-run v1.0.0 when the lock omits it.
+    needs: [plan, evidence]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ needs.plan.outputs.verifier-image }}
+      options: --user root
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: ${{ fromJSON(needs.plan.outputs.configurations) }}
+    steps:
+      - name: Capability verifier at the locked release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ needs.plan.outputs.verifier-repository }}
+          ref: ${{ needs.plan.outputs.verifier-commit }}
+          persist-credentials: false
+      - if: needs.plan.outputs.verifier-image == ''
+        run: python3 -m pip install --user uv==0.13.6
+      - run: uv sync --locked
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
+          path: evidence
+      - name: Run Integrity evaluator at the locked pin
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ needs.plan.outputs.run-integrity-repository }}
+          ref: ${{ needs.plan.outputs.run-integrity-tag }}
+          path: run-integrity
+          persist-credentials: false
+      - name: Run Integrity, one result for the run
+        run: |
+          uv sync --locked --directory run-integrity
+          mkdir -p evaluator-results/livingproof-run-integrity
+          PYTHONPATH=run-integrity/src uv run --no-sync --directory run-integrity \
+            python -m livingproof_evaluator_run \
+            "$GITHUB_WORKSPACE/evidence/manifest.json" \
+            --out "$GITHUB_WORKSPACE/evaluator-results/livingproof-run-integrity/result.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ${{ inputs.artifact-prefix }}evaluator-results-livingproof-run-integrity-${{ matrix.configuration }}
+          path: evaluator-results/
+          retention-days: 30
+          if-no-files-found: error

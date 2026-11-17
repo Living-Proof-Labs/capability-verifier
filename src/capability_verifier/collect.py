@@ -5,6 +5,11 @@ Each file whose ``format`` is ``livingproof-evaluator-result/1.*`` is appended
 whole to the trial named by ``scenario.trial_id``. Documents are not merged
 with each other. The report groups them by ``evaluator.id``.
 
+A result whose ``evaluator.kind`` is ``integrity`` is run-level: it is stored
+on the assessment, keyed by ``evaluator.id``. More than one integrity
+evaluator per run is kept. A failed integrity result marks each assessment
+run ``INCONCLUSIVE`` and never changes the robot grade.
+
 A result that cites ``thresholds.json`` keeps that input reference. The file
 at the cited path is copied into the report output, and its SHA-256 has to
 match the citation. A missing file, different bytes, or a different path
@@ -47,6 +52,9 @@ def collect(
     belongs to another configuration. It is left untouched. Documents that do
     match are appended whole and are not merged with each other.
 
+    An integrity result has no trial id. It is kept on
+    ``assessment.integrity_results``, keyed by ``evaluator.id``.
+
     Each appended document that cites ``thresholds.json`` is checked against
     the file at that URI, relative to the result file. When ``report_dir`` is
     set, the matching bytes are copied there under the cited relative path.
@@ -74,21 +82,28 @@ def collect(
         if isinstance(result, dict) and isinstance(result.get("id"), str):
             by_id[result["id"]] = result
     matched = []
+    integrity_docs: list[dict] = []
+    trial_appended = 0
     exports: dict[str, bytes] = {}
     for path, document in found:
-        scenario = document.get("scenario")
-        trial_id = scenario.get("trial_id") if isinstance(scenario, dict) else None
-        result = by_id.get(trial_id)
         evaluator = document.get("evaluator")
         name = evaluator.get("id") if isinstance(evaluator, dict) else None
         tally = (counts if counts is not None else {}).setdefault(
             name if isinstance(name, str) and name else "(no evaluator id)",
             {"appended": 0, "skipped": 0},
         )
+        if _is_integrity(document):
+            tally["appended"] += 1
+            integrity_docs.append(document)
+            continue
+        scenario = document.get("scenario")
+        trial_id = scenario.get("trial_id") if isinstance(scenario, dict) else None
+        result = by_id.get(trial_id)
         if result is None:
             tally["skipped"] += 1
             continue
         tally["appended"] += 1
+        trial_appended += 1
         _take_thresholds(path, document, directory, exports)
         matched.append((trial_id, result, document))
     for trial_id, result, document in matched:
@@ -99,8 +114,14 @@ def collect(
         if not isinstance(entries, list):
             raise TypeError(f"result {trial_id!r} evaluator_results is not a list")
         entries.append(document)
+    _attach_integrity(bundle, integrity_docs)
     if report_dir is not None:
-        _write_thresholds(Path(report_dir), exports)
+        report = Path(report_dir)
+        _write_thresholds(report, exports)
+        _write_integrity_lines(report, bundle)
+    # Used by main() so a run-level result cannot hide a missing trial result.
+    if counts is not None:
+        counts["_trial_appended"] = trial_appended
     return bundle
 
 
@@ -217,6 +238,80 @@ def _write_thresholds(report_dir: Path, exports: dict[str, bytes]) -> None:
         dest.write_bytes(data)
 
 
+def _is_integrity(document: dict) -> bool:
+    evaluator = document.get("evaluator")
+    return isinstance(evaluator, dict) and evaluator.get("kind") == "integrity"
+
+
+def _integrity_failed(document: dict) -> bool:
+    payload = document.get("integrity") if isinstance(document.get("integrity"), dict) else {}
+    run = payload.get("run") if isinstance(payload.get("run"), dict) else {}
+    if run.get("success") is False or run.get("conclusion") == "INCONCLUSIVE":
+        return True
+    status = run.get("test_system_status")
+    return isinstance(status, str) and status != "COMPLETED"
+
+
+def _attach_integrity(bundle: dict, documents: list[dict]) -> None:
+    if not documents:
+        return
+    assessment = bundle.get("assessment")
+    if not isinstance(assessment, dict):
+        assessment = {}
+        bundle["assessment"] = assessment
+    stored = assessment.get("integrity_results")
+    if stored is None:
+        stored = {}
+        assessment["integrity_results"] = stored
+    if not isinstance(stored, dict):
+        raise TypeError("assessment integrity_results is not a mapping")
+    failed = False
+    for document in documents:
+        evaluator = document.get("evaluator") if isinstance(document.get("evaluator"), dict) else {}
+        name = evaluator.get("id")
+        key = name if isinstance(name, str) and name else "(no evaluator id)"
+        stored[key] = document
+        if _integrity_failed(document):
+            failed = True
+    if not failed:
+        return
+    runs = assessment.get("runs") if isinstance(assessment.get("runs"), list) else []
+    for run in runs:
+        if isinstance(run, dict):
+            run["conclusion"] = "INCONCLUSIVE"
+
+
+def integrity_report_lines(bundle: dict) -> list[str]:
+    """Plain report lines for each stored run-level integrity result."""
+    assessment = bundle.get("assessment") if isinstance(bundle.get("assessment"), dict) else {}
+    stored = assessment.get("integrity_results") if isinstance(assessment, dict) else None
+    if not isinstance(stored, dict):
+        return []
+    lines = []
+    for key, document in stored.items():
+        if not isinstance(document, dict):
+            continue
+        evaluator = document.get("evaluator") if isinstance(document.get("evaluator"), dict) else {}
+        name = evaluator.get("display_name")
+        if not isinstance(name, str) or not name.strip():
+            name = key
+        payload = document.get("integrity") if isinstance(document.get("integrity"), dict) else {}
+        run = payload.get("run") if isinstance(payload.get("run"), dict) else {}
+        status = run.get("test_system_status")
+        if not isinstance(status, str) or not status:
+            status = "UNKNOWN"
+        lines.append(f"{name}: {status}")
+    return lines
+
+
+def _write_integrity_lines(report_dir: Path, bundle: dict) -> None:
+    lines = integrity_report_lines(bundle)
+    if not lines:
+        return
+    report_dir.mkdir(parents=True, exist_ok=True)
+    (report_dir / "integrity-lines.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 3:
@@ -233,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
     except ThresholdCitationError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    trial_appended = counts.pop("_trial_appended", 0)
     for name in sorted(counts):
         tally = counts[name]
         print(
@@ -242,7 +338,7 @@ def main(argv: list[str] | None = None) -> int:
     trials = sum(1 for result in bundle["results"] if isinstance(result, dict))
     if trials == 0:
         print("no trials in this bundle, so no evaluator result to append")
-    elif sum(tally["appended"] for tally in counts.values()) == 0:
+    elif trial_appended == 0:
         pattern = os.environ.get("EVALUATOR_RESULTS_PATTERN") or "(EVALUATOR_RESULTS_PATTERN unset)"
         print(
             f"no evaluator result was appended to this bundle's {trials} trial(s). "

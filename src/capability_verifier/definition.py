@@ -85,6 +85,8 @@ V2_SHAPE = {
     "world": ("id", "version"),
     "configurations": (),
     "evaluators": ("livingproof-evaluator-scenario",),
+    # evaluators.livingproof-evaluator-run is optional and tag-only
+    # (repository + tag, no commit). When present, _v2_details checks it.
 }
 DEFINITION_FORMAT = "livingproof-verification-definition/0.1.0"
 # walk-hallway.yml is the thin wrapper existing callers keep. scenario.yml runs whatever
@@ -388,7 +390,9 @@ def _relative_robot_path(path: object) -> bool:
     return not Path(path).is_absolute() and ".." not in Path(path).parts
 
 
-def _pin_problems(label: str, ref: object, *, require_digest: bool = False) -> list[str]:
+def _pin_problems(
+    label: str, ref: object, *, require_digest: bool = False, require_commit: bool = True
+) -> list[str]:
     """Tag, commit and digest problems. The patterns match ``repin.py``."""
     if not isinstance(ref, dict):
         return [f"{label} must be an object"]
@@ -399,9 +403,10 @@ def _pin_problems(label: str, ref: object, *, require_digest: bool = False) -> l
     tag = ref.get("tag")
     if not isinstance(tag, str) or not TAG.fullmatch(tag):
         problems.append(f"{label}.tag must be a vX.Y.Z release tag (got {tag!r})")
-    commit = ref.get("commit")
-    if not isinstance(commit, str) or not SHA.fullmatch(commit):
-        problems.append(f"{label}.commit must be a full commit sha")
+    if require_commit:
+        commit = ref.get("commit")
+        if not isinstance(commit, str) or not SHA.fullmatch(commit):
+            problems.append(f"{label}.commit must be a full commit sha")
     if require_digest or "image" in ref or "digest" in ref:
         digest = ref.get("digest")
         if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
@@ -496,6 +501,14 @@ def _v2_details(lock: dict) -> list[str]:
             evaluators.get("livingproof-evaluator-scenario"),
         )
     )
+    if "livingproof-evaluator-run" in evaluators:
+        problems.extend(
+            _pin_problems(
+                "evaluators.livingproof-evaluator-run",
+                evaluators.get("livingproof-evaluator-run"),
+                require_commit=False,
+            )
+        )
     return problems
 
 
