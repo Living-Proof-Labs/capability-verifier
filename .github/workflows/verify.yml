@@ -7,6 +7,27 @@ on:
 permissions:
   contents: read
 jobs:
+  devcontainer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.22.3'
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: '3.54.0'
+      - run: task devcontainer:verify
+      - uses: actions/upload-artifact@v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: devcontainer-test-results
+          path: artifacts/results.xml
+          if-no-files-found: error
+          retention-days: 14
   verify:
     outputs:
       source-version: ${{ steps.identity.outputs.version }}
@@ -285,11 +306,11 @@ jobs:
               raise SystemExit(f"engine digest {record['digest']!r} is not the pinned {record['locked_digest']}: {record.get('unavailable')}")
           PY
   release:
-    needs: [verify, report, report-results, documentation, verifier-image-record]
+    needs: [verify, report, report-results, documentation, devcontainer, verifier-image-record]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
-    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@v9.6.10
+    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@v9.6.11
     with:
       draft-release: true
   release-reports:
