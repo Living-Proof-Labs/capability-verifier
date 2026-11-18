@@ -10,6 +10,7 @@ the job runs as it always did and stays green.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -352,3 +353,61 @@ def test_a_media_matrix_failure_must_not_drop_another_configurations_recordings(
     assert download["if"] != "${{ needs.media.result == 'success' }}"
     assert download["if"] == "${{ needs.media.result != 'skipped' }}"
     assert download["continue-on-error"] == "${{ needs.media.result != 'success' }}"
+
+
+def _help_probe_pattern() -> str:
+    matches = [
+        line for line in WORKFLOW.splitlines() if "grep -Eq --" in line and "--media" in line
+    ]
+    assert len(matches) == 1, matches
+    found = re.search(r"grep -Eq -- '([^']*)'", matches[0])
+    assert found is not None, matches[0]
+    return found.group(1)
+
+
+def test_help_probe_pattern_matches_media_as_a_whole_flag():
+    # The probe must accept --media, --media=x, a trailing comma, and end of line, and
+    # must reject a longer option such as --media-dir.
+    pattern = _help_probe_pattern()
+    cases = [
+        ("--media", True),
+        ("--media=x", True),
+        ("--media-dir", False),
+        ("--media,", True),
+        ("usage: tool --media MEDIA", True),
+        ("--multimedia", False),
+        ("--mediafoo", False),
+    ]
+    for text, expect in cases:
+        done = subprocess.run(["grep", "-Eq", "--", pattern], check=False, input=text, text=True)
+        assert (done.returncode == 0) is expect, (text, expect)
+    done = subprocess.run(["grep", "-Eq", "--", pattern], check=False, input="--media\n", text=True)
+    assert done.returncode == 0, "end of line after --media must match"
+
+
+def test_download_gate_for_each_media_job_result():
+    # run-integrity itself still runs whenever the workflow is not cancelled
+    # (`if: ${{ !cancelled() }}`). The download step's if and continue-on-error are
+    # evaluated from needs.media.result, the matrix aggregate:
+    #   success   — attempt; a missing artifact or a genuine download failure fails the job
+    #   failure   — attempt; a missing artifact (this leg or a sibling failed) does not
+    #   cancelled — attempt; a missing artifact does not fail the job
+    #   skipped   — do not attempt (media off, not media-capable, or evidence failed)
+    # continue-on-error is false only when the aggregate is success, so it does not mask
+    # a genuine download failure on a successful media job.
+    download = next(
+        s for s in _jobs()["run-integrity"]["steps"] if s.get("with", {}).get("path") == "media"
+    )
+    assert download["if"] == "${{ needs.media.result != 'skipped' }}"
+    assert download["continue-on-error"] == "${{ needs.media.result != 'success' }}"
+    expected = {
+        "success": (True, False),
+        "failure": (True, True),
+        "cancelled": (True, True),
+        "skipped": (False, True),
+    }
+    for result, (attempt, continue_on_error) in expected.items():
+        assert (result != "skipped") is attempt, result
+        assert (result != "success") is continue_on_error, result
+        missing_artifact_fails_job = attempt and not continue_on_error
+        assert missing_artifact_fails_job is (result == "success"), result
