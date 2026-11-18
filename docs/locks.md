@@ -659,3 +659,41 @@ the `sha256:` prefix. The two spellings are not interchangeable:
 `configurations[].sha256` set to a `sha256:` digest fails
 `.sha256 must be 64 hex characters`, and `releases.reporter.digest` set to a
 bare 64-character hash fails `.digest must be a sha256 digest`.
+
+## How the evidence step ended
+
+The `evidence` job writes `evidence-ending.json` (`livingproof-evidence-ending/0.1`) into the
+evidence artifact, beside `manifest.json`, whether the step succeeded, failed, was cancelled or
+timed out. The Run Integrity job downloads that artifact, so it can tell these cases apart
+even when the runner left no `manifest.json`. Fields:
+
+| Field | Meaning |
+| --- | --- |
+| `configuration` | The configuration name of this matrix leg |
+| `ended` | `exited` (the runner command returned an exit code), `signalled` (the exit code was 128+N, how a shell reports a process killed by signal N) or `unfinished` (the step's own shell never reached the end of the command) |
+| `exit_code` | The runner command's exit code as the step's shell saw it, or `null` when `unfinished` |
+| `signal` | The signal name for `signalled` (`KILL` for 137, `TERM` for 143), otherwise `null` |
+| `step_outcome` | The workflow's outcome for the evidence step: `success`, `failure`, `cancelled` or `skipped` |
+| `manifest_present` | Whether `manifest.json` was in the uploaded directory |
+| `planned_trials` | `plan.trials.count` from the run's lock, or `null` when the lock has none |
+
+How to read it: `exited` with `exit_code` 0 is a clean run. Exit 4 is trials that disagreed (the
+manifest carries the test-system finding and the step continues). Any other non-zero exit is a
+runner failure. `signalled` is a runner killed from outside, for example by the kernel's
+out-of-memory killer. `unfinished` with `step_outcome` `cancelled` is a job timeout or a
+cancellation, and `unfinished` with `failure` is a step whose shell died. A program that itself
+exits with a code above 128 is recorded as `signalled`. A run on a verifier release before this
+file has no `evidence-ending.json`, and neither does a job whose runner or virtual machine
+disappears, because no later step runs.
+
+Hosted-runner behaviour, checked in a container job on `ubuntu-24.04`: when the job timeout
+cancels the step, or the run is cancelled, or the step's shell is killed with SIGKILL, the next
+`if: always()` step still runs, sees the evidence step's outcome as `cancelled` or `failure`,
+and the artifact upload after it succeeds.
+
+The `run-integrity` job runs when the evidence job failed. With no `manifest.json`, it does not
+fail on the missing file: it writes a stand-in manifest, `no-evidence/stand-in-manifest.json`,
+that carries `plan.trials.count` from `planned_trials`, no trial results, and the ending record,
+and runs the Run Integrity evaluator on it. The evaluator then reports each planned trial as
+missing in its own words, and the result's input is named as the stand-in. With no
+`planned_trials` the job writes a workflow warning and no result, and still passes.

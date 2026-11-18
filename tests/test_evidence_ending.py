@@ -239,8 +239,8 @@ def _checkout(tmp_path, tag):
     return checkout
 
 
-def _integrity(tmp_path, ending):
-    work = tmp_path / "work"
+def _integrity(tmp_path, ending, name="work"):
+    work = tmp_path / name
     (work / "evidence").mkdir(parents=True)
     if ending is not None:
         (work / "evidence" / "evidence-ending.json").write_text(json.dumps(ending))
@@ -287,8 +287,10 @@ def test_no_manifest_still_gives_a_run_integrity_result(tmp_path, tag):
     assert {f["classification"] for f in completeness["findings"]} == {"test_system"}
     # The result's input is the stand-in, named as such, never a manifest.json of the run.
     uris = [i.get("uri", "") for i in result["inputs"]]
-    assert any("no-evidence" in uri for uri in uris), result["inputs"]
-    stand_in = json.loads((tmp_path / "work" / "no-evidence" / "manifest.json").read_text())
+    assert any("stand-in" in uri for uri in uris), result["inputs"]
+    stand_in = json.loads(
+        (tmp_path / "work" / "no-evidence" / "stand-in-manifest.json").read_text()
+    )
     assert stand_in["stand_in"]["ending"] == KILLED
     assert "without a manifest" in done.stderr
 
@@ -299,7 +301,7 @@ def test_no_manifest_and_no_planned_count_keeps_the_job_green_and_says_so(tmp_pa
     assert done.returncode == 0, done.stderr
     assert result is None
     assert "::warning::" in done.stdout + done.stderr
-    done, result = _integrity(tmp_path / "again", None)
+    done, result = _integrity(tmp_path, None, "again")
     assert done.returncode == 0 and result is None
 
 

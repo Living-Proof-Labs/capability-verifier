@@ -396,14 +396,18 @@ jobs:
           print("ref=" + tomllib.load(open("pyproject.toml", "rb"))["tool"]["livingproof"]["adapter"])
           PY
       - name: Evidence (observations only, no grade)
+        id: evidence
         # Exit 4 continues only when the manifest records a test-system finding.
         # Any other non-zero exit, including exit 4 without that finding, fails the step.
+        # The exit code is also written to a temp file that "Evidence ending" turns into
+        # evidence-ending.json. A step whose own shell is killed writes nothing.
         env:
           ADAPTER: ${{ steps.adapter.outputs.ref }}
         # livingproof-sim-mujoco >= 3.0 requires --lock: it gets the evidence document the
         # plan wrote (verification.lock.json here). Robots on sim v2.x read that file
         # themselves and keep the same command as before.
         run: |
+          rm -f "${RUNNER_TEMP:-/tmp}/evidence-ending.json"
           set --
           if python3 - <<'PY'
           import sys, tomllib
@@ -418,6 +422,16 @@ jobs:
           uv run --no-sync python -m livingproof_sim_mujoco.evidence "$ADAPTER" "$CONFIGURATION" "artifacts/evidence/$CONFIGURATION" "$@"
           code=$?
           set -e
+          # 128+N is how a shell reports a process killed by signal N (137 KILL, 143 TERM).
+          signal=
+          if [ "$code" -gt 128 ]; then
+            signal=$(kill -l "$((code - 128))" 2>/dev/null | tr -cd 'A-Z0-9' || true)
+          fi
+          if [ -n "$signal" ]; then
+            printf '{"ended": "signalled", "exit_code": %s, "signal": "%s"}\n' "$code" "$signal" > "${RUNNER_TEMP:-/tmp}/evidence-ending.json"
+          else
+            printf '{"ended": "exited", "exit_code": %s, "signal": null}\n' "$code" > "${RUNNER_TEMP:-/tmp}/evidence-ending.json"
+          fi
           if [ -n "${GITHUB_OUTPUT:-}" ]; then
             echo "evidence-exit=$code" >> "$GITHUB_OUTPUT"
           fi
@@ -445,6 +459,48 @@ jobs:
           fi
           echo "evidence failed (exit $code); verify will not run" >&2
           exit "$code"
+      - name: Evidence ending, recorded in the artifact
+        # Runs after success, failure, cancellation and a job timeout (checked on a hosted
+        # runner in a container job: the step after a cancelled or timed-out step runs, and
+        # the artifact upload after it works). It does not run when the runner or its VM
+        # disappears. evidence-ending.json (livingproof-evidence-ending/0.1) says how the
+        # evidence step ended, for the Run Integrity job, which runs even when it did not
+        # finish and may find no manifest.json.
+        if: ${{ always() }}
+        env:
+          STEP_OUTCOME: ${{ steps.evidence.outcome }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          raw = pathlib.Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "evidence-ending.json"
+          try:
+              ending = json.loads(raw.read_text())
+          except (OSError, ValueError):
+              # The evidence step never reached its end: no exit code was seen.
+              ending = {"ended": "unfinished", "exit_code": None, "signal": None}
+          raw.unlink(missing_ok=True)
+          configuration = os.environ["CONFIGURATION"]
+          directory = pathlib.Path("artifacts/evidence") / configuration
+          planned = None
+          try:
+              count = json.load(open("verification.lock.json"))["plan"]["trials"]["count"]
+              planned = count if isinstance(count, int) and not isinstance(count, bool) else None
+          except (OSError, ValueError, KeyError, TypeError):
+              pass
+          directory.mkdir(parents=True, exist_ok=True)
+          record = {
+              "format": "livingproof-evidence-ending/0.1",
+              "configuration": configuration,
+              "ended": ending["ended"],
+              "exit_code": ending["exit_code"],
+              "signal": ending["signal"],
+              "step_outcome": os.environ.get("STEP_OUTCOME") or None,
+              "manifest_present": (directory / "manifest.json").is_file(),
+              "planned_trials": planned,
+          }
+          (directory / "evidence-ending.json").write_text(json.dumps(record, indent=2) + "\n")
+          print("Evidence ending:", json.dumps(record))
+          PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -1298,9 +1354,42 @@ jobs:
         run: |
           uv sync --locked --directory run-integrity
           mkdir -p evaluator-results/livingproof-run-integrity
+          manifest="$GITHUB_WORKSPACE/evidence/manifest.json"
+          if [ ! -f "$manifest" ]; then
+            # The evidence step left no manifest (killed, timed out, crashed). Evaluate a
+            # stand-in that plans the run's trial count and has no trials, so the evaluator
+            # reports every planned trial as missing in its own words. Whether and how the
+            # step ended is in evidence/evidence-ending.json, which the stand-in carries.
+            echo "evidence has no manifest.json; evaluating a stand-in manifest, without a manifest from the run" >&2
+            status=0
+            python3 - <<'PY' || status=$?
+          import json, os, pathlib, sys
+          workspace = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
+          try:
+              ending = json.loads((workspace / "evidence" / "evidence-ending.json").read_text())
+              planned = ending["planned_trials"]
+              assert isinstance(planned, int) and not isinstance(planned, bool) and planned > 0
+          except (OSError, ValueError, KeyError, AssertionError):
+              print("::warning::no manifest.json and no planned trial count in evidence-ending.json; no Run Integrity result written")
+              sys.exit(3)
+          stand_in = {
+              "run_id": f"no-evidence-{os.environ.get('GITHUB_RUN_ID', 'run')}-{ending.get('configuration')}",
+              "plan": {"trials": {"count": planned}},
+              "trials": {"count": planned, "results": []},
+              "stand_in": {"reason": "the evidence step left no manifest.json", "ending": ending},
+          }
+          target = workspace / "no-evidence"
+          target.mkdir(exist_ok=True)
+          (target / "stand-in-manifest.json").write_text(json.dumps(stand_in, indent=2) + "\n")
+          PY
+            if [ "$status" -eq 3 ]; then
+              exit 0
+            fi
+            manifest="$GITHUB_WORKSPACE/no-evidence/stand-in-manifest.json"
+          fi
           PYTHONPATH=run-integrity/src uv run --no-sync --directory run-integrity \
             python -m livingproof_evaluator_run \
-            "$GITHUB_WORKSPACE/evidence/manifest.json" \
+            "$manifest" \
             --out "$GITHUB_WORKSPACE/evaluator-results/livingproof-run-integrity/result.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
