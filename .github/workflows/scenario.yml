@@ -473,18 +473,39 @@ jobs:
           python3 - <<'PY'
           import json, os, pathlib
           raw = pathlib.Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "evidence-ending.json"
+          # The evidence step never reached its end: no exit code was seen.
+          ending = {"ended": "unfinished", "exit_code": None, "signal": None}
           try:
-              ending = json.loads(raw.read_text())
-          except (OSError, ValueError):
-              # The evidence step never reached its end: no exit code was seen.
-              ending = {"ended": "unfinished", "exit_code": None, "signal": None}
-          raw.unlink(missing_ok=True)
+              text = raw.read_text()
+          except OSError:
+              text = None
+          if text is not None:
+              try:
+                  found = json.loads(text)
+              except ValueError:
+                  found = None
+              ok = (
+                  isinstance(found, dict)
+                  and "signal" in found
+                  and isinstance(found.get("exit_code"), int)
+                  and not isinstance(found.get("exit_code"), bool)
+                  and (
+                      (found.get("ended") == "exited" and found.get("signal") is None)
+                      or (found.get("ended") == "signalled" and isinstance(found.get("signal"), str))
+                  )
+              )
+              if ok:
+                  ending = found
+              else:
+                  # Partial or wrong-shaped: it cannot be trusted, and the record has no room
+                  # for it, so the log keeps what was there.
+                  print("evidence-ending.json from the evidence step is not usable; recording unfinished. It held:", text.strip()[:200])
           configuration = os.environ["CONFIGURATION"]
           directory = pathlib.Path("artifacts/evidence") / configuration
           planned = None
           try:
               count = json.load(open("verification.lock.json"))["plan"]["trials"]["count"]
-              planned = count if isinstance(count, int) and not isinstance(count, bool) else None
+              planned = count if isinstance(count, int) and not isinstance(count, bool) and count >= 0 else None
           except (OSError, ValueError, KeyError, TypeError):
               pass
           directory.mkdir(parents=True, exist_ok=True)
@@ -500,6 +521,8 @@ jobs:
           }
           (directory / "evidence-ending.json").write_text(json.dumps(record, indent=2) + "\n")
           print("Evidence ending:", json.dumps(record))
+          # Removed only now, so a failure before the record is written leaves it to read.
+          raw.unlink(missing_ok=True)
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
@@ -1372,13 +1395,37 @@ jobs:
             python3 - <<'PY' || status=$?
           import json, os, pathlib, sys
           workspace = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
+
+
+          def no_result(reason):
+              # The job fails here, naming the cause, instead of exiting 0 with nothing for
+              # the upload to keep. no-result.txt is the file the upload keeps; it is not a
+              # result document, so the report ignores it.
+              message = f"no Run Integrity result for this run: {reason}"
+              print(f"::error::{message}")
+              target = workspace / "evaluator-results" / "livingproof-run-integrity"
+              target.mkdir(parents=True, exist_ok=True)
+              (target / "no-result.txt").write_text(message + "\n")
+              sys.exit(3)
+
+
           try:
               ending = json.loads((workspace / "evidence" / "evidence-ending.json").read_text())
-              planned = ending["planned_trials"]
-              assert isinstance(planned, int) and not isinstance(planned, bool) and planned > 0
-          except (OSError, ValueError, KeyError, AssertionError):
-              print("::warning::no manifest.json and no planned trial count in evidence-ending.json; no Run Integrity result written")
-              sys.exit(3)
+          except FileNotFoundError:
+              no_result("evidence-ending.json is missing from the evidence artifact, so the planned trial count is unknown (the evidence job ended before its ending step ran, or ran a verifier release without it)")
+          except (OSError, ValueError) as error:
+              no_result(f"evidence-ending.json cannot be read ({type(error).__name__})")
+          if not isinstance(ending, dict):
+              no_result("evidence-ending.json is not a JSON object")
+          if "planned_trials" not in ending:
+              no_result("planned_trials is missing from evidence-ending.json")
+          planned = ending["planned_trials"]
+          if planned is None:
+              no_result("planned_trials is null: the run's lock has no plan.trials.count")
+          if not isinstance(planned, int) or isinstance(planned, bool):
+              no_result(f"planned_trials is not a whole number: {planned!r}")
+          if planned <= 0:
+              no_result(f"planned_trials is {planned}: the evaluator does not take a plan with no trials")
           stand_in = {
               "run_id": f"no-evidence-{os.environ.get('GITHUB_RUN_ID', 'run')}-{ending.get('configuration')}",
               "plan": {"trials": {"count": planned}},
@@ -1390,7 +1437,10 @@ jobs:
           (target / "stand-in-manifest.json").write_text(json.dumps(stand_in, indent=2) + "\n")
           PY
             if [ "$status" -eq 3 ]; then
-              exit 0
+              exit 1
+            fi
+            if [ "$status" -ne 0 ]; then
+              exit "$status"
             fi
             manifest="$GITHUB_WORKSPACE/no-evidence/stand-in-manifest.json"
           fi

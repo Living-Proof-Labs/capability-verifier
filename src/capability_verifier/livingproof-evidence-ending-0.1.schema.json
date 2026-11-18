@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Living-Proof-Labs/capability-verifier/src/capability_verifier/livingproof-evidence-ending-0.1.schema.json",
+  "title": "livingproof-evidence-ending/0.1",
+  "description": "How the evidence step of a scenario run ended, written by the evidence job beside the evidence (evidence-ending.json). ended is exited (the runner returned exit_code), signalled (the runner was killed by signal; the exit code is 128 plus the signal number) or unfinished (the step's own shell never reached its end, as in a job timeout or a cancellation; exit_code and signal are null). step_outcome is the workflow's outcome for the evidence step. planned_trials is plan.trials.count from the run's lock, or null when the lock has no whole-number count. This schema lives with the capability-verifier workflow that writes the record.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "configuration",
+    "ended",
+    "exit_code",
+    "signal",
+    "step_outcome",
+    "manifest_present",
+    "planned_trials"
+  ],
+  "properties": {
+    "format": {
+      "const": "livingproof-evidence-ending/0.1"
+    },
+    "configuration": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ended": {
+      "type": "string",
+      "enum": ["exited", "signalled", "unfinished"]
+    },
+    "exit_code": {
+      "type": ["integer", "null"]
+    },
+    "signal": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Z0-9]+$"
+    },
+    "step_outcome": {
+      "type": ["string", "null"],
+      "enum": ["success", "failure", "cancelled", "skipped", null]
+    },
+    "manifest_present": {
+      "type": "boolean"
+    },
+    "planned_trials": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "ended": { "const": "exited" } }, "required": ["ended"] },
+      "then": {
+        "properties": { "exit_code": { "type": "integer" }, "signal": { "type": "null" } }
+      }
+    },
+    {
+      "if": { "properties": { "ended": { "const": "signalled" } }, "required": ["ended"] },
+      "then": {
+        "properties": { "exit_code": { "type": "integer" }, "signal": { "type": "string" } }
+      }
+    },
+    {
+      "if": { "properties": { "ended": { "const": "unfinished" } }, "required": ["ended"] },
+      "then": {
+        "properties": { "exit_code": { "type": "null" }, "signal": { "type": "null" } }
+      }
+    }
+  ]
+}
