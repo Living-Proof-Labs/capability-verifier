@@ -70,7 +70,12 @@ def _get(path: str, endpoint: str) -> dict | None:
             return None
         if response.status != 200:
             raise OSError(f"{endpoint}: HTTP {response.status}")
-        return json.loads(body)
+        document = json.loads(body)
+        if not isinstance(document, dict):
+            raise OSError(
+                f"{endpoint}: the engine returned {type(document).__name__}, not an object"
+            )
+        return document
     finally:
         connection.close()
 
@@ -111,7 +116,13 @@ def build_record(locked: str, seen: dict | None, problem: str | None = None) -> 
     record["container"] = seen["container"]
     record["image_id"] = seen["image_id"]
     record["repo_digests"] = seen["repo_digests"]
-    ours = [d.split("@", 1)[1] for d in seen["repo_digests"] if d.split("@", 1)[0] == repository]
+    ours = []
+    for entry in seen["repo_digests"]:
+        if not isinstance(entry, str):
+            continue
+        name, separator, digest = entry.partition("@")
+        if separator and digest and name == repository:
+            ours.append(digest)
     if not ours:
         record["unavailable"] = f"the engine reports no digest of {repository} for this image"
     elif locked_digest in ours:
