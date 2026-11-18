@@ -16,7 +16,6 @@ import threading
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
-import pytest
 import yaml
 
 ROOT = Path(__file__).parents[1]
@@ -54,7 +53,11 @@ class _Daemon:
                 parts = self.path.strip("/").split("/")
                 if parts[0] == "containers" and parts[-1] == "json" and parts[1] in containers:
                     # Config.Image echoes what the job was asked to run: not evidence.
-                    body = {"Id": parts[1] * 5, "Image": IMAGE_ID, "Config": {"Image": config_image}}
+                    body = {
+                        "Id": parts[1] * 5,
+                        "Image": IMAGE_ID,
+                        "Config": {"Image": config_image},
+                    }
                 elif parts[0] == "images" and parts[-1] == "json" and parts[1] == IMAGE_ID:
                     body = {"Id": IMAGE_ID, "RepoDigests": repo_digests}
                 else:
@@ -231,6 +234,9 @@ def test_the_evidence_job_records_the_image_into_the_artifact_run_integrity_read
     assert "needs.plan.outputs.verifier-image != ''" in source["if"]
     assert record["env"]["LOCKED_IMAGE"] == "${{ needs.plan.outputs.verifier-image }}"
     assert '--out "artifacts/evidence/$CONFIGURATION/verifier-image.json"' in record["run"]
+    # The engine is asked about the container the runner reports, not a guess from the hostname.
+    assert record["env"]["CONTAINER_ID"] == "${{ job.container.id }}"
+    assert '--container "$CONTAINER_ID"' in record["run"]
     assert upload["with"]["path"] == "artifacts/evidence/${{ matrix.configuration }}/"
     assert "image-record-src" in record["run"] and "rm -rf" in record["run"]
     assert names  # steps are named
@@ -242,9 +248,11 @@ def test_ci_runs_the_script_in_the_real_image_pulled_by_digest():
     reference = job["container"]["image"]
     repository, digest = _script().split_reference(reference)
     assert repository == IMAGE
+    assert reference.endswith("@" + digest) and digest != LOCKED
     assert job["env"]["LOCKED_IMAGE"] == reference
-    text = json.dumps(job["steps"])
+    text = "\n".join(step.get("run", "") + json.dumps(step.get("env", {})) for step in job["steps"])
     assert "record_verifier_image.py" in text
     # The job fails unless the engine's digest is the pinned one.
-    assert '"matches"' in text and "is not True" in text
+    assert 'record["matches"] is not True' in text
+    assert "--container" in text and "job.container.id" in text
     assert "verifier-image-record" in document["jobs"]["release"]["needs"]
