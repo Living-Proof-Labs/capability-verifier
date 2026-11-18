@@ -10,6 +10,7 @@ record is written, so a record never claims a match that did not happen.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import json
@@ -190,6 +191,78 @@ def test_command_line_takes_record_only_with_from():
         tool.main(["--record", "x.json"])
     with pytest.raises(SystemExit, match="usage"):
         tool.main(["--from"])
+
+
+def test_a_symlink_inside_the_checkout_that_points_outside_is_refused(tmp_path):
+    """A path that stays lexically inside the checkout is still refused if it is a symlink out.
+
+    The declared digest is of the outside bytes, so a check that followed the link and skipped
+    the boundary would pass and write a record.
+    """
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(FILES[DESCRIPTION])
+    repo = tmp_path / "specs.git"
+    repo.mkdir()
+    _git("init", "-q", cwd=repo)
+    dest = repo / DESCRIPTION
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.symlink_to(outside)
+    (repo / PARAMETERS).write_bytes(FILES[PARAMETERS])
+    _git("add", ".", cwd=repo)
+    _git("commit", "-q", "-m", "specs", cwd=repo)
+    commit = _git("rev-parse", "HEAD", cwd=repo)
+    manifest = _manifest(tmp_path, repo, commit, _declared())
+    record = tmp_path / "record.json"
+    with pytest.raises(SystemExit, match="inside the specs checkout"):
+        _fetch(tmp_path, manifest, record)
+    assert not record.exists()
+
+
+def test_the_record_comes_from_one_read_of_each_declared_file(tmp_path, monkeypatch):
+    """The record must use the bytes from the check, not a later read of the checkout."""
+    import pathlib
+
+    repo, commit = _specs_repo(tmp_path)
+    manifest = _manifest(tmp_path, repo, commit, _declared())
+    record = tmp_path / "record.json"
+    orig = pathlib.Path.read_bytes
+    reads: dict[str, int] = {}
+
+    def once_then_tamper(self: Path) -> bytes:
+        data = orig(self)
+        name = self.name
+        if name in {"description.json", "parameters.json"}:
+            reads[name] = reads.get(name, 0) + 1
+            if reads[name] > 1:
+                return data + b"#tampered"
+        return data
+
+    monkeypatch.setattr(pathlib.Path, "read_bytes", once_then_tamper)
+    _fetch(tmp_path, manifest, record)
+    written = json.loads(record.read_text())["files"]
+    for name, data in FILES.items():
+        assert written[name] == _sha(data)
+    assert reads["description.json"] == 1
+    assert reads["parameters.json"] == 1
+
+
+def test_the_recorded_digest_is_the_hash_of_the_bytes_read_not_the_lock_value():
+    """A matching run cannot tell `read[name] = actual` from `read[name] = expected`.
+
+    The record is only written when those two are equal, so Cody's behavioural test stays
+    green if the implementation copies the lock. This pins the assignment in
+    `_verify_specs_files`.
+    """
+    tree = ast.parse((ROOT / "tools" / "fetch_hallway_specs.py").read_text())
+    fn = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_verify_specs_files"
+    )
+    body = ast.unparse(fn)
+    assert "actual = hashlib.sha256(path.read_bytes()).hexdigest()" in body
+    assert "read[name] = actual" in body
+    assert "read[name] = expected" not in body
 
 
 def _job(name: str) -> dict:
