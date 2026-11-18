@@ -1302,11 +1302,11 @@ jobs:
         run: |
           uv sync --locked --directory run-integrity
           mkdir -p evaluator-results/livingproof-run-integrity
+          cp evidence/specs-files.json evaluator-results/livingproof-run-integrity/specs-files.json
           PYTHONPATH=run-integrity/src uv run --no-sync --directory run-integrity \
             python -m livingproof_evaluator_run \
             "$GITHUB_WORKSPACE/evidence/manifest.json" \
             --out "$GITHUB_WORKSPACE/evaluator-results/livingproof-run-integrity/result.json"
-          cp evidence/specs-files.json evaluator-results/livingproof-run-integrity/specs-files.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
