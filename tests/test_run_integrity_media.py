@@ -2,9 +2,10 @@
 """The run-integrity job gets the media artifact and passes it to the evaluator (#156).
 
 The evaluator's `--media DIR` arrived in livingproof-evaluator-run v1.4.0 (`recording` 1.0.0).
-The job downloads the media artifact only when the `media` job succeeded, and passes the
-directory only when the pinned evaluator accepts `--media`. Without media, or with an
-evaluator that predates the flag, the job runs as it always did and stays green.
+The job attempts this configuration's media artifact whenever the `media` job was not
+skipped, and passes the directory only when the pinned evaluator accepts `--media` as a
+flag. Without this configuration's artifact, or with an evaluator that predates the flag,
+the job runs as it always did and stays green.
 """
 
 import json
@@ -63,10 +64,14 @@ def test_run_integrity_waits_for_the_media_job_and_runs_whatever_it_did():
 
 
 def test_the_media_artifact_is_downloaded_only_when_the_media_job_succeeded():
+    # needs.media.result is the matrix aggregate. Attempt this configuration's artifact
+    # whenever the media job ran; fail closed only when the aggregate succeeded and the
+    # artifact is missing. A failed sibling must not drop an uploaded artifact.
     steps = _jobs()["run-integrity"]["steps"]
     download = next(s for s in steps if s.get("with", {}).get("path") == "media")
     assert "download-artifact" in download["uses"]
-    assert download["if"] == "${{ needs.media.result == 'success' }}"
+    assert download["if"] == "${{ needs.media.result != 'skipped' }}"
+    assert download["continue-on-error"] == "${{ needs.media.result != 'success' }}"
     assert (
         download["with"]["name"] == "${{ inputs.artifact-prefix }}mcap-${{ matrix.configuration }}"
     )
@@ -136,8 +141,19 @@ def test_media_is_passed_when_present_and_the_evaluator_takes_it(tmp_path):
 
 
 def test_no_media_directory_means_no_argument(tmp_path):
-    # The media job was disabled, skipped, or failed: the download step did not run.
+    # The media job was disabled, skipped, or this configuration's artifact was not uploaded.
     work, bindir = _setup(tmp_path, media=False, stub=True)
+    done, result = _run(
+        work, bindir, {"STUB_MEDIA": "1", "PYTHONPATH": str(work / "run-integrity" / "src")}
+    )
+    assert done.returncode == 0, done.stderr
+    assert "--media" not in result["argv"]
+
+
+def test_an_empty_media_directory_without_media_json_is_not_passed(tmp_path):
+    # A failed download with continue-on-error may leave an empty media/ directory.
+    work, bindir = _setup(tmp_path, media=False, stub=True)
+    (work / "media").mkdir()
     done, result = _run(
         work, bindir, {"STUB_MEDIA": "1", "PYTHONPATH": str(work / "run-integrity" / "src")}
     )
@@ -334,3 +350,5 @@ def test_a_media_matrix_failure_must_not_drop_another_configurations_recordings(
     download = next(s for s in integrity["steps"] if s.get("with", {}).get("path") == "media")
     assert "matrix.configuration" in download["with"]["name"]
     assert download["if"] != "${{ needs.media.result == 'success' }}"
+    assert download["if"] == "${{ needs.media.result != 'skipped' }}"
+    assert download["continue-on-error"] == "${{ needs.media.result != 'success' }}"

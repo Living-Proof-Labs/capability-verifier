@@ -1293,9 +1293,15 @@ jobs:
         # declared specs file as read from the checkout, and the commit it resolved to.
         run: uv run --no-sync python tools/fetch_hallway_specs.py --from evidence/manifest.json --record evidence/specs-files.json
       - name: Recordings and media.json from the media job
-        # media.json and mcap/, as the media job uploaded them. Only when that job succeeded:
-        # media off, not media-capable, evidence failed, or the job failed leave no directory.
-        if: ${{ needs.media.result == 'success' }}
+        # media.json and mcap/, as the media job uploaded them, for this configuration.
+        # needs.media.result is the matrix aggregate, so this step still attempts the
+        # artifact when another media leg failed. If the aggregate succeeded and the
+        # artifact is missing, the download fails (do not silently grade without
+        # recordings). If the aggregate is not success and the artifact is missing,
+        # continue without --media. A skipped media job (off, not media-capable, or
+        # evidence failed) leaves no directory.
+        if: ${{ needs.media.result != 'skipped' }}
+        continue-on-error: ${{ needs.media.result != 'success' }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ${{ inputs.artifact-prefix }}mcap-${{ matrix.configuration }}
@@ -1314,10 +1320,12 @@ jobs:
           cp evidence/specs-files.json evaluator-results/livingproof-run-integrity/specs-files.json
           # --media arrived in livingproof-evaluator-run v1.4.0. A pinned livingproof-evaluator-run
           # that does not list it in --help (v1.0.0, the default, to v1.3.1) is not given it.
+          # Match it as a whole flag so a longer option such as --media-dir is not treated as it.
+          # Require media.json so a failed download that left an empty media/ is not given --media.
           set --
-          if [ -d "$GITHUB_WORKSPACE/media" ]; then
+          if [ -f "$GITHUB_WORKSPACE/media/media.json" ]; then
             if PYTHONPATH=run-integrity/src uv run --no-sync --directory run-integrity \
-                python -m livingproof_evaluator_run --help | grep -q -e '--media'; then
+                python -m livingproof_evaluator_run --help | grep -Eq -- '--media([^[:alnum:]-]|$)'; then
               set -- --media "$GITHUB_WORKSPACE/media"
             else
               echo "the pinned evaluator does not take --media; running without media"
