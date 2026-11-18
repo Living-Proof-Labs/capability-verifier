@@ -39,7 +39,17 @@ def _script():
 class _Daemon:
     """A container engine that answers the two inspect calls over a unix socket."""
 
-    def __init__(self, tmp_path, repo_digests, containers=(CONTAINER,), config_image=REFERENCE):
+    def __init__(
+        self,
+        tmp_path,
+        repo_digests,
+        containers=(CONTAINER,),
+        config_image=REFERENCE,
+        container_status=200,
+        image_status=200,
+        container_raw=None,
+        image_raw=None,
+    ):
         self.path = str(tmp_path / "docker.sock")
         self.requests = []
         daemon = self
@@ -48,10 +58,21 @@ class _Daemon:
             def log_message(self, *args):
                 pass
 
+            def _send(self, status, data):
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                if data:
+                    self.wfile.write(data)
+
             def do_GET(self):
                 daemon.requests.append(self.path)
                 parts = self.path.strip("/").split("/")
                 if parts[0] == "containers" and parts[-1] == "json" and parts[1] in containers:
+                    if container_raw is not None or container_status != 200:
+                        self._send(container_status, container_raw or b"")
+                        return
                     # Config.Image echoes what the job was asked to run: not evidence.
                     body = {
                         "Id": parts[1] * 5,
@@ -59,6 +80,9 @@ class _Daemon:
                         "Config": {"Image": config_image},
                     }
                 elif parts[0] == "images" and parts[-1] == "json" and parts[1] == IMAGE_ID:
+                    if image_raw is not None or image_status != 200:
+                        self._send(image_status, image_raw or b"")
+                        return
                     body = {"Id": IMAGE_ID, "RepoDigests": repo_digests}
                 else:
                     self.send_response(404)
@@ -191,6 +215,26 @@ def test_the_container_is_found_from_the_hostname_or_the_mount_table():
     assert module.container_ids("", mountinfo) == [full]
 
 
+def test_an_engine_http_error_is_recorded_as_unknown_not_as_a_match(tmp_path):
+    with _Daemon(tmp_path, [f"{IMAGE}@{LOCKED}"], container_status=500) as daemon:
+        result, record = _run(tmp_path, daemon.path)
+    assert result.returncode == 0
+    assert record["digest"] is None
+    assert record["matches"] is None
+    assert "HTTP 500" in record["unavailable"]
+    assert "::warning" in result.stderr
+
+
+def test_a_malformed_inspect_response_is_recorded_as_unknown_not_as_a_match(tmp_path):
+    with _Daemon(tmp_path, [f"{IMAGE}@{LOCKED}"], image_raw=b"{not json") as daemon:
+        result, record = _run(tmp_path, daemon.path)
+    assert result.returncode == 0
+    assert record["digest"] is None
+    assert record["matches"] is None
+    assert "unavailable" in record
+    assert "::warning" in result.stderr
+
+
 def test_a_lock_reference_must_carry_a_sha256_digest(tmp_path):
     out = tmp_path / "x.json"
     for reference in (f"{IMAGE}:2.3.1", f"{IMAGE}@sha256:abc", "", f"@{LOCKED}"):
@@ -238,6 +282,7 @@ def test_the_evidence_job_records_the_image_into_the_artifact_run_integrity_read
     assert record["env"]["CONTAINER_ID"] == "${{ job.container.id }}"
     assert '--container "$CONTAINER_ID"' in record["run"]
     assert upload["with"]["path"] == "artifacts/evidence/${{ matrix.configuration }}/"
+    assert "always()" in str(upload.get("if"))
     assert "image-record-src" in record["run"] and "rm -rf" in record["run"]
     assert names  # steps are named
 
