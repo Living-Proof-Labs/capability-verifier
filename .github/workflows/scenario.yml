@@ -1259,11 +1259,12 @@ jobs:
   run-integrity:
     # Second evaluator job: livingproof-run-integrity (kind integrity,
     # execution deterministic) on the evidence artifact, after the robot
-    # (scenario) evaluator in this file. Needs evidence only, like
-    # scenario-evaluator, so it can run alongside it.
+    # (scenario) evaluator in this file. Needs evidence, and the media job for the
+    # recordings the recording check reads, so it waits for verify and media (report already
+    # did). With media off, skipped or failed it runs without media.
     # Tag-only pin: checkout the tag, never a commit. Plan defaults the
     # pin to livingproof-evaluator-run v1.0.0 when the lock omits it.
-    needs: [plan, evidence]
+    needs: [plan, evidence, media]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     container:
@@ -1291,6 +1292,14 @@ jobs:
         # Writes evidence/specs-files.json beside manifest.json: the sha256 of each
         # declared specs file as read from the checkout, and the commit it resolved to.
         run: uv run --no-sync python tools/fetch_hallway_specs.py --from evidence/manifest.json --record evidence/specs-files.json
+      - name: Recordings and media.json from the media job
+        # media.json and mcap/, as the media job uploaded them. Only when that job succeeded:
+        # media off, not media-capable, evidence failed, or the job failed leave no directory.
+        if: ${{ needs.media.result == 'success' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact-prefix }}mcap-${{ matrix.configuration }}
+          path: media
       - name: Run Integrity evaluator at the locked pin
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -1303,9 +1312,21 @@ jobs:
           uv sync --locked --directory run-integrity
           mkdir -p evaluator-results/livingproof-run-integrity
           cp evidence/specs-files.json evaluator-results/livingproof-run-integrity/specs-files.json
+          # --media arrived in livingproof-evaluator-run v1.4.0. A pinned livingproof-evaluator-run
+          # that does not list it in --help (v1.0.0, the default, to v1.3.1) is not given it.
+          set --
+          if [ -d "$GITHUB_WORKSPACE/media" ]; then
+            if PYTHONPATH=run-integrity/src uv run --no-sync --directory run-integrity \
+                python -m livingproof_evaluator_run --help | grep -q -e '--media'; then
+              set -- --media "$GITHUB_WORKSPACE/media"
+            else
+              echo "the pinned evaluator does not take --media; running without media"
+            fi
+          fi
           PYTHONPATH=run-integrity/src uv run --no-sync --directory run-integrity \
             python -m livingproof_evaluator_run \
             "$GITHUB_WORKSPACE/evidence/manifest.json" \
+            "$@" \
             --out "$GITHUB_WORKSPACE/evaluator-results/livingproof-run-integrity/result.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
