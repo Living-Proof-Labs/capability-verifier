@@ -1696,18 +1696,18 @@ def test_scenario_evaluator_refuses_a_build_that_reports_a_dev_version(tmp_path)
     assert "package-marker" not in done.stdout
 
 
-def test_run_integrity_job_is_enabled_and_checks_out_the_v1_0_0_tag():
+def test_run_integrity_job_is_enabled_and_checks_out_the_v1_5_0_tag():
     """The job is on by default and checks out evaluators.livingproof-evaluator-run by tag.
 
     The pin is tag-only (no commit). When the lock omits the pin, plan defaults
-    to Living-Proof-Labs/livingproof-evaluator-run @ v1.0.0 so the job still runs.
+    to Living-Proof-Labs/livingproof-evaluator-run @ v1.5.0 so the job still runs.
     """
     import yaml
 
     refs = _step("Refs from verification.lock.json")
     assert "run-integrity-commit=" not in refs
     assert "Living-Proof-Labs/livingproof-evaluator-run" in refs
-    assert 'tag="v1.0.0"' in refs or "tag=v1.0.0" in refs or "tag='v1.0.0'" in refs
+    assert 'tag="v1.5.0"' in refs or "tag=v1.5.0" in refs or "tag='v1.5.0'" in refs
     assert "run-integrity-tag=" in refs
     assert "run-integrity-commit:" not in STEPS
     assert "needs.plan.outputs.run-integrity-commit" not in STEPS

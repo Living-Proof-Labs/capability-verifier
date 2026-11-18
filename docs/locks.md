@@ -201,7 +201,9 @@ configuration sha256s.
 tag-only pin: `repository` (`OWNER/NAME`) and `tag` (`vX.Y.Z`). There is
 no commit field. When the lock omits the pin, the walk-hallway
 run-integrity job defaults to `Living-Proof-Labs/livingproof-evaluator-run`
-at `v1.0.0`.
+at `v1.5.0`. An explicit lock pin still takes precedence. This default supports
+recording integrity via `--media`; applicability remains determined by the run’s
+declared recording limits, not by the evaluator version alone.
 
 The assessing jobs fetch the specs commit the evidence lock declares with
 `tools/fetch_hallway_specs.py --from evidence/manifest.json`. Every file in

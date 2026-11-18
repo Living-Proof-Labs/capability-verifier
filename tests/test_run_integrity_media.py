@@ -163,7 +163,7 @@ def test_an_empty_media_directory_without_media_json_is_not_passed(tmp_path):
 
 
 def test_an_evaluator_that_predates_the_flag_is_not_given_it(tmp_path):
-    # v1.0.0 (the default pin) to v1.3.1 do not know --media; passing it would fail the job.
+    # v1.0.0 (an explicit historical pin) to v1.3.1 do not know --media; passing it would fail the job.
     work, bindir = _setup(tmp_path, media=True, stub=True)
     done, result = _run(
         work, bindir, {"STUB_MEDIA": "0", "PYTHONPATH": str(work / "run-integrity" / "src")}
@@ -411,3 +411,21 @@ def test_download_gate_for_each_media_job_result():
         assert (result != "success") is continue_on_error, result
         missing_artifact_fails_job = attempt and not continue_on_error
         assert missing_artifact_fails_job is (result == "success"), result
+
+
+@pytest.mark.parametrize("gap,applicable", [(None, False), (0.05, True)])
+def test_default_evaluator_grades_retained_hallway_recordings(tmp_path, gap, applicable):
+    # Exercise the actual workflow fallback, not a separate test-only release pin.
+    refs = definition.step(WORKFLOW, "Refs from verification.lock.json")
+    match = re.search(r'\[ -n "\$tag" \] \|\| tag="([^"]+)"', refs)
+    assert match is not None
+    assert match.group(1) == "v1.5.0"
+    done, result = _real_media_job(tmp_path, gap=gap, tag=match.group(1))
+    assert done.returncode == 0, done.stderr
+    assert result["evaluator"]["version"] == "1.5.0"
+    recording = _recording(result)
+    assert recording["applicable"] is applicable
+    assert recording["success"] is True
+    if applicable:
+        assert recording["percentage"] == 100
+        assert recording["limits"] == {"max_gap_seconds": gap}
