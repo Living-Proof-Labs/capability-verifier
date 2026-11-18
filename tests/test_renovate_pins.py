@@ -47,7 +47,7 @@ def config():
 
 def disabled_rules():
     rules = [rule for rule in config()["packageRules"] if rule.get("enabled") is False]
-    assert len(rules) == len(config()["packageRules"]) == 2
+    assert len(rules) == 2
     for rule in rules:
         assert rule["matchFileNames"]
         assert rule["matchPackageNames"]
@@ -197,3 +197,23 @@ def test_runtime_dependencies_are_not_disabled():
     assert RUNTIME_PACKAGE not in disabled
     assert RUNTIME_REPORTER not in disabled
     assert all(RUNTIME_FILE not in rule["matchFileNames"] for rule in disabled_rules())
+
+
+SELF_IMAGE = "ghcr.io/living-proof-labs/capability-verifier-hallway"
+
+
+def test_self_image_pin_is_never_automerged():
+    # An automerged pin to our own image is a releasable commit that publishes the next image,
+    # so Renovate would chase every release forever. The pin moves only by a reviewed merge.
+    found = [
+        rule for rule in config()["packageRules"] if SELF_IMAGE in rule.get("matchPackageNames", [])
+    ]
+    assert len(found) == 1
+    rule = found[0]
+    assert rule["automerge"] is False
+    assert rule["schedule"] == ["* * 1 * *"]
+    assert "enabled" not in rule
+    assert set(rule) == {"description", "matchPackageNames", "automerge", "schedule"}
+    assert rule["matchPackageNames"] == [SELF_IMAGE]
+    assert SELF_IMAGE in (ROOT / ".github/workflows/verify.yml").read_text()
+    assert SELF_IMAGE in (ROOT / ".devcontainer/hallway/devcontainer.json").read_text()
