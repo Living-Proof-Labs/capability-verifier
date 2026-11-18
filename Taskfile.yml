@@ -7,6 +7,10 @@ env:
     # X.Y.Z only when HEAD is exactly the release tag vX.Y.Z; any other commit is "dev".
     sh: 'if [ -n "$LIVINGPROOF_VERIFIER_VERSION" ]; then echo "$LIVINGPROOF_VERIFIER_VERSION"; elif t=$(git describe --tags --exact-match --match "v[0-9]*.[0-9]*.[0-9]*" HEAD 2>/dev/null); then echo "${t#v}"; else echo dev; fi'
 tasks:
+  release:classify:
+    desc: Classify self-image-only release history (Git and Python 3 required)
+    cmds:
+      - python3 tools/release_eligibility.py
   devcontainer:verify:
     desc: Build and exercise the documented development container (Docker and Node required)
     cmds:

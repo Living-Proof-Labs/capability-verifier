@@ -63,3 +63,27 @@ The development target adds a non-root `developer` user to the same runtime.
 Development Containers matches that user's identifier to the host workspace owner,
 so Git can read its history without a trust exception. Development runs explicitly
 identify their producer as `dev`, never as a released verifier version.
+
+### Development self-image refreshes
+
+The hallway development container pins this repository's own released image by
+version and digest. Releasing another product version solely because that pin
+changed would create a release feedback loop. As a narrow local exception to
+maintenance releases, `task release:classify` examines every first-parent change
+since the highest reachable stable release tag. Only changes to the `image`
+value in `.devcontainer/hallway/devcontainer.json`, retaining the same image
+repository and explicit version plus SHA-256 digest, suppress release creation.
+Other development-container changes, other maintenance work, and mixed runtime
+fixes or features retain the shared semantic-release policy. Missing or shallow
+release history never suppresses a release. Git history-query errors fail the
+classification step rather than silently skipping a release. An unreadable or
+invalid self-image configuration conservatively retains normal release policy.
+
+These tooling refreshes remain recorded in their pull requests and Git history;
+tags and old evidence are never rewritten. Normal verification still runs. The
+classification only gates product release creation and its dependent image
+publication, so a self-pin refresh cannot alone create the next image or a new
+downstream release to adopt. The next substantive release naturally includes the
+tooling refresh in its history. The classifier needs Git and Python 3; CI uses its
+full-history checkout and the hosted runner's Python 3. Tests use disposable Git
+histories, including mixed changes and a runtime change reverted before the pin.

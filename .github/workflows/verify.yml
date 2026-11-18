@@ -31,6 +31,7 @@ jobs:
   verify:
     outputs:
       source-version: ${{ steps.identity.outputs.version }}
+      release-eligible: ${{ steps.release-policy.outputs.eligible }}
     permissions:
       contents: read
       checks: write # Only for the test-report check; fork PR tokens remain read-only.
@@ -49,6 +50,9 @@ jobs:
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
           version: '3.54.0'
+      - name: Classify release eligibility
+        id: release-policy
+        run: task --silent release:classify >> "$GITHUB_OUTPUT"
       - name: Identify verifier source
         id: identity
         run: echo "version=$(git describe --tags --always --long)" >> "$GITHUB_OUTPUT"
@@ -278,7 +282,7 @@ jobs:
         run: python tools/test_results.py --name "$REPORT_NAME" --path "$REPORT_PATH" --publish-check "$PUBLISH_CHECK"
   release:
     needs: [verify, report, report-results, documentation, devcontainer]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.verify.outputs.release-eligible == 'true'
     permissions:
       contents: write
     uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@v9.6.13
