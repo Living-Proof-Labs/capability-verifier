@@ -685,3 +685,70 @@ the `sha256:` prefix. The two spellings are not interchangeable:
 `configurations[].sha256` set to a `sha256:` digest fails
 `.sha256 must be 64 hex characters`, and `releases.reporter.digest` set to a
 bare 64-character hash fails `.digest must be a sha256 digest`.
+
+## How the evidence step ended
+
+The `evidence` job writes `evidence-ending.json` (`livingproof-evidence-ending/0.1`) into the
+evidence artifact, beside `manifest.json`, whether the step succeeded, failed, was cancelled or
+timed out. The Run Integrity job downloads that artifact, so it can tell these cases apart
+even when the runner left no `manifest.json`. The JSON Schema is
+`src/capability_verifier/livingproof-evidence-ending-0.1.schema.json`, and the tests check every
+record the workflow writes against it. Fields:
+
+| Field | Meaning |
+| --- | --- |
+| `configuration` | The configuration name of this matrix leg |
+| `ended` | `exited` (the runner command returned an exit code), `signalled` (the exit code was 128+N, how a shell reports a process killed by signal N) or `unfinished` (the step's own shell never reached the end of the command) |
+| `exit_code` | The runner command's exit code as the step's shell saw it, or `null` when `unfinished` |
+| `signal` | The signal name for `signalled` (`KILL` for 137, `TERM` for 143), otherwise `null` |
+| `step_outcome` | The workflow's outcome for the evidence step: `success`, `failure`, `cancelled` or `skipped` |
+| `manifest_present` | Whether `manifest.json` was in the uploaded directory |
+| `planned_trials` | `plan.trials.count` from the run's lock, or `null` when the lock has no whole-number count of zero or more |
+
+How to read it: `exited` with `exit_code` 0 is a clean run. Exit 4 is trials that disagreed (the
+manifest carries the test-system finding and the step continues). Any other non-zero exit is a
+runner failure. `signalled` is a runner killed from outside, for example by the kernel's
+out-of-memory killer. `unfinished` with `step_outcome` `cancelled` is a job timeout or a
+cancellation, and `unfinished` with `failure` is a step whose shell died. A program that itself
+exits with a code above 128 is recorded as `signalled`. A run on a verifier release before this
+file has no `evidence-ending.json`, and neither does a job whose runner or virtual machine
+disappears, because no later step runs.
+
+Hosted-runner behaviour, checked with throwaway probe workflows (branch `scratch/155-probe`,
+since deleted) in a container job on `ubuntu-24.04`: when the job timeout cancels the step, or
+the run is cancelled, or the step's shell is killed with SIGKILL, the next `if: always()` step
+still runs, sees the evidence step's outcome as `cancelled` or `failure`, and the artifact upload
+after it succeeds. The probes did not run this workflow and did not write `evidence-ending.json`;
+they show the `always()` and upload pattern only. The Python that writes the record is covered by
+the tests, not by a hosted run.
+
+A temp record from the evidence step that is not a complete `exited` or `signalled` object (a
+missing key, a wrong type) is not used: the record says `unfinished` with a `null` exit code and
+signal, and the job log shows what was there.
+
+The `run-integrity` job runs when the evidence job failed. With no `manifest.json`, it does not
+fail on the missing file: when `planned_trials` is a whole number above zero, it writes a stand-in
+manifest, `no-evidence/stand-in-manifest.json`, that carries `plan.trials.count` from
+`planned_trials`, no trial results, and the ending record, and runs the Run Integrity evaluator
+on it. The evaluator then reports each planned trial as missing in its own words, and the
+result's input is named as the stand-in.
+
+When there is no usable planned trial count, the job has no result to write and **fails** with
+an `::error::` that names the cause. It also writes
+`evaluator-results/livingproof-run-integrity/no-result.txt` with the same sentence, so the
+artifact upload that follows has a file to keep and the job's only failure is the named one.
+`no-result.txt` is not a result document, and the report ignores it. The cases:
+
+| Case | Message says |
+| --- | --- |
+| No `evidence-ending.json` in the artifact | `evidence-ending.json is missing from the evidence artifact` |
+| The file cannot be read or is not JSON | `evidence-ending.json cannot be read` |
+| The file is not a JSON object | `evidence-ending.json is not a JSON object` |
+| No `planned_trials` key | `planned_trials is missing from evidence-ending.json` |
+| `planned_trials` is `null` (the lock has no `plan.trials.count`) | `planned_trials is null` |
+| `planned_trials` is not a whole number (a string, a boolean, a float) | `planned_trials is not a whole number` |
+| `planned_trials` is 0 or negative | `planned_trials is 0` (or the negative value): the evaluator does not take a plan with no trials |
+
+No stand-in is evaluated for these. The report job runs only when `verify` succeeded, which needs
+the evidence job, so a run in this state is already failed and nothing downstream reads a missing
+result.
