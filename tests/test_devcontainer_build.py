@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -60,9 +62,9 @@ class DevcontainerBuildTests(unittest.TestCase):
     def test_release_waits_for_devcontainer(self):
         workflow = (ROOT / ".github/workflows/verify.yml").read_text()
         self.assertIn("task devcontainer:verify", workflow)
-        self.assertIn(
-            "needs: [verify, report, report-results, documentation, devcontainer]", workflow
-        )
+        needs = yaml.safe_load(workflow)["jobs"]["release"]["needs"]
+        for job in ("verify", "report", "report-results", "documentation", "devcontainer"):
+            self.assertIn(job, needs)
         taskfile = (ROOT / "Taskfile.yml").read_text()
         self.assertIn("@devcontainers/cli@0.90.0 up", taskfile)
         self.assertIn("@devcontainers/cli@0.90.0 exec", taskfile)
