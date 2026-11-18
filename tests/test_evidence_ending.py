@@ -187,6 +187,34 @@ def test_a_stale_file_from_an_earlier_attempt_is_not_read(tmp_path):
     assert record["ended"] == "unfinished"
 
 
+@pytest.mark.parametrize(
+    "payload",
+    ["{}", '{"ended": "exited"}', '{"ended": "exited", "exit_code": 1}'],
+    ids=["empty-object", "missing-exit-and-signal", "missing-signal"],
+)
+def test_an_incomplete_temp_record_is_still_recorded_as_unfinished(tmp_path, payload):
+    # Invalid JSON is already unfinished. A valid object with missing keys must not
+    # be unlinked and then crash, leaving the artifact with no record.
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    temp = tmp_path / "runner-temp"
+    temp.mkdir()
+    (temp / "evidence-ending.json").write_text(payload)
+    env = {
+        **os.environ,
+        "RUNNER_TEMP": str(temp),
+        "CONFIGURATION": "go1",
+        "STEP_OUTCOME": "failure",
+    }
+    finish = _run(definition.step(WORKFLOW, "Evidence ending"), robot, env)
+    record_path = robot / "artifacts" / "evidence" / "go1" / "evidence-ending.json"
+    assert finish.returncode == 0, finish.stderr
+    assert record_path.is_file()
+    record = json.loads(record_path.read_text())
+    assert record["ended"] == "unfinished"
+    assert record["exit_code"] is None and record["signal"] is None
+
+
 def test_the_record_is_written_even_when_the_runner_made_no_evidence_directory(tmp_path):
     _, _, record = _go(tmp_path, outcome="failure", EVIDENCE_MODE="exit", EVIDENCE_EXIT="2")
     assert record is not None
@@ -303,6 +331,32 @@ def test_no_manifest_and_no_planned_count_keeps_the_job_green_and_says_so(tmp_pa
     assert "::warning::" in done.stdout + done.stderr
     done, result = _integrity(tmp_path, None, "again")
     assert done.returncode == 0 and result is None
+
+
+@pytest.mark.parametrize(
+    "ending",
+    [
+        {**KILLED, "planned_trials": None},
+        {**KILLED, "planned_trials": 0},
+        {**KILLED, "planned_trials": "3"},
+        None,
+    ],
+    ids=["null-count", "zero-count", "malformed-count", "no-ending-file"],
+)
+def test_no_result_still_leaves_a_file_for_the_integrity_upload(tmp_path, ending):
+    # The job's upload-artifact step uses if-no-files-found: error. An empty
+    # evaluator-results/ directory would fail the job after the script exits 0.
+    job = yaml.safe_load(WORKFLOW)["jobs"]["run-integrity"]
+    upload = next(s for s in job["steps"] if "upload-artifact" in s.get("uses", ""))
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert upload["with"]["path"] == "evaluator-results/"
+    _checkout(tmp_path, "v1.0.0")
+    done, result = _integrity(tmp_path, ending)
+    assert done.returncode == 0, done.stderr
+    assert result is None
+    work = tmp_path / "work"
+    files = [p for p in (work / "evaluator-results").rglob("*") if p.is_file()]
+    assert files, "evaluator-results/ has no files; upload-artifact would fail the job"
 
 
 def test_the_run_integrity_job_downloads_what_it_always_did():
