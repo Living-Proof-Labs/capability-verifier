@@ -661,6 +661,31 @@ existing robot `verification.lock.json` byte for byte.
 
 <span id="recorded-hashes"></span>
 
+## Recordings in the Run Integrity job
+
+The `run-integrity` job also needs the `media` job. Whenever that job was not skipped it attempts
+this configuration's artifact, `<prefix>mcap-<configuration>` (`media.json` and `mcap/`), into
+`media/`. `needs.media.result` is the matrix aggregate, so one failed configuration must not drop
+another's already-uploaded recordings. If the aggregate succeeded and this artifact is missing, the
+download fails: the job does not silently grade without recordings. If the aggregate is not success
+and the artifact is missing, the job continues without `--media`. When `media.json` is present, the
+job passes the directory to the evaluator as `--media "$GITHUB_WORKSPACE/media"`. The flag arrived
+in livingproof-evaluator-run v1.4.0 with the `recording` check. The job passes it only when the
+pinned evaluator lists `--media` as a whole flag in its `--help` (not as a prefix of a longer
+option such as `--media-dir`), so a lock that pins an earlier tag, or none (the default is
+v1.0.0), runs exactly as before.
+
+With media off, not media-capable, skipped because the evidence step failed, or with no uploaded
+artifact for this configuration, there is no usable `media/media.json` and the job runs without
+`--media`: it stays green, and v1.4.0 and later report `recording` as not applicable. The gap
+limit is `plan.recording.max_gap_seconds`, read by the evaluator from the evidence manifest and
+then the lock. Neither this repository nor the evaluator has a default for it, so a run that
+declares none is not judged, with or without media.
+
+Run Integrity starts after `verify` and `media` (the `media` job needs `verify`), where it used to
+start after `evidence`. `report` already waited for all of them, so the run's total time does not
+change, and only the time the integrity result is ready moves later.
+
 ## Recorded hashes
 
 Record a hash, a commit or an image digest by running the command that computes
