@@ -283,3 +283,15 @@ def test_the_run_integrity_job_writes_the_record_beside_the_evidence_manifest():
     # The record is kept with the integrity result.
     text = json.dumps(steps[evaluate])
     assert "specs-files.json" in text
+
+
+def test_the_record_is_copied_beside_the_result_before_the_evaluator_runs():
+    """Steps run under bash -e, so a copy placed after the evaluator is skipped when the
+    evaluator fails, and the uploaded artifact then lacks the record exactly when it is
+    most needed. The copy must come before the evaluator command."""
+    steps = _job("run-integrity")["steps"]
+    run = next(s for s in steps if s.get("name") == "Run Integrity, one result for the run")["run"]
+    copy = run.index(
+        "cp evidence/specs-files.json evaluator-results/livingproof-run-integrity/specs-files.json"
+    )
+    assert copy < run.index("python -m livingproof_evaluator_run"), run
