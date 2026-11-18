@@ -205,7 +205,9 @@ SELF_IMAGE = "ghcr.io/living-proof-labs/capability-verifier-hallway"
 def test_self_image_pin_is_never_automerged():
     # An automerged pin to our own image is a releasable commit that publishes the next image,
     # so Renovate would chase every release forever. The pin moves only by a reviewed merge.
-    found = [rule for rule in config()["packageRules"] if SELF_IMAGE in rule.get("matchPackageNames", [])]
+    found = [
+        rule for rule in config()["packageRules"] if SELF_IMAGE in rule.get("matchPackageNames", [])
+    ]
     assert len(found) == 1
     rule = found[0]
     assert rule["automerge"] is False
@@ -214,3 +216,4 @@ def test_self_image_pin_is_never_automerged():
     assert set(rule) == {"description", "matchPackageNames", "automerge", "schedule"}
     assert rule["matchPackageNames"] == [SELF_IMAGE]
     assert SELF_IMAGE in (ROOT / ".github/workflows/verify.yml").read_text()
+    assert SELF_IMAGE in (ROOT / ".devcontainer/hallway/devcontainer.json").read_text()
