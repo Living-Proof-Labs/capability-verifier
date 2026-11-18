@@ -51,7 +51,10 @@ class DevcontainerBuildTests(unittest.TestCase):
     def test_default_devcontainer_reuses_runtime(self):
         config = json.loads((ROOT / ".devcontainer/devcontainer.json").read_text())
         self.assertEqual(config["build"]["dockerfile"], "../Dockerfile")
-        self.assertEqual(config["build"]["target"], "runtime")
+        self.assertEqual(config["build"]["target"], "development")
+        self.assertEqual(config["remoteUser"], "developer")
+        self.assertTrue(config["updateRemoteUserUID"])
+        self.assertEqual(config["containerEnv"]["LIVINGPROOF_VERIFIER_VERSION"], "dev")
         self.assertEqual(config["postCreateCommand"], "task -t Taskfile.runtime.yml setup")
 
     def test_release_waits_for_devcontainer(self):

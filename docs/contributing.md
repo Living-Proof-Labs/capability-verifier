@@ -58,3 +58,8 @@ not GitHub Codespaces account provisioning or the hosted editor connection.
 The Task installer is downloaded with curl and its pinned SHA-256 is checked
 before execution. This avoids depending on a builder's support for remote
 `ADD --checksum`; a download or checksum failure stops the image build.
+
+The development target adds a non-root `developer` user to the same runtime.
+Development Containers matches that user's identifier to the host workspace owner,
+so Git can read its history without a trust exception. Development runs explicitly
+identify their producer as `dev`, never as a released verifier version.

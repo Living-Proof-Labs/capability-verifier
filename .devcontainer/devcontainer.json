@@ -1,7 +1,22 @@
 {
   "name": "Capability verifier runtime",
-  "build": {"dockerfile": "../Dockerfile", "context": "..", "target": "runtime"},
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": "..",
+    "target": "development"
+  },
   "overrideCommand": true,
   "postCreateCommand": "task -t Taskfile.runtime.yml setup",
-  "customizations": {"vscode": {"extensions": ["ms-python.python"]}}
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python"
+      ]
+    }
+  },
+  "remoteUser": "developer",
+  "updateRemoteUserUID": true,
+  "containerEnv": {
+    "LIVINGPROOF_VERIFIER_VERSION": "dev"
+  }
 }

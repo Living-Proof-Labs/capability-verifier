@@ -30,6 +30,7 @@ JOBS_WITHOUT_A_CHECK = ("documentation", "report-results")
 # Permissions blocks as they stand on main. documentation and report-results
 # inherit the workflow contents: read and have no checks: write.
 JOB_PERMISSIONS = {
+    "devcontainer": None,
     "verify": {"contents": "read", "checks": "write"},
     "report": None,
     "report-results": None,

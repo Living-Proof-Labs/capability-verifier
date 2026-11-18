@@ -24,6 +24,11 @@ RUN --mount=type=secret,id=ca,required=false \
 ENTRYPOINT ["task", "-t", "Taskfile.runtime.yml"]
 CMD ["demo"]
 
+# Development container: match the host workspace owner rather than relaxing Git trust.
+FROM runtime AS development
+RUN useradd --create-home --uid 1000 developer
+USER developer
+
 # Browser tooling is isolated from the existing fixture runtime.
 FROM runtime AS documentation
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
