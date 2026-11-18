@@ -39,7 +39,9 @@ exec python3 "$@"
 # text with or without --media.
 STUB = """import json, os, sys
 if "--help" in sys.argv:
-    print("usage: livingproof_evaluator_run [-h] --out OUT" + (" [--media MEDIA]" if os.environ["STUB_MEDIA"] == "1" else "") + " source")
+    flag = os.environ.get("STUB_MEDIA", "")
+    extra = {"1": " [--media MEDIA]", "dir": " [--media-dir DIR]"}.get(flag, "")
+    print("usage: livingproof_evaluator_run [-h] --out OUT" + extra + " source")
     raise SystemExit(0)
 out = sys.argv[sys.argv.index("--out") + 1]
 os.makedirs(os.path.dirname(out), exist_ok=True)
@@ -222,17 +224,17 @@ REAL_MEDIA = ROOT / "tests/fixtures/run-integrity-media"
 GO1_EVIDENCE = ROOT / "tests/fixtures/lpv-run-43402628666/unitree-go1-playground/evidence"
 
 
-def _real_media_job(tmp_path, *, gap):
-    """The job step on real Go1 evidence and its real recordings, with the real v1.4.0."""
+def _real_media_job(tmp_path, *, gap, tag="v1.4.0"):
+    """The job step on real Go1 evidence and its real recordings, at a released evaluator tag."""
     checkout = tmp_path / "run-integrity"
     clone = subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", "v1.4.0", RUN_INTEGRITY_REPO, str(checkout)],
+        ["git", "clone", "--depth", "1", "--branch", tag, RUN_INTEGRITY_REPO, str(checkout)],
         capture_output=True,
         text=True,
         check=False,
     )
     if clone.returncode != 0:
-        pytest.fail(f"could not clone {RUN_INTEGRITY_REPO}@v1.4.0: {clone.stderr}")
+        pytest.fail(f"could not clone {RUN_INTEGRITY_REPO}@{tag}: {clone.stderr}")
     sync = subprocess.run(
         ["uv", "sync", "--locked", "--directory", str(checkout)],
         capture_output=True,
@@ -272,3 +274,63 @@ def test_the_real_recordings_are_not_judged_without_a_declared_limit(tmp_path):
     recording = _recording(result)
     assert recording["applicable"] is False
     assert recording["success"] is True
+
+
+def test_v1_3_1_with_media_present_runs_as_before(tmp_path):
+    # The last pre-flag release must not be given --media; passing it would fail the job.
+    done, result = _real(tmp_path, "v1.3.1", media=True)
+    assert done.returncode == 0, done.stderr
+    assert "does not take --media" in done.stdout + done.stderr
+    assert result["integrity"]["run"]["success"] is True
+    assert _recording(result) is None
+
+
+@pytest.mark.parametrize("media", [False, True])
+def test_v1_4_1_reports_recording_not_applicable_without_a_gap_limit(tmp_path, media):
+    # Latest released pin with the recording check and the decompression caps: still no default.
+    done, result = _real(tmp_path, "v1.4.1", media=media)
+    assert done.returncode == 0, done.stderr
+    recording = _recording(result)
+    assert recording is not None
+    assert recording["applicable"] is False
+    assert recording["success"] is True
+    assert recording["findings"] == []
+
+
+def test_the_real_recordings_are_judged_at_v1_4_1_when_the_run_declares_a_limit(tmp_path):
+    done, result = _real_media_job(tmp_path, gap=0.05, tag="v1.4.1")
+    assert done.returncode == 0, done.stderr
+    recording = _recording(result)
+    assert recording["applicable"] is True
+    assert recording["success"] is True
+    assert recording["limits"] == {"max_gap_seconds": 0.05}
+    assert recording["percentage"] == 100
+
+
+def test_help_probe_does_not_treat_a_longer_flag_as_media(tmp_path):
+    # grep -e '--media' also matches --media-dir. A pre-flag evaluator that later grew a
+    # different --media-* option must not be given --media (that would fail the job).
+    work, bindir = _setup(tmp_path, media=True, stub=True)
+    done, result = _run(
+        work, bindir, {"STUB_MEDIA": "dir", "PYTHONPATH": str(work / "run-integrity" / "src")}
+    )
+    assert done.returncode == 0, done.stderr
+    assert "--media" not in result["argv"]
+    assert "does not take --media" in done.stdout + done.stderr
+
+
+def test_a_media_matrix_failure_must_not_drop_another_configurations_recordings():
+    # media and run-integrity are both a configuration matrix, and the artifact name is
+    # per configuration. needs.media.result is the aggregate: one failed media leg makes
+    # it 'failure', so the current `if: needs.media.result == 'success'` skips the
+    # download on every leg, including one whose mcap artifact was uploaded.
+    media = _jobs()["media"]
+    integrity = _jobs()["run-integrity"]
+    assert (
+        media["strategy"]["matrix"]["configuration"]
+        == integrity["strategy"]["matrix"]["configuration"]
+    )
+    assert media["strategy"]["fail-fast"] is False
+    download = next(s for s in integrity["steps"] if s.get("with", {}).get("path") == "media")
+    assert "matrix.configuration" in download["with"]["name"]
+    assert download["if"] != "${{ needs.media.result == 'success' }}"
