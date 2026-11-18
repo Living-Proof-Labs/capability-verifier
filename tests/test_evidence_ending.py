@@ -215,6 +215,71 @@ def test_an_incomplete_temp_record_is_still_recorded_as_unfinished(tmp_path, pay
     assert record["exit_code"] is None and record["signal"] is None
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "[]",
+        '"exited"',
+        "null",
+        '{"ended": "weird", "exit_code": 1, "signal": null}',
+        '{"ended": "unfinished", "exit_code": null, "signal": null}',
+        '{"ended": "exited", "exit_code": "1", "signal": null}',
+        '{"ended": "exited", "exit_code": true, "signal": null}',
+        '{"ended": "signalled", "exit_code": 137, "signal": 9}',
+    ],
+    ids=[
+        "list",
+        "string",
+        "null",
+        "unknown-ending",
+        "unfinished-from-the-step",
+        "string-exit-code",
+        "boolean-exit-code",
+        "numeric-signal",
+    ],
+)
+def test_a_temp_record_of_the_wrong_shape_is_recorded_as_unfinished(tmp_path, payload):
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    temp = tmp_path / "runner-temp"
+    temp.mkdir()
+    (temp / "evidence-ending.json").write_text(payload)
+    env = {
+        **os.environ,
+        "RUNNER_TEMP": str(temp),
+        "CONFIGURATION": "go1",
+        "STEP_OUTCOME": "failure",
+    }
+    finish = _run(definition.step(WORKFLOW, "Evidence ending"), robot, env)
+    assert finish.returncode == 0, finish.stderr
+    record = json.loads((robot / "artifacts/evidence/go1/evidence-ending.json").read_text())
+    assert record["ended"] == "unfinished"
+    assert record["exit_code"] is None and record["signal"] is None
+    # What the step left is kept in the job log, since the record cannot carry it.
+    assert "evidence-ending.json" in finish.stdout
+
+
+def test_the_temp_file_is_kept_until_the_record_is_written(tmp_path):
+    # `artifacts` is a file, so the record cannot be written. The step fails, and what the
+    # evidence step left is still there to read, not unlinked first.
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    (robot / "artifacts").write_text("in the way")
+    temp = tmp_path / "runner-temp"
+    temp.mkdir()
+    saved = '{"ended": "exited", "exit_code": 1, "signal": null}'
+    (temp / "evidence-ending.json").write_text(saved)
+    env = {
+        **os.environ,
+        "RUNNER_TEMP": str(temp),
+        "CONFIGURATION": "go1",
+        "STEP_OUTCOME": "failure",
+    }
+    finish = _run(definition.step(WORKFLOW, "Evidence ending"), robot, env)
+    assert finish.returncode != 0
+    assert (temp / "evidence-ending.json").read_text() == saved
+
+
 def test_the_record_is_written_even_when_the_runner_made_no_evidence_directory(tmp_path):
     _, _, record = _go(tmp_path, outcome="failure", EVIDENCE_MODE="exit", EVIDENCE_EXIT="2")
     assert record is not None
@@ -323,40 +388,54 @@ def test_no_manifest_still_gives_a_run_integrity_result(tmp_path, tag):
     assert "without a manifest" in done.stderr
 
 
-def test_no_manifest_and_no_planned_count_keeps_the_job_green_and_says_so(tmp_path):
-    _checkout(tmp_path, "v1.0.0")
-    done, result = _integrity(tmp_path, {**KILLED, "planned_trials": None})
-    assert done.returncode == 0, done.stderr
-    assert result is None
-    assert "::warning::" in done.stdout + done.stderr
-    done, result = _integrity(tmp_path, None, "again")
-    assert done.returncode == 0 and result is None
-
-
-@pytest.mark.parametrize(
-    "ending",
-    [
-        {**KILLED, "planned_trials": None},
-        {**KILLED, "planned_trials": 0},
+# Why a no-manifest run gets no Run Integrity result, per case. The evaluator refuses a plan
+# of 0 trials (exit 2, nothing written), so a stand-in with 0 cannot produce one either.
+NO_RESULT = [
+    pytest.param({**KILLED, "planned_trials": None}, "planned_trials is null", id="null-count"),
+    pytest.param({**KILLED, "planned_trials": 0}, "planned_trials is 0", id="zero-count"),
+    pytest.param({**KILLED, "planned_trials": -2}, "planned_trials is -2", id="negative-count"),
+    pytest.param(
         {**KILLED, "planned_trials": "3"},
-        None,
-    ],
-    ids=["null-count", "zero-count", "malformed-count", "no-ending-file"],
-)
-def test_no_result_still_leaves_a_file_for_the_integrity_upload(tmp_path, ending):
-    # The job's upload-artifact step uses if-no-files-found: error. An empty
-    # evaluator-results/ directory would fail the job after the script exits 0.
+        "planned_trials is not a whole number: '3'",
+        id="malformed-count",
+    ),
+    pytest.param(
+        {**KILLED, "planned_trials": True},
+        "planned_trials is not a whole number: True",
+        id="boolean-count",
+    ),
+    pytest.param(
+        {k: v for k, v in KILLED.items() if k != "planned_trials"},
+        "planned_trials is missing",
+        id="no-count-key",
+    ),
+    pytest.param(["not", "an", "object"], "is not a JSON object", id="not-an-object"),
+    pytest.param(None, "evidence-ending.json is missing", id="no-ending-file"),
+]
+
+
+@pytest.mark.parametrize(("ending", "reason"), NO_RESULT)
+def test_no_result_fails_the_job_on_purpose_and_says_why(tmp_path, ending, reason):
+    # Exit 0 with nothing written made upload-artifact (if-no-files-found: error) fail the
+    # job later with a message about files. The job fails here, naming the cause, and leaves
+    # a file saying so, so the upload that follows has something to keep.
     job = yaml.safe_load(WORKFLOW)["jobs"]["run-integrity"]
     upload = next(s for s in job["steps"] if "upload-artifact" in s.get("uses", ""))
     assert upload["with"]["if-no-files-found"] == "error"
     assert upload["with"]["path"] == "evaluator-results/"
     _checkout(tmp_path, "v1.0.0")
     done, result = _integrity(tmp_path, ending)
-    assert done.returncode == 0, done.stderr
+    assert done.returncode == 1, (done.returncode, done.stdout, done.stderr)
     assert result is None
+    output = done.stdout + done.stderr
+    assert "::error::" in output and reason in output, output
     work = tmp_path / "work"
-    files = [p for p in (work / "evaluator-results").rglob("*") if p.is_file()]
-    assert files, "evaluator-results/ has no files; upload-artifact would fail the job"
+    marker = work / "evaluator-results" / "livingproof-run-integrity" / "no-result.txt"
+    assert marker.is_file()
+    assert reason in marker.read_text()
+    # No stand-in is evaluated for these, and nothing that looks like a result is written.
+    assert not (work / "no-evidence").exists()
+    assert [p.name for p in marker.parent.iterdir()] == ["no-result.txt"]
 
 
 def test_the_run_integrity_job_downloads_what_it_always_did():
@@ -385,3 +464,84 @@ def test_the_specs_record_is_kept_with_the_result_when_there_is_one(tmp_path):
     kept = work / "evaluator-results" / "livingproof-run-integrity" / "specs-files.json"
     assert kept.read_text() == "{}"
     assert result is not None
+
+
+SCHEMA_PATH = ROOT / "src/capability_verifier/livingproof-evidence-ending-0.1.schema.json"
+
+
+def _schema_validator():
+    from jsonschema import Draft202012Validator
+
+    schema = json.loads(SCHEMA_PATH.read_text())
+    Draft202012Validator.check_schema(schema)
+    return Draft202012Validator(schema)
+
+
+def test_the_ending_schema_is_draft_2020_12_and_names_its_format():
+    schema = json.loads(SCHEMA_PATH.read_text())
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    assert schema["title"] == "livingproof-evidence-ending/0.1"
+    _schema_validator()
+
+
+@pytest.mark.parametrize(
+    ("outcome", "mode", "extra"),
+    [
+        ("success", "exit", {"EVIDENCE_EXIT": "0"}),
+        ("failure", "exit", {"EVIDENCE_EXIT": "1"}),
+        ("failure", "kill-self", {"EVIDENCE_SIGNAL": "KILL"}),
+        ("failure", "kill-self", {"EVIDENCE_SIGNAL": "TERM"}),
+        ("cancelled", "kill-parent", {}),
+        ("failure", "kill-parent", {}),
+    ],
+    ids=["clean", "exit-1", "kill", "term", "cancelled", "shell-died"],
+)
+def test_every_record_the_workflow_writes_matches_the_schema(tmp_path, outcome, mode, extra):
+    _, _, record = _go(tmp_path, outcome=outcome, lock=LOCK, EVIDENCE_MODE=mode, **extra)
+    assert record is not None
+    assert list(_schema_validator().iter_errors(record)) == []
+
+
+def test_a_record_with_no_planned_count_and_a_manifest_matches_the_schema(tmp_path):
+    _, _, record = _go(
+        tmp_path, outcome="success", manifest=True, EVIDENCE_MODE="exit", EVIDENCE_EXIT="0"
+    )
+    assert record["planned_trials"] is None and record["manifest_present"] is True
+    assert list(_schema_validator().iter_errors(record)) == []
+
+
+def test_the_stand_in_carries_an_ending_that_matches_the_schema(tmp_path):
+    _checkout(tmp_path, "v1.0.0")
+    _integrity(tmp_path, KILLED)
+    stand_in = json.loads((tmp_path / "work/no-evidence/stand-in-manifest.json").read_text())
+    assert list(_schema_validator().iter_errors(stand_in["stand_in"]["ending"])) == []
+
+
+MALFORMED_ENDINGS = {
+    "an extra field": {**KILLED, "extra": 1},
+    "another format": {**KILLED, "format": "livingproof-evidence-ending/0.2"},
+    "an unknown ending": {**KILLED, "ended": "died"},
+    "a string exit code": {**KILLED, "exit_code": "137"},
+    "a boolean exit code": {**KILLED, "exit_code": True},
+    "a numeric signal": {**KILLED, "signal": 9},
+    "a lower-case signal": {**KILLED, "signal": "kill"},
+    "a bad step outcome": {**KILLED, "step_outcome": "broken"},
+    "a string manifest_present": {**KILLED, "manifest_present": "yes"},
+    "a zero planned count": {**KILLED, "planned_trials": 0},
+    "a string planned count": {**KILLED, "planned_trials": "3"},
+    "an empty configuration": {**KILLED, "configuration": ""},
+    "an unfinished ending with an exit code": {
+        **KILLED,
+        "ended": "unfinished",
+        "signal": None,
+    },
+    "an exited ending with a signal": {**KILLED, "ended": "exited", "exit_code": 1},
+    "a signalled ending with no signal": {**KILLED, "signal": None},
+    "no ended": {k: v for k, v in KILLED.items() if k != "ended"},
+    "no planned_trials": {k: v for k, v in KILLED.items() if k != "planned_trials"},
+}
+
+
+@pytest.mark.parametrize("name", sorted(MALFORMED_ENDINGS))
+def test_the_ending_schema_rejects(name):
+    assert list(_schema_validator().iter_errors(MALFORMED_ENDINGS[name])), name
