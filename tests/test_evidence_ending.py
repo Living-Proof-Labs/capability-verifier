@@ -502,6 +502,26 @@ def test_every_record_the_workflow_writes_matches_the_schema(tmp_path, outcome, 
     assert list(_schema_validator().iter_errors(record)) == []
 
 
+@pytest.mark.parametrize(
+    ("count", "recorded"),
+    [(0, 0), (-1, None), (True, None), ("3", None), (2.5, None), (None, None)],
+    ids=["zero", "negative", "boolean", "string", "float", "null"],
+)
+def test_the_planned_count_is_recorded_only_when_it_is_a_whole_number_from_zero(
+    tmp_path, count, recorded
+):
+    _, _, record = _go(
+        tmp_path,
+        outcome="failure",
+        lock={"plan": {"trials": {"count": count}}},
+        EVIDENCE_MODE="exit",
+        EVIDENCE_EXIT="1",
+    )
+    assert record["planned_trials"] == recorded
+    assert type(record["planned_trials"]) is type(recorded)
+    assert list(_schema_validator().iter_errors(record)) == []
+
+
 def test_a_record_with_no_planned_count_and_a_manifest_matches_the_schema(tmp_path):
     _, _, record = _go(
         tmp_path, outcome="success", manifest=True, EVIDENCE_MODE="exit", EVIDENCE_EXIT="0"
@@ -527,7 +547,7 @@ MALFORMED_ENDINGS = {
     "a lower-case signal": {**KILLED, "signal": "kill"},
     "a bad step outcome": {**KILLED, "step_outcome": "broken"},
     "a string manifest_present": {**KILLED, "manifest_present": "yes"},
-    "a zero planned count": {**KILLED, "planned_trials": 0},
+    "a negative planned count": {**KILLED, "planned_trials": -1},
     "a string planned count": {**KILLED, "planned_trials": "3"},
     "an empty configuration": {**KILLED, "configuration": ""},
     "an unfinished ending with an exit code": {
