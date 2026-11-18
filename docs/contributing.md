@@ -46,3 +46,15 @@ verification lock. The rule therefore matches this file and package only.
 
 Move either pin later in a deliberate migration pull request that updates the
 fixture lock, or the `check_demo` guard, together with the pin.
+
+## Development-container regression check
+
+From a host with Docker, Node and Task, run `task devcontainer:verify`. This uses
+pinned Development Containers tooling to build `.devcontainer/devcontainer.json`,
+run its post-create setup and execute the runtime verification tasks inside the
+container. The same check gates releases. It tests the container configuration,
+not GitHub Codespaces account provisioning or the hosted editor connection.
+
+The Task installer is downloaded with curl and its pinned SHA-256 is checked
+before execution. This avoids depending on a builder's support for remote
+`ADD --checksum`; a download or checksum failure stops the image build.
