@@ -301,3 +301,30 @@ def test_ci_runs_the_script_in_the_real_image_pulled_by_digest():
     assert 'record["matches"] is not True' in text
     assert "--container" in text and "job.container.id" in text
     assert "verifier-image-record" in document["jobs"]["release"]["needs"]
+
+
+def test_an_inspect_body_that_is_not_an_object_is_recorded_as_unknown(tmp_path):
+    with _Daemon(tmp_path, [f"{IMAGE}@{LOCKED}"], image_raw=b"[]") as daemon:
+        result, record = _run(tmp_path, daemon.path)
+    assert result.returncode == 0
+    assert record["digest"] is None
+    assert record["matches"] is None
+    assert "unavailable" in record
+    assert "::warning" in result.stderr
+
+
+def test_a_repo_digest_without_a_digest_part_is_skipped_not_a_crash(tmp_path):
+    with _Daemon(tmp_path, [IMAGE, 7, f"{IMAGE}@{LOCKED}"]) as daemon:
+        result, record = _run(tmp_path, daemon.path)
+    assert result.returncode == 0
+    assert record["digest"] == LOCKED
+    assert record["matches"] is True
+
+
+def test_only_malformed_repo_digests_are_recorded_as_unknown(tmp_path):
+    with _Daemon(tmp_path, [IMAGE]) as daemon:
+        result, record = _run(tmp_path, daemon.path)
+    assert result.returncode == 0
+    assert record["digest"] is None
+    assert record["matches"] is None
+    assert "unavailable" in record
