@@ -216,3 +216,59 @@ def test_v1_0_0_with_media_present_runs_as_before(tmp_path):
     assert done.returncode == 0, done.stderr
     assert result["integrity"]["run"]["success"] is True
     assert _recording(result) is None
+
+
+REAL_MEDIA = ROOT / "tests/fixtures/run-integrity-media"
+GO1_EVIDENCE = ROOT / "tests/fixtures/lpv-run-43402628666/unitree-go1-playground/evidence"
+
+
+def _real_media_job(tmp_path, *, gap):
+    """The job step on real Go1 evidence and its real recordings, with the real v1.4.0."""
+    checkout = tmp_path / "run-integrity"
+    clone = subprocess.run(
+        ["git", "clone", "--depth", "1", "--branch", "v1.4.0", RUN_INTEGRITY_REPO, str(checkout)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if clone.returncode != 0:
+        pytest.fail(f"could not clone {RUN_INTEGRITY_REPO}@v1.4.0: {clone.stderr}")
+    sync = subprocess.run(
+        ["uv", "sync", "--locked", "--directory", str(checkout)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert sync.returncode == 0, sync.stderr
+    work = tmp_path / "work"
+    shutil.copytree(GO1_EVIDENCE, work / "evidence")
+    (work / "evidence" / "specs-files.json").write_text("{}")
+    manifest = json.loads((work / "evidence" / "manifest.json").read_text())
+    if gap is not None:
+        # A test value in a test manifest. The code and the contract have no default.
+        manifest["plan"]["recording"] = {"max_gap_seconds": gap}
+    (work / "evidence" / "manifest.json").write_text(json.dumps(manifest))
+    shutil.copytree(REAL_MEDIA, work / "media")
+    for n in (2, 3):
+        shutil.copy(work / "media/mcap/trial-01.mcap", work / f"media/mcap/trial-0{n}.mcap")
+    (work / "run-integrity").symlink_to(checkout)
+    return _run_real(work, {"GITHUB_WORKSPACE": str(work), "PYTHONPATH": str(checkout / "src")})
+
+
+def test_the_real_recordings_are_judged_when_the_run_declares_a_limit(tmp_path):
+    done, result = _real_media_job(tmp_path, gap=0.05)
+    assert done.returncode == 0, done.stderr
+    recording = _recording(result)
+    assert recording["applicable"] is True
+    assert recording["success"] is True
+    assert recording["limits"] == {"max_gap_seconds": 0.05}
+    assert recording["percentage"] == 100
+
+
+def test_the_real_recordings_are_not_judged_without_a_declared_limit(tmp_path):
+    # No limit is approved and none is defaulted: media is passed, and the check says so.
+    done, result = _real_media_job(tmp_path, gap=None)
+    assert done.returncode == 0, done.stderr
+    recording = _recording(result)
+    assert recording["applicable"] is False
+    assert recording["success"] is True
