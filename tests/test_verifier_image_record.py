@@ -9,6 +9,7 @@ digest the engine reports, next to the locked one, so a difference is visible.
 
 import importlib.util
 import json
+import re
 import socketserver
 import subprocess
 import sys
@@ -328,3 +329,21 @@ def test_only_malformed_repo_digests_are_recorded_as_unknown(tmp_path):
     assert record["digest"] is None
     assert record["matches"] is None
     assert "unavailable" in record
+
+
+def test_updating_only_the_container_pin_also_updates_the_recorded_expectation():
+    # Model the github-actions manager changing its container image occurrence, not env.
+    # This fails on the former two independent literal pins, even when they start equal.
+    source = (ROOT / ".github/workflows/verify.yml").read_text()
+    current = yaml.safe_load(source)["jobs"]["verifier-image-record"]["container"]["image"]
+    for replacement in (f"{IMAGE}:99.0.0@{OTHER}", current.split("@")[0] + "@" + OTHER):
+        updated, count = re.subn(
+            r"(image: (?:&[\w-]+ )?)" + re.escape(current),
+            lambda match, replacement=replacement: match[1] + replacement,
+            source,
+            count=1,
+        )
+        assert count == 1
+        job = yaml.safe_load(updated)["jobs"]["verifier-image-record"]
+        assert job["container"]["image"] == replacement
+        assert job["env"]["LOCKED_IMAGE"] == replacement

@@ -1,0 +1,40 @@
+{
+  "format": "livingproof-hallway-media/2.0.0",
+  "configuration": "playground",
+  "run_id": "walk-hallway-unitree-go1-playground-20261113T093713Z",
+  "trials": [
+    {
+      "index": 1,
+      "observation_sha256": "b4bb652ea8e3e177160edbca3b8872c21c9b97421558f288d6d660adb4662628",
+      "mcap": {
+        "path": "mcap/trial-01.mcap",
+        "bytes": 120049,
+        "sha256": "7b124ceeb65f775da911d4ced654f6e260ba9ff205dcea28ce26f8540f5d3f33"
+      },
+      "status": "PASS",
+      "video": {
+        "path": "video/trial-01-pass.mp4",
+        "bytes": 739210,
+        "sha256": "b9e415de1505ba2df78dd07180749cd3de7cf59c9973380f4069ce19635e95b5"
+      }
+    },
+    {
+      "index": 2,
+      "observation_sha256": "b4bb652ea8e3e177160edbca3b8872c21c9b97421558f288d6d660adb4662628",
+      "mcap": {
+        "path": "mcap/trial-02.mcap",
+        "bytes": 120049,
+        "sha256": "7b124ceeb65f775da911d4ced654f6e260ba9ff205dcea28ce26f8540f5d3f33"
+      }
+    },
+    {
+      "index": 3,
+      "observation_sha256": "b4bb652ea8e3e177160edbca3b8872c21c9b97421558f288d6d660adb4662628",
+      "mcap": {
+        "path": "mcap/trial-03.mcap",
+        "bytes": 120049,
+        "sha256": "7b124ceeb65f775da911d4ced654f6e260ba9ff205dcea28ce26f8540f5d3f33"
+      }
+    }
+  ]
+}
