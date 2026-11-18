@@ -312,3 +312,22 @@ def test_the_run_integrity_job_downloads_what_it_always_did():
     script = definition.step(WORKFLOW, "Run Integrity, one result")
     assert 'manifest="$GITHUB_WORKSPACE/evidence/manifest.json"' in script
     assert "stand_in" in script
+
+
+def test_the_specs_record_step_waits_for_the_manifest_it_reads():
+    # tools/fetch_hallway_specs.py --from evidence/manifest.json cannot run without one.
+    steps = yaml.safe_load(WORKFLOW)["jobs"]["run-integrity"]["steps"]
+    specs = next(s for s in steps if "fetch_hallway_specs.py" in s.get("run", ""))
+    assert specs["if"] == "${{ hashFiles('evidence/manifest.json') != '' }}"
+
+
+def test_the_specs_record_is_kept_with_the_result_when_there_is_one(tmp_path):
+    _checkout(tmp_path, "v1.0.0")
+    work = tmp_path / "work"
+    (work / "evidence").mkdir(parents=True)
+    (work / "evidence" / "specs-files.json").write_text("{}")
+    done, result = _integrity(tmp_path, KILLED)
+    assert done.returncode == 0, done.stderr
+    kept = work / "evaluator-results" / "livingproof-run-integrity" / "specs-files.json"
+    assert kept.read_text() == "{}"
+    assert result is not None
