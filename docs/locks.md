@@ -203,6 +203,16 @@ no commit field. When the lock omits the pin, the walk-hallway
 run-integrity job defaults to `Living-Proof-Labs/livingproof-evaluator-run`
 at `v1.0.0`.
 
+The assessing jobs fetch the specs commit the evidence lock declares with
+`tools/fetch_hallway_specs.py --from evidence/manifest.json`. Every file in
+`releases.specs.files` must match its declared sha256, `description.json` as well as
+`parameters.json`, or the step fails. The run-integrity job adds
+`--record evidence/specs-files.json`, which writes `livingproof-specs-files/0.1` beside
+`manifest.json`: `run_id`, the specs `repository` and `tag`, the `commit` the checkout
+resolved to, and `files`, the sha256 of each declared file as read from the checkout (not the
+lock's values). A failed check writes no record and removes an old one. The job keeps a copy
+with the integrity result as `specs-files.json`.
+
 `releases.specs.digest`, `releases.runner.digest`, `releases.verifier.digest`
 and `evaluators.livingproof-evaluator-scenario.digest` are optional. A `digest`
 must match the `sha256:` spelling. `releases.specs.image`, `releases.runner.image`,

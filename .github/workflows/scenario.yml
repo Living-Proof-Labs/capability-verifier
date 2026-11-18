@@ -1287,6 +1287,10 @@ jobs:
         with:
           name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
           path: evidence
+      - name: Specs files the verifier loads, checked and recorded
+        # Writes evidence/specs-files.json beside manifest.json: the sha256 of each
+        # declared specs file as read from the checkout, and the commit it resolved to.
+        run: uv run --no-sync python tools/fetch_hallway_specs.py --from evidence/manifest.json --record evidence/specs-files.json
       - name: Run Integrity evaluator at the locked pin
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -1302,6 +1306,7 @@ jobs:
             python -m livingproof_evaluator_run \
             "$GITHUB_WORKSPACE/evidence/manifest.json" \
             --out "$GITHUB_WORKSPACE/evaluator-results/livingproof-run-integrity/result.json"
+          cp evidence/specs-files.json evaluator-results/livingproof-run-integrity/specs-files.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
