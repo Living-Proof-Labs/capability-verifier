@@ -218,6 +218,14 @@ class AllRequiredV1(Policy):
 
     id, version = hallway.POLICY["id"], hallway.POLICY["version"]
 
+    def __init__(self, *, validated_spec: dict | None = None, required: tuple | None = None):
+        # Only the declared-input export path supplies this context, after its
+        # integrity/schema/vocabulary gates. Never trust a bundle flag to opt in.
+        if (validated_spec is None) != (required is None):
+            raise ValueError("Validated spec and required checks must be supplied together")
+        self.validated_spec = dict(validated_spec) if validated_spec is not None else None
+        self.required = tuple(required) if required is not None else None
+
     def decide(self, result, complete):
         rid, assessments = result["id"], result["assessments"]
         compatibility = result["provenance"].get("compatibility")
@@ -232,13 +240,17 @@ class AllRequiredV1(Policy):
         if compatibility is not None:
             return Decision(rid, INCOMPATIBLE, compatibility["reason"])
         spec = result["spec"]
-        problem = contract_problem(spec)
+        problem = (
+            (None if spec == self.validated_spec else "Unsupported scenario contract")
+            if self.validated_spec is not None
+            else contract_problem(spec)
+        )
         if problem is not None:
             return Decision(rid, INCOMPATIBLE, problem)
         capability = spec.get("capability")
         if not isinstance(capability, str) or not capability:
             return Decision(rid, INCOMPATIBLE, "Unsupported scenario contract")
-        required = required_evaluators(spec)
+        required = self.required if self.required is not None else required_evaluators(spec)
         if not self.members_supported(assessments, required):
             return Decision(rid, INCOMPATIBLE, "Unsupported evaluator, version or assessor kind")
         found = [f for a in assessments for f in structured_failures(a)]

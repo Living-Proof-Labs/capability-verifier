@@ -445,7 +445,15 @@ def _export(
             and bool(r["evidence"])
             for r in results
         }
-        assessment = evaluate.assess_bundle(results, complete)
+        policy = None
+        if declared:
+            # The caller's bytes passed refuse_declared above. Resolve checks
+            # from that same checkout, not the legacy verifier catalog. Bind
+            # the exception to this exact spec rather than widening a tag list.
+            with checkout(ROOT / ".specs-hallway", ROOT / ".worlds"):
+                required = evaluate.required_evaluators(spec)
+            policy = evaluate.AllRequiredV1(validated_spec=spec, required=required)
+        assessment = evaluate.assess_bundle(results, complete, policy=policy)
         for r, d in zip(results, assessment["decisions"]):
             r["decision"] = {k: v for k, v in d.items() if k != "result_id"}
             r["decision"]["policy"] = assessment["policy"]
