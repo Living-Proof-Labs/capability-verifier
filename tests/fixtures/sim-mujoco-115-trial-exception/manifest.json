@@ -1,0 +1,66 @@
+{
+  "format": "livingproof-hallway-evidence/2.0.0",
+  "plan": {
+    "command_speed": 0.5,
+    "trials": {
+      "count": 2
+    }
+  },
+  "robot": {
+    "id": "unitree-g1",
+    "profile": {
+      "class": "humanoid",
+      "dimensions": {
+        "width": 0.42
+      }
+    }
+  },
+  "configuration": {
+    "name": "stock",
+    "version": "1.1.0",
+    "profile": {
+      "locomotion": {
+        "fall_base_height": 0.5
+      }
+    }
+  },
+  "world": {
+    "id": "hallway-open",
+    "version": "0.1.0",
+    "clear_width": 1.4,
+    "route_length": 5.5
+  },
+  "preconditions": [
+    {
+      "name": "fits_width",
+      "met": true,
+      "detail": "0.42 + 2 x 0.05 = 0.52 m vs 1.4 m"
+    }
+  ],
+  "trials": {
+    "count": 2,
+    "results": [
+      {
+        "index": 1,
+        "path": "trials/trial-01.json",
+        "sha256": "55d048344079efe9d14b0ea60d35444fcf52f83275b2bb650d09bd0e295adcb0",
+        "trajectory_sha256": "bebc622c3e6d63bc8787eecc3ad4bf9f79addf6b4ef5d20d949daef09f05a679",
+        "outcome": "crossed_exit",
+        "wall_clock_s": 1.0
+      },
+      {
+        "index": 2,
+        "exception": {
+          "type": "RuntimeError",
+          "message": "controller step exploded"
+        },
+        "wall_clock_s": 0.012
+      }
+    ],
+    "reproducibility": {
+      "compared": false,
+      "identical": null,
+      "finding": null
+    }
+  }
+}

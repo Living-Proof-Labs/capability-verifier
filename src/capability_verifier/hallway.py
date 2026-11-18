@@ -284,6 +284,31 @@ def _validate_v1(manifest) -> None:
                 raise ManifestError(f"manifest field 'trials[{i}].{key}' has the wrong type")
 
 
+def _trial_exception_error(index: int, result: dict) -> str:
+    """Describe a trial exception recorded in ``trials.results[index]``."""
+    exc = result.get("exception")
+    trial = result.get("index")
+    label = f"trials.results[{index}]"
+    if _is(trial, _INT) and trial >= 1:
+        label = f"trial {trial} ({label})"
+    if isinstance(exc, dict):
+        parts = []
+        exc_type = exc.get("type")
+        if isinstance(exc_type, str) and exc_type.strip():
+            parts.append(" ".join(exc_type.split()))
+        exc_msg = exc.get("message")
+        if isinstance(exc_msg, str) and exc_msg.strip():
+            msg = " ".join(exc_msg.split())
+            if not parts or msg != parts[0]:
+                parts.append(msg)
+        if parts:
+            return f"{label} recorded a trial exception ({': '.join(parts)}); cannot grade"
+    return (
+        f"manifest field 'trials.results[{index}].exception' "
+        "recorded a trial exception; cannot grade"
+    )
+
+
 def _validate_v2(manifest) -> None:
     if uses_world(manifest):
         _check_fields(manifest, V2_WORLD_FIELDS)
@@ -314,6 +339,8 @@ def _validate_v2(manifest) -> None:
     for i, t in enumerate(trials["results"]):
         if not isinstance(t, dict):
             raise ManifestError(f"manifest field 'trials.results[{i}]' has the wrong type")
+        if t.get("exception") is not None:
+            raise ManifestError(_trial_exception_error(i, t))
         for key, kind in V2_RESULT_FIELDS:
             if key not in t:
                 raise ManifestError(f"manifest field 'trials.results[{i}].{key}' is missing")
