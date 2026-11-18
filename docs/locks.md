@@ -222,6 +222,22 @@ require the matching digest: an image alone fails with
 spelling, passes `read_lock`. `repin --check` compares a digest with the
 registry when the entry has `image`.
 
+The lock's `releases.verifier.image` and `digest` are what the jobs are asked to run, so
+a digest read from the lock only repeats the lock. When the lock names a verifier image, the
+`evidence` job also runs `.github/scripts/record_verifier_image.py` from the workflow's own
+commit. It asks the container engine for the image under the job's container (the runner's
+`job.container.id`) and the registry digests that image was pulled by, and writes
+`verifier-image.json` (`livingproof-verifier-image/0.1`) into the evidence artifact, beside
+`manifest.json`, where Run Integrity already reads. Fields: `image` and `locked_digest` (the
+lock), `digest` (the engine's digest of that image), `matches` (`true` when the locked digest is
+one the engine reports, `false` when the engine reports another), `image_id`, `repo_digests`
+and `container`. When the engine cannot be reached, does not know the container, or reports no
+digest of that image, `digest` and `matches` are `null` and `unavailable` says why. A difference or
+a missing answer is recorded with a workflow warning and does not fail the job; the Run
+Integrity `pins` check reports it. The record comes from the `evidence` job only: the `verify`,
+`scenario-evaluator` and `run-integrity` jobs run in the same reference but are not recorded.
+The reporter image is not recorded, because the `report` job runs after Run Integrity.
+
 `robot.json` configuration names must equal the `configurations` names in the
 same order. That list is the full `configurations` array, including entries the
 definition did not select. `robot.configurations` is the selected subset.

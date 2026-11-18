@@ -380,6 +380,17 @@ jobs:
         run: |
           sh workflow-src/.github/scripts/write_evidence_inputs.sh . caller "$VERIFICATION_LOCK" workflow-src >> "$GITHUB_OUTPUT"
           rm -rf caller workflow-src
+      - name: Workflow source for the verifier image record
+        # The recording script comes from the commit of this workflow, not from the image
+        # under test, so an older locked image cannot lack it or change it.
+        if: ${{ needs.plan.outputs.verifier-image != '' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: image-record-src
+          sparse-checkout: .github/scripts
+          persist-credentials: false
       - if: needs.plan.outputs.verifier-image == ''
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
       - if: needs.plan.outputs.verifier-image == ''
@@ -445,6 +456,21 @@ jobs:
           fi
           echo "evidence failed (exit $code); verify will not run" >&2
           exit "$code"
+      - name: Verifier image this job ran in, from the container engine
+        # The lock's image:tag@digest is what this job was asked to run. The record keeps the
+        # digest the engine reports for the image under this container beside it, in the
+        # evidence artifact that Run Integrity downloads (verifier-image.json,
+        # livingproof-verifier-image/0.1). A difference or an unreachable engine is recorded,
+        # not fatal: the pins check reports it.
+        if: ${{ always() && needs.plan.outputs.verifier-image != '' }}
+        env:
+          LOCKED_IMAGE: ${{ needs.plan.outputs.verifier-image }}
+          CONTAINER_ID: ${{ job.container.id }}
+        run: |
+          python3 image-record-src/.github/scripts/record_verifier_image.py \
+            --locked "$LOCKED_IMAGE" --container "$CONTAINER_ID" \
+            --out "artifacts/evidence/$CONFIGURATION/verifier-image.json"
+          rm -rf image-record-src
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
