@@ -276,8 +276,37 @@ jobs:
           REPORT_PATH: native-results/**/archives.xml
           PUBLISH_CHECK: 'false'
         run: python tools/test_results.py --name "$REPORT_NAME" --path "$REPORT_PATH" --publish-check "$PUBLISH_CHECK"
+  verifier-image-record:
+    # Proves, on a real runner, what scenario.yml's evidence job relies on: a container job
+    # started from image:tag@digest can ask the engine which digest its image has. The job
+    # runs in the published hallway image by digest and fails unless the engine reports
+    # that digest. Bump the tag and digest together with the verifier image the locks name.
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/living-proof-labs/capability-verifier-hallway:2.3.1@sha256:335586ee98474681ab63f45c154bcf615b1c6ec56ab39e77ba168c6a292fd108
+      options: --user root
+    env:
+      LOCKED_IMAGE: ghcr.io/living-proof-labs/capability-verifier-hallway:2.3.1@sha256:335586ee98474681ab63f45c154bcf615b1c6ec56ab39e77ba168c6a292fd108
+    steps:
+      - uses: actions/checkout@v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Record the image digest from the container engine
+        env:
+          CONTAINER_ID: ${{ job.container.id }}
+        run: python3 .github/scripts/record_verifier_image.py --locked "$LOCKED_IMAGE" --container "$CONTAINER_ID" --out verifier-image.json
+      - name: The engine reports the pinned digest
+        run: |
+          cat verifier-image.json
+          python3 - <<'PY'
+          import json
+          record = json.load(open("verifier-image.json"))
+          if record["matches"] is not True:
+              raise SystemExit(f"engine digest {record['digest']!r} is not the pinned {record['locked_digest']}: {record.get('unavailable')}")
+          PY
   release:
-    needs: [verify, report, report-results, documentation, devcontainer]
+    needs: [verify, report, report-results, documentation, devcontainer, verifier-image-record]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
