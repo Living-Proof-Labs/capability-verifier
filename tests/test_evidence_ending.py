@@ -241,7 +241,7 @@ def _checkout(tmp_path, tag):
 
 def _integrity(tmp_path, ending, name="work"):
     work = tmp_path / name
-    (work / "evidence").mkdir(parents=True)
+    (work / "evidence").mkdir(parents=True, exist_ok=True)
     if ending is not None:
         (work / "evidence" / "evidence-ending.json").write_text(json.dumps(ending))
     env = {
@@ -324,7 +324,7 @@ def test_the_specs_record_step_waits_for_the_manifest_it_reads():
 def test_the_specs_record_is_kept_with_the_result_when_there_is_one(tmp_path):
     _checkout(tmp_path, "v1.0.0")
     work = tmp_path / "work"
-    (work / "evidence").mkdir(parents=True)
+    (work / "evidence").mkdir(parents=True, exist_ok=True)
     (work / "evidence" / "specs-files.json").write_text("{}")
     done, result = _integrity(tmp_path, KILLED)
     assert done.returncode == 0, done.stderr

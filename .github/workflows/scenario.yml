@@ -1344,6 +1344,9 @@ jobs:
           name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
           path: evidence
       - name: Specs files the verifier loads, checked and recorded
+        # Needs the manifest it reads. Without one (the evidence step left none), the
+        # stand-in path below still gives a Run Integrity result.
+        if: ${{ hashFiles('evidence/manifest.json') != '' }}
         # Writes evidence/specs-files.json beside manifest.json: the sha256 of each
         # declared specs file as read from the checkout, and the commit it resolved to.
         run: uv run --no-sync python tools/fetch_hallway_specs.py --from evidence/manifest.json --record evidence/specs-files.json
@@ -1391,7 +1394,9 @@ jobs:
             fi
             manifest="$GITHUB_WORKSPACE/no-evidence/stand-in-manifest.json"
           fi
-          cp evidence/specs-files.json evaluator-results/livingproof-run-integrity/specs-files.json
+          if [ -f evidence/specs-files.json ]; then
+            cp evidence/specs-files.json evaluator-results/livingproof-run-integrity/specs-files.json
+          fi
           PYTHONPATH=run-integrity/src uv run --no-sync --directory run-integrity \
             python -m livingproof_evaluator_run \
             "$manifest" \
