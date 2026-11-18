@@ -284,7 +284,7 @@ jobs:
     # a single source; do not replace the alias with a second independently mutable pin.
     runs-on: ubuntu-24.04
     container:
-      image: &verifier-test-image ghcr.io/living-proof-labs/capability-verifier-hallway:2.6.0@sha256:b2a556e3947aefd3283699270bb057c8dd9499f6374db648f19b352f3b62d51f
+      image: &verifier-test-image ghcr.io/living-proof-labs/capability-verifier-hallway:2.7.0@sha256:e21b15707c598c9d00682a6b380e58ef0f055b1db3ebac3b76cdbff608f58f0b
       options: --user root
     env:
       LOCKED_IMAGE: *verifier-test-image
