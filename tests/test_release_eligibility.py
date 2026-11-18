@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+import importlib.util
 import json
 import subprocess
 import tempfile
@@ -6,7 +7,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.release_eligibility import SELF_PIN, eligible, git
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location(
+    "release_eligibility", ROOT / "tools/release_eligibility.py"
+)
+policy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(policy)
+SELF_PIN, eligible, git = policy.SELF_PIN, policy.eligible, policy.git
 
 
 class ReleaseEligibilityTests(unittest.TestCase):
@@ -127,9 +134,7 @@ class ReleaseEligibilityTests(unittest.TestCase):
 
     def test_history_query_failure_is_not_silently_suppressed(self):
         with (
-            patch(
-                "tools.release_eligibility.git", side_effect=subprocess.CalledProcessError(1, "git")
-            ),
+            patch.object(policy, "git", side_effect=subprocess.CalledProcessError(1, "git")),
             self.assertRaises(subprocess.CalledProcessError),
         ):
             eligible(self.root)
@@ -143,7 +148,7 @@ class ReleaseEligibilityTests(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, ["git", *args])
             return git(root, *args)
 
-        with patch("tools.release_eligibility.git", side_effect=fail_blob):
+        with patch.object(policy, "git", side_effect=fail_blob):
             self.assertTrue(eligible(self.root)[0])
 
     def test_malformed_pin_preserves_policy(self):
