@@ -243,12 +243,23 @@ def _is_integrity(document: dict) -> bool:
     return isinstance(evaluator, dict) and evaluator.get("kind") == "integrity"
 
 
+_GRADED_STATUSES = frozenset({"COMPLETED", "ERROR"})
+
+
 def _integrity_failed(document: dict) -> bool:
+    """True only when the integrity run was judged and failed.
+
+    A 1.2.0 INCONCLUSIVE run (no check applied) and any run status this
+    collector does not recognise are not graded, so neither is a failure
+    (livingproof-evaluator#38: a 1.x minor may add run statuses).
+    """
     payload = document.get("integrity") if isinstance(document.get("integrity"), dict) else {}
     run = payload.get("run") if isinstance(payload.get("run"), dict) else {}
+    status = run.get("test_system_status")
+    if isinstance(status, str) and status not in _GRADED_STATUSES:
+        return False
     if run.get("success") is False or run.get("conclusion") == "INCONCLUSIVE":
         return True
-    status = run.get("test_system_status")
     return isinstance(status, str) and status != "COMPLETED"
 
 
