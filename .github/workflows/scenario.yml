@@ -810,7 +810,6 @@ jobs:
           imported=$(uv run --no-sync python -c 'import livingproof_evaluator_scenario as package; print(package.__file__)')
           case "$imported" in
             */evaluator/src/livingproof_evaluator_scenario/*) ;;
-            evaluator/src/livingproof_evaluator_scenario/*) ;;
             *)
               echo "livingproof_evaluator_scenario imported from ${imported}, not evaluator/src" >&2
               exit 1
