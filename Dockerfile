@@ -63,7 +63,7 @@ ENV UV_PYTHON_DOWNLOADS=never UV_CACHE_DIR=/opt/uv-cache UV_LINK_MODE=copy \
     MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa \
     PATH=/opt/lpl/bin:$PATH
 # Installed from /tmp/cv so uv pip reads its [tool.uv] override-dependencies (one
-# livingproof-scenario-parameters URL for sim v3.2.5 and evaluator-scenario v1.3.0).
+# livingproof-scenario-parameters URL for sim v3.2.5 and evaluator-scenario v1.5.0).
 COPY pyproject.toml uv.lock /tmp/cv/
 COPY src /tmp/cv/src
 RUN set -eu; \
