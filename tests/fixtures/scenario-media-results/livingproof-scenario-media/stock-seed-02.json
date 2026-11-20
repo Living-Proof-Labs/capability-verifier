@@ -1,0 +1,79 @@
+{
+  "format": "livingproof-evaluator-result/1.1.0",
+  "evaluator": {
+    "id": "livingproof-scenario",
+    "version": "1.3.10.dev0",
+    "kind": "scenario",
+    "execution": "deterministic",
+    "display_name": "Scenario",
+    "publisher": "Living Proof Labs",
+    "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\"><g stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M6.5 7L10.5 11L17.5 4\"/><rect x=\"4\" y=\"9\" width=\"16\" height=\"11\" rx=\"4\"/></g><g fill=\"currentColor\"><circle cx=\"8.5\" cy=\"14.5\" r=\"1.5\"/><circle cx=\"15.5\" cy=\"14.5\" r=\"1.5\"/></g></svg>"
+  },
+  "inputs": [
+    {
+      "role": "recording",
+      "uri": "mcap/trial-02.mcap",
+      "sha256": "3b9399ff9bc7f6a95432f352fafd67e60e5e618cc46ada114cdc29e43fa42806"
+    },
+    {
+      "role": "binding",
+      "uri": "mcap/trial-02.binding.json",
+      "sha256": "e4b4444a0c8d938672ea0535b4da9de66ce23866d219c006c07eb4d14d5c8166"
+    },
+    {
+      "role": "manifest",
+      "uri": "manifest.json",
+      "sha256": "1517d1804697acc11498266d95dce617ae2f129200a150f9789eae4ef0ef77a5"
+    },
+    {
+      "role": "thresholds",
+      "uri": "media/thresholds.json",
+      "sha256": "a68320e029deda08ca64767b16b7d3a5582784c4f7c5f392dae3856b76174f86"
+    },
+    {
+      "role": "evaluator",
+      "uri": "git+https://github.com/Living-Proof-Labs/livingproof-evaluator-scenario@abababababababababababababababababababab",
+      "sha256": "b0b0ee27ba0c7ab04ebe105409fe6f11c436cbc0cf182c44859d81f88401a328"
+    }
+  ],
+  "timestamps": {
+    "started_at": "2026-11-20T10:00:00Z",
+    "completed_at": "2026-11-20T10:00:00Z"
+  },
+  "scenario": {
+    "trial_id": "stock-seed-02",
+    "steps": [
+      {
+        "id": "hallway-exit-reached",
+        "verdict": "FAIL",
+        "summary": "the base did not cross the exit within 27.00 s"
+      },
+      {
+        "id": "hallway-lateral-limit",
+        "verdict": "FAIL",
+        "summary": "lateral 0.78 m > 0.48 m at 0.00 s"
+      },
+      {
+        "id": "hallway-wall-contact",
+        "verdict": "FAIL",
+        "summary": "wall contact with wall-left at 0.00 s, depth 0.13 m"
+      },
+      {
+        "id": "hallway-fall",
+        "verdict": "NOT_EVALUATED",
+        "summary": "the run manifest does not give fall_height (input fall_base_height is missing), so the step was not evaluated",
+        "reason": "missing_threshold"
+      }
+    ]
+  },
+  "descriptor": {
+    "title": "Scenario",
+    "short_title": "Scenario",
+    "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\"><g stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M6.5 7L10.5 11L17.5 4\"/><rect x=\"4\" y=\"9\" width=\"16\" height=\"11\" rx=\"4\"/></g><g fill=\"currentColor\"><circle cx=\"8.5\" cy=\"14.5\" r=\"1.5\"/><circle cx=\"15.5\" cy=\"14.5\" r=\"1.5\"/></g></svg>",
+    "icon_accessible_name": "Scenario",
+    "purpose": "Checks each step of the scenario against the limits in its spec.",
+    "version": "1.3.10.dev0",
+    "tier": "verdict",
+    "findings": []
+  }
+}

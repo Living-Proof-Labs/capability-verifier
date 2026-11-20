@@ -24,7 +24,7 @@ WHEN = "2026-11-12T05:11:41Z"
 ICON = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">'
     '<g stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M6.5 7L10.5 11L17.5 4"/>'
+    '<path d="M7 5.5L10.5 9L16.5 3"/>'
     '<rect x="4" y="9" width="16" height="11" rx="4"/>'
     "</g>"
     '<g fill="currentColor">'
@@ -147,7 +147,7 @@ def test_a_second_evaluator_artifact_adds_a_mark_without_a_collector_change(tmp_
     assert "eval-name-full'>Scenario</span>" in one
     assert "eval-name-full'>Robot health</span>" not in one
     assert "3 successes, 100%" in one
-    assert "M6.5 7L10.5 11L17.5 4" in one
+    assert "M7 5.5L10.5 9L16.5 3" in one
     ring = _ring(one)
 
     both_dir = _bundle(tmp_path / "both")
@@ -191,9 +191,9 @@ def test_scenario_package_pin_is_a_released_tag():
     text = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
     match = EVALUATOR_PIN.search(text)
     assert match, "declared evaluator pin must be a full released vX.Y.Z tag"
-    assert match.group("tag") == "v1.3.0"
+    assert match.group("tag") == "v1.5.0"
     assert "9c82a0b" not in text
-    assert importlib.metadata.version("livingproof-evaluator-scenario") == "1.3.0"
+    assert importlib.metadata.version("livingproof-evaluator-scenario") == "1.5.0"
 
 
 LOCK_SOURCE = re.compile(
@@ -235,7 +235,7 @@ def test_scenario_pin_matches_the_lock_and_workflows_have_no_v1_0_0_fallback():
         if not path.is_file() or path.suffix == ".pyc" or "__pycache__" in path.parts:
             continue
         text = path.read_text(encoding="utf-8")
-        # The scenario evaluator is pinned at v1.3.0; workflows must not fall
+        # The scenario evaluator is pinned at v1.5.0; workflows must not fall
         # back to its old v1.0.0. livingproof-evaluator-run's release is v1.0.0.
         for match in re.finditer(r"v1\.0\.0", text):
             window = text[max(0, match.start() - 80) : match.end() + 80]
@@ -252,8 +252,8 @@ def test_two_configurations_keep_their_own_entries_and_grades(tmp_path):
     shutil.copytree(STOCK, stock)
     play_docs = _scenario_documents(playground)
     stock_docs = _scenario_documents(stock)
-    assert play_docs[0]["evaluator"]["version"] == "1.3.0"
-    assert stock_docs[0]["evaluator"]["version"] == "1.3.0"
+    assert play_docs[0]["evaluator"]["version"] == "1.5.0"
+    assert stock_docs[0]["evaluator"]["version"] == "1.5.0"
     assert play_docs[0]["evaluator"]["display_name"] == "Scenario"
     assert play_docs[0]["descriptor"]["title"] == "Scenario"
     assert play_docs[0]["descriptor"]["short_title"] == "Scenario"
