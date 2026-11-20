@@ -364,7 +364,10 @@ other link field, so the walk-hallway workflow still writes that integer under `
 
 Media manifests follow the same split. `livingproof-hallway-media/1.0.0` trial entries carry
 `seed`. `livingproof-hallway-media/2.0.0` entries carry `index` and the files are named
-`trial-NN`. Any other media format fails the workflow step with a message that names the
+`trial-NN`. `livingproof-hallway-media/2.1.0` is 2.0.0 plus a `binding` entry per trial, the
+per-trial `livingproof-observation-binding/1.0.0` file `mcap/trial-NN.binding.json`; the step stops if a
+trial has no binding entry or its file is missing, and the `mcap` artifact uploads `media/mcap/` whole, so
+the binding files travel with the recordings. Any other media format fails the workflow step with a message that names the
 format, before it reads `seed` or `index`.
 
 The trial plan (command speed, and for 1.0.0 the seeds and required passes) is read from the

@@ -816,21 +816,31 @@ jobs:
         run: |
           uv run --no-sync python -m livingproof_sim_mujoco.media "$ADAPTER" "$CONFIGURATION" evidence verified/verification.json media
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, sys
+          import json, os, sys
           doc = json.load(open("media/media.json"))
           fmt = doc.get("format") if isinstance(doc, dict) else None
-          if fmt == "livingproof-hallway-media/2.0.0":
+          if fmt in ("livingproof-hallway-media/2.0.0", "livingproof-hallway-media/2.1.0"):
               key = "index"
           elif fmt == "livingproof-hallway-media/1.0.0":
               key = "seed"
           else:
               sys.exit(
-                  "media.json format %r is not livingproof-hallway-media/1.0.0 "
-                  "or livingproof-hallway-media/2.0.0" % (fmt,)
+                  "media.json format %r is not livingproof-hallway-media/1.0.0, "
+                  "livingproof-hallway-media/2.0.0 or livingproof-hallway-media/2.1.0" % (fmt,)
               )
           trials = doc.get("trials")
           if not isinstance(trials, list):
               sys.exit("media.json field 'trials' has the wrong type")
+          if fmt == "livingproof-hallway-media/2.1.0":
+              # Each trial lists its observation binding, and the file is in the media folder
+              # that the artifact below uploads whole (mcap/ holds trial-NN.binding.json).
+              for t in trials:
+                  entry = t.get("binding") if isinstance(t, dict) else None
+                  path = entry.get("path") if isinstance(entry, dict) else None
+                  if not isinstance(path, str) or not path.endswith(".binding.json"):
+                      sys.exit("media.json 2.1.0 trial has no binding entry with a .binding.json path")
+                  if not path.startswith("mcap/") or not os.path.isfile("media/" + path):
+                      sys.exit("media.json 2.1.0 binding file %s is not in media/mcap/" % path)
           for t in trials:
               if not isinstance(t, dict) or "video" not in t:
                   continue
