@@ -176,3 +176,62 @@ def test_a_pinned_evaluator_without_the_media_runner_is_a_note_not_a_failure(tmp
     manifest, media, out = _run(tmp_path)
     assert tool.main([str(manifest), str(media), str(out), "--identity", "i"]) == 0
     assert "no media runner" in (out / "NO-MEDIA-RESULTS.txt").read_text()
+
+
+def test_the_media_job_has_a_timeout_so_a_hang_cannot_hold_the_report():
+    timeout = DOC["jobs"]["scenario-media"].get("timeout-minutes")
+    assert timeout == 30
+
+
+def test_a_truncated_result_file_is_reported_and_does_not_fail_the_collection(tmp_path, capsys):
+    from capability_verifier.collect import main
+
+    directory = tmp_path / "evaluator-results"
+    shutil.copytree(RESULTS, directory)
+    broken = directory / "livingproof-scenario-media" / "stock-seed-02.json"
+    broken.write_text(broken.read_text()[:200])
+    manifest, report = tmp_path / "manifest.json", tmp_path / "report"
+    report.mkdir()
+    manifest.write_text(json.dumps(_bundle()))
+    assert main([str(manifest), str(directory), str(report)]) == 0
+    assert "stock-seed-02.json" in capsys.readouterr().err
+    stored = json.loads(manifest.read_text())["results"]
+    assert len(stored[0]["evaluator_results"]) == 1  # the intact trial is still collected
+    assert "evaluator_results" not in stored[1]
+    problems = (report / "evaluator-result-problems.txt").read_text()
+    assert "stock-seed-02.json" in problems and "not valid JSON" in problems
+
+
+def test_a_result_whose_media_thresholds_file_is_missing_is_reported_not_fatal(tmp_path, capsys):
+    from capability_verifier.collect import main
+
+    directory = tmp_path / "evaluator-results"
+    shutil.copytree(RESULTS, directory)
+    (directory / "livingproof-scenario-media" / "media" / "thresholds.json").unlink()
+    manifest, report = tmp_path / "manifest.json", tmp_path / "report"
+    report.mkdir()
+    manifest.write_text(json.dumps(_bundle()))
+    assert main([str(manifest), str(directory), str(report)]) == 0
+    err = capsys.readouterr().err
+    assert "media/thresholds.json" in err and "missing" in err
+    assert "evaluator_results" not in json.loads(manifest.read_text())["results"][0]
+    assert "media/thresholds.json" in (report / "evaluator-result-problems.txt").read_text()
+
+
+def test_a_clean_collection_writes_no_problems_file(tmp_path):
+    from capability_verifier.collect import main
+
+    directory = tmp_path / "evaluator-results"
+    shutil.copytree(RESULTS, directory)
+    manifest, report = tmp_path / "manifest.json", tmp_path / "report"
+    report.mkdir()
+    manifest.write_text(json.dumps(_bundle()))
+    assert main([str(manifest), str(directory), str(report)]) == 0
+    assert not (report / "evaluator-result-problems.txt").exists()
+
+
+def test_the_docs_say_the_job_runs_the_runner_from_scenario_v1_5_0():
+    text = (ROOT / "docs" / "locks.md").read_text()
+    section = text.split("## Recordings in the scenario media job")[1].split("\n## ")[0]
+    assert "v1.5.0" in section
+    assert "does nothing" not in section

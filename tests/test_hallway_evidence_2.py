@@ -822,3 +822,17 @@ def test_media_2_1_0_a_symlink_that_stays_inside_mcap_is_accepted(tmp_path):
 
     done = _media_2_1_prepared(tmp_path, "mcap/alias.binding.json", build)
     assert done.returncode == 0, done.stderr
+
+
+def test_media_2_1_0_a_symlink_into_a_lookalike_folder_is_rejected(tmp_path):
+    """Pins the `+ os.sep` in the realpath check: mcap2/ shares the prefix "media/mcap".
+
+    Proposed by Vera in the capability-verifier#203 review.
+    """
+
+    def build(media):
+        (media / "mcap2").mkdir()
+        (media / "mcap2" / "x.binding.json").write_text("{}")
+        (media / "mcap" / "link.binding.json").symlink_to(media / "mcap2" / "x.binding.json")
+
+    _assert_rejected(_media_2_1_prepared(tmp_path, "mcap/link.binding.json", build))
