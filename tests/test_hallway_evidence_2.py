@@ -709,3 +709,50 @@ def test_v1_19_0_one_trial_is_k_of_n(tmp_path):
     assert (summary["k"], summary["n"], summary["required_passes"]) == (1, 1, 1)
     assert summary["aggregation"] == {"id": "k-of-n-wilson95", "version": "1.0.0"}
     assert "reproducibility" not in summary
+
+
+def test_media_2_1_0_binding_path_must_be_under_mcap(tmp_path):
+    """Verification (#200): a binding outside media/mcap/ is not what the artifact uploads."""
+
+    def move(doc):
+        doc["trials"][0]["binding"]["path"] = "trial-01.binding.json"
+
+    done = _media_2_1(tmp_path, edit=move)
+    assert done.returncode != 0
+    assert "not in media/mcap/" in done.stderr and "Traceback" not in done.stderr
+
+
+def test_the_upload_paths_match_every_trial_binding_file():
+    """Verification (#200): the mcap artifact's paths must really match mcap/trial-NN.binding.json.
+
+    A path such as `media/mcap/*.mcap` still contains "media/mcap/" but drops the bindings."""
+    import fnmatch
+
+    text = WORKFLOW.read_text()
+    step = text[text.index("      - id: mcap\n") :]
+    step = step[: step.index("      - id: video-pass")]
+    lines = [line.strip() for line in step.split("path: |")[1].splitlines()[1:]]
+    paths = [line for line in lines[: lines.index("retention-days: 30")]]
+
+    def matches(path):
+        return any(
+            path.startswith(p) if p.endswith("/") else fnmatch.fnmatch(path, p) for p in paths
+        )
+
+    assert matches("media/mcap/trial-01.binding.json")
+    assert matches("media/mcap/trial-01.mcap")
+    assert matches("media/media.json")
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Vera (#200): a binding path may climb out of mcap/ ('mcap/../..'), because the check is "
+    "startswith('mcap/') plus isfile. Remove this xfail when the step rejects '..' segments.",
+)
+def test_media_2_1_0_binding_path_cannot_climb_out_of_mcap(tmp_path):
+    def climb(doc):
+        doc["trials"][0]["binding"]["path"] = "mcap/../../outside.binding.json"
+
+    (tmp_path / "outside.binding.json").write_text("{}")
+    done = _media_2_1(tmp_path, edit=climb)
+    assert done.returncode != 0
