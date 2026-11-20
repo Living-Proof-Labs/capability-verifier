@@ -744,11 +744,6 @@ def test_the_upload_paths_match_every_trial_binding_file():
     assert matches("media/media.json")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Vera (#200): a binding path may climb out of mcap/ ('mcap/../..'), because the check is "
-    "startswith('mcap/') plus isfile. Remove this xfail when the step rejects '..' segments.",
-)
 def test_media_2_1_0_binding_path_cannot_climb_out_of_mcap(tmp_path):
     def climb(doc):
         doc["trials"][0]["binding"]["path"] = "mcap/../../outside.binding.json"
