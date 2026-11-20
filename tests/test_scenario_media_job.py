@@ -231,8 +231,11 @@ def test_a_clean_collection_writes_no_problems_file(tmp_path):
     assert not (report / "evaluator-result-problems.txt").exists()
 
 
-def test_the_docs_say_the_job_runs_the_runner_from_scenario_v1_5_0():
+def test_the_docs_say_the_job_pins_the_locked_tag_and_refuses_a_wrong_version():
     text = (ROOT / "docs" / "locks.md").read_text()
     section = text.split("## Recordings in the scenario media job")[1].split("\n## ")[0]
-    assert "v1.5.0" in section
+    assert "`v1.5.3` (commit `ca9d337`)" in section
+    assert "evaluator_pin --checkout evaluator" in section
+    assert "evaluator/src" in section and "not the locked" in section
+    assert "`0.1.dev1`" in section
     assert "does nothing" not in section

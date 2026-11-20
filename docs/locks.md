@@ -697,10 +697,18 @@ evaluator by commit, and never holds up the report. The evaluator resolves every
 `NOT_EVALUATED` (`missing_threshold`). Each result names the evaluator (id, version, and the pinned
 commit with a digest of its source). Its files go to the artifact `evaluator-results-livingproof-scenario-media-<configuration>`,
 which the report collects like the other evaluator results, so wall-contact steps and any
-`NOT_EVALUATED` step appear on the capability report. The job is active with the scenario evaluator pinned at
-`v1.5.0` (commit `3fab127`), the first release with the media runner. A pin older than that
-leaves a `NO-MEDIA-RESULTS.txt` note instead, and a run without a world document does too. The job
-stops after 30 minutes. The collector leaves any result file that is not valid JSON (truncated, invalid or not
+`NOT_EVALUATED` step appear on the capability report.
+
+The job builds the evaluator at the lock's release, as `scenario-evaluator` does. `actions/checkout`
+fetches the locked commit shallow and without tags, which hatch-vcs builds as `0.1.dev1`, so
+`evaluator_pin --checkout evaluator` first fetches the locked tag into that checkout, after checking
+it names the locked commit, and only then runs `uv sync`. Before grading, the job refuses two things
+(exit 1, no results): an evaluator imported from anywhere but `evaluator/src` (a stale copy in the
+verifier environment), and a build whose `importlib.metadata` version is not the release the pin step
+printed ("reports ... not the locked ..."). So each result names the release, not `0.1.dev1`. The
+evaluator pin is `v1.5.3` (commit `ca9d337`); the media runner arrived in `v1.5.0` (commit `3fab127`),
+and a pin older than that leaves a `NO-MEDIA-RESULTS.txt` note instead. A run without a world
+document leaves one too. The job stops after 30 minutes. The collector leaves any result file that is not valid JSON (truncated, invalid or not
 UTF-8), from any evaluator, and any media result whose `media/thresholds.json` is missing, off the
 report. It names each one, with its reason, on stdout ("skipped (unusable result: ...)") and
 stderr, and in `evaluator-result-problems.txt` in the report directory, where each line names the
