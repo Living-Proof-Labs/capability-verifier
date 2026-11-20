@@ -24,7 +24,7 @@ WHEN = "2026-11-12T05:11:41Z"
 ICON = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">'
     '<g stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M6.5 7L10.5 11L17.5 4"/>'
+    '<path d="M7 5.5L10.5 9L16.5 3"/>'
     '<rect x="4" y="9" width="16" height="11" rx="4"/>'
     "</g>"
     '<g fill="currentColor">'
@@ -147,7 +147,7 @@ def test_a_second_evaluator_artifact_adds_a_mark_without_a_collector_change(tmp_
     assert "eval-name-full'>Scenario</span>" in one
     assert "eval-name-full'>Robot health</span>" not in one
     assert "3 successes, 100%" in one
-    assert "M6.5 7L10.5 11L17.5 4" in one
+    assert "M7 5.5L10.5 9L16.5 3" in one
     ring = _ring(one)
 
     both_dir = _bundle(tmp_path / "both")
