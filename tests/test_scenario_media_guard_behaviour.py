@@ -54,7 +54,8 @@ def _run(
     _stub(
         bin_dir / "uv",
         'case "$*" in\n'
-        f'  *package.__file__*) echo "{imported}" ;;\n'
+        '  *"import livingproof_evaluator_scenario as package"*)'
+        f' echo "{imported}" ;;\n'
         f'  *importlib.metadata*) echo "version-read" >> "{log}"; echo {reported} ;;\n'
         f'  *run_scenario_media.py*) echo "runner $*" >> "{log}" ;;\n'
         f'  sync*) echo "sync $*" >> "{log}" ;;\n'
@@ -174,3 +175,12 @@ def test_the_import_check_reads_the_evaluator_checkout_before_the_version(tmp_pa
         "version-read",
         "runner",
     ]
+
+
+def test_the_import_check_accepts_the_absolute_path_python_reports(tmp_path):
+    # Python reports an absolute __file__ for an entry of PYTHONPATH, even a relative one, so the
+    # runner's path is /.../evaluator/src/...; the check has to accept that form, not only a relative one.
+    absolute = "/home/runner/work/r/r/evaluator/src/livingproof_evaluator_scenario/__init__.py"
+    done, calls = _run(tmp_path, imported=absolute)
+    assert done.returncode == 0, done.stderr
+    assert calls[-1].startswith("runner")
