@@ -14,8 +14,8 @@ import pytest
 from capability_verifier import evaluator_pin
 
 REPO = "Living-Proof-Labs/livingproof-evaluator-scenario"
-TAG = "v1.5.0"
-COMMIT = "3fab127372208b92c532bbd880aa10ae275f7565"
+TAG = "v1.5.3"
+COMMIT = "ca9d337a771269d07feec94c99f199bef7fca808"
 OTHER = "a" * 40
 ROOT = Path(__file__).parents[1]
 
