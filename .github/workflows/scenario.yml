@@ -726,6 +726,72 @@ jobs:
           path: evaluator-results/
           retention-days: 30
           if-no-files-found: error
+  scenario-media:
+    # The scenario evaluator on the run's recordings: each trial's MCAP, read through its binding.
+    # Needs the media job's artifact, so it runs after media and never holds up the report. The
+    # evaluator resolves every limit from the run manifest; nothing here passes one. A limit the
+    # manifest cannot give leaves its step NOT_EVALUATED. The pinned evaluator must have the media
+    # runner (livingproof-evaluator-scenario v1.5.0 or later); an older pin leaves a note instead.
+    needs: [plan, evidence, media]
+    if: ${{ !cancelled() && needs.evidence.result == 'success' && needs.plan.outputs.evaluator-commit != '' }}
+    runs-on: ubuntu-24.04
+    container:
+      image: ${{ needs.plan.outputs.verifier-image }}
+      options: --user root
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: ${{ fromJSON(needs.plan.outputs.configurations) }}
+    steps:
+      - name: Capability verifier at the locked release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ needs.plan.outputs.verifier-repository }}
+          ref: ${{ needs.plan.outputs.verifier-commit }}
+          persist-credentials: false
+      - if: needs.plan.outputs.verifier-image == ''
+        run: python3 -m pip install --user uv==0.13.6
+      - run: uv sync --locked
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
+          path: evidence
+      - name: Download the media job's artifact
+        # As in run-integrity: a missing artifact after a successful media job fails the download.
+        if: ${{ needs.media.result != 'skipped' }}
+        continue-on-error: ${{ needs.media.result != 'success' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.artifact-prefix }}mcap-${{ matrix.configuration }}
+          path: media
+      - name: Scenario catalog from the declared lock
+        run: uv run --no-sync python tools/fetch_hallway_specs.py --from evidence/manifest.json
+      - name: Scenario evaluator package at the locked pin
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ needs.plan.outputs.evaluator-repository }}
+          ref: ${{ needs.plan.outputs.evaluator-commit }}
+          path: evaluator
+          persist-credentials: false
+      - name: Scenario evaluator on the recordings
+        env:
+          EVALUATOR_REPOSITORY: ${{ needs.plan.outputs.evaluator-repository }}
+          EVALUATOR_COMMIT: ${{ needs.plan.outputs.evaluator-commit }}
+        run: |
+          mkdir -p media
+          uv sync --locked --directory evaluator
+          eval_site=$(evaluator/.venv/bin/python -c 'import site; print(next(p for p in site.getsitepackages() if p.endswith("site-packages")))')
+          export PYTHONPATH="evaluator/src:${eval_site}:src"
+          uv run --no-sync python tools/run_scenario_media.py \
+            evidence/manifest.json media evaluator-results/livingproof-scenario-media \
+            --identity "git+https://github.com/${EVALUATOR_REPOSITORY}@${EVALUATOR_COMMIT}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ${{ inputs.artifact-prefix }}evaluator-results-livingproof-scenario-media-${{ matrix.configuration }}
+          path: evaluator-results/
+          retention-days: 30
+          if-no-files-found: ignore
   media:
     # Recordings for links, never a grade: every trial is re-run and must hash to its evidence.
     needs: [plan, verify]
@@ -916,7 +982,7 @@ jobs:
   report:
     # Runs without links when media is off or failed; links never change a decision.
     # scenario-evaluator must succeed: its entry is part of the stored run.
-    needs: [plan, verify, scenario-evaluator, media, run-integrity]
+    needs: [plan, verify, scenario-evaluator, scenario-media, media, run-integrity]
     if: ${{ !cancelled() && needs.verify.result == 'success' && needs.scenario-evaluator.result == 'success' }}
     runs-on: ubuntu-24.04
     strategy:

@@ -688,6 +688,18 @@ Run Integrity starts after `verify` and `media` (the `media` job needs `verify`)
 start after `evidence`. `report` already waited for all of them, so the run's total time does not
 change, and only the time the integrity result is ready moves later.
 
+## Recordings in the scenario media job
+
+The `scenario-media` job runs the scenario evaluator on each trial's MCAP, read through that trial's
+binding file (media 2.1.0). It needs the `media` job, runs only when the lock pins the scenario
+evaluator by commit, and never holds up the report. The evaluator resolves every limit from the run's
+`manifest.json`; the job passes none, and a limit the manifest cannot give leaves its step
+`NOT_EVALUATED` (`missing_threshold`). Each result names the evaluator (id, version, and the pinned
+commit with a digest of its source). Its files go to the artifact `evaluator-results-livingproof-scenario-media-<configuration>`,
+which the report collects like the other evaluator results, so wall-contact steps and any
+`NOT_EVALUATED` step appear on the capability report. A pin older than the evaluator release that has
+the media runner leaves a `NO-MEDIA-RESULTS.txt` note instead.
+
 ## Recorded hashes
 
 Record a hash, a commit or an image digest by running the command that computes

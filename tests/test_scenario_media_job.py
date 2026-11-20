@@ -88,8 +88,10 @@ def test_the_workflow_has_a_media_scenario_job_the_report_waits_for():
     assert uploads[0]["with"]["name"].endswith(
         "evaluator-results-livingproof-scenario-media-${{ matrix.configuration }}"
     )
-    assert uploads[0]["with"]["name"].split("evaluator-results-")[1].endswith(
-        "-${{ matrix.configuration }}"
+    assert (
+        uploads[0]["with"]["name"]
+        .split("evaluator-results-")[1]
+        .endswith("-${{ matrix.configuration }}")
     )  # the report's evaluator-results-*-<configuration> pattern picks it up
 
 
@@ -97,7 +99,7 @@ def test_the_job_passes_no_thresholds_and_reads_the_media_artifact():
     text = json.dumps(DOC["jobs"]["scenario-media"])
     assert "run_scenario_media.py" in text
     assert "--thresholds" not in text and "hallway.thresholds" not in text
-    assert "-mcap-${{ matrix.configuration }}" in text  # the media job's artifact
+    assert "mcap-${{ matrix.configuration }}" in text  # the media job's artifact
     assert "needs.plan.outputs.evaluator-commit" in text  # identity comes from the lock's pin
 
 
@@ -115,9 +117,9 @@ def _stub_media(monkeypatch, calls):
         return []
 
     module.write_media_run = write_media_run
-    package = types.ModuleType("livingproof_evaluator_scenario")
-    package.media = module
-    monkeypatch.setitem(sys.modules, "livingproof_evaluator_scenario", package)
+    import livingproof_evaluator_scenario as package
+
+    monkeypatch.setattr(package, "media", module, raising=False)
     monkeypatch.setitem(sys.modules, "livingproof_evaluator_scenario.media", module)
 
 
@@ -140,13 +142,17 @@ def _run(tmp_path, with_media=True):
     return manifest, media, tmp_path / "out"
 
 
-def test_the_tool_hands_the_world_the_media_and_the_identity_to_the_evaluator(tmp_path, monkeypatch):
+def test_the_tool_hands_the_world_the_media_and_the_identity_to_the_evaluator(
+    tmp_path, monkeypatch
+):
     calls: list = []
     _stub_media(monkeypatch, calls)
     tool = _tool(monkeypatch)
     monkeypatch.setattr(tool, "grading_inputs", lambda document: ({"places": []}, {"p": 1}))
     manifest, media, out = _run(tmp_path)
-    code = tool.main([str(manifest), str(media), str(out), "--identity", "git+https://x@" + "a" * 40])
+    code = tool.main(
+        [str(manifest), str(media), str(out), "--identity", "git+https://x@" + "a" * 40]
+    )
     assert code == 0
     ((got_manifest, got_media, got_out, kwargs),) = calls
     assert (got_manifest, got_media, got_out) == (manifest, media, out)

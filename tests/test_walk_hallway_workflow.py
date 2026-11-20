@@ -124,7 +124,9 @@ def test_current_pins_keep_the_robot_lock_and_a_caller_lock_overrides_it():
                 assert step["if"] == writer_if
     assert writers == ["plan", "evidence", "media"]
     report = WORKFLOW.split("\n  report:\n", 1)[1].split("\n  comment:\n", 1)[0]
-    assert "needs: [plan, verify, scenario-evaluator, media, run-integrity]" in report
+    assert (
+        "needs: [plan, verify, scenario-evaluator, scenario-media, media, run-integrity]" in report
+    )
 
 
 def _release(commit, digest, *, tag, image, repository="Org/component"):
@@ -437,7 +439,9 @@ def test_media_links_are_named_artifacts_handed_to_the_reporter():
         assert step in STEPS, step
     assert "--evidence-links links/evidence-links.json" in STEPS
     # the report never waits on media succeeding, and links are rendered only by the reporter
-    assert "needs: [plan, verify, scenario-evaluator, media, run-integrity]" in STEPS
+    assert (
+        "needs: [plan, verify, scenario-evaluator, scenario-media, media, run-integrity]" in STEPS
+    )
     assert "needs.verify.result == 'success'" in STEPS
 
 
@@ -540,6 +544,7 @@ def test_every_job_that_reads_hallway_specs_fetches_them_first():
     assert readers == [
         "scenario.yml job verify",
         "scenario.yml job scenario-evaluator",
+        "scenario.yml job scenario-media",
     ]
 
 
@@ -554,7 +559,10 @@ def test_report_collects_with_media_on_and_with_media_off():
     assert "if: inputs.media &&" in media_head
     assert "COLLECT" not in media
     assert "evaluator-results" not in media
-    assert "needs: [plan, verify, scenario-evaluator, media, run-integrity]" in report_head
+    assert (
+        "needs: [plan, verify, scenario-evaluator, scenario-media, media, run-integrity]"
+        in report_head
+    )
     assert "needs.media.result" not in report_head
     assert "needs.scenario-evaluator.result == 'success'" in report_head
     pattern = "evaluator-results-*-${{ matrix.configuration }}"
@@ -822,13 +830,13 @@ def test_capability_installs_pinned_packaging_before_the_gate():
 def test_evidence_verify_and_media_run_in_the_locked_hallway_image():
     assert ".releases.verifier | if .image then .image" in STEPS
     assert "ghcr.io/living-proof-labs/capability-verifier-hallway" not in STEPS  # lock only
-    for job in ("evidence", "verify", "scenario-evaluator", "media"):
+    for job in ("evidence", "verify", "scenario-evaluator", "scenario-media", "media"):
         body = WORKFLOW.split(f"\n  {job}:\n", 1)[1].split("\n  report:\n", 1)[0]
         head = body.split("    steps:\n", 1)[0]
         assert "image: ${{ needs.plan.outputs.verifier-image }}" in head, job
         assert "options: --user root" in head, job
     # without an image in the lock the jobs still provision the runner themselves
-    assert STEPS.count("if: needs.plan.outputs.verifier-image == ''") == 7
+    assert STEPS.count("if: needs.plan.outputs.verifier-image == ''") == 8
 
 
 # Reporter 3.6.0, the release livingproof-verification pins. Duration cells are filled
