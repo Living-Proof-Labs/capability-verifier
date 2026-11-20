@@ -839,7 +839,15 @@ jobs:
                   path = entry.get("path") if isinstance(entry, dict) else None
                   if not isinstance(path, str) or not path.endswith(".binding.json"):
                       sys.exit("media.json 2.1.0 trial has no binding entry with a .binding.json path")
-                  if not path.startswith("mcap/") or not os.path.isfile("media/" + path):
+                  inside = os.path.realpath("media/" + path).startswith(
+                      os.path.realpath("media/mcap") + os.sep
+                  )
+                  if (
+                      not path.startswith("mcap/")
+                      or ".." in path.split("/")
+                      or not inside
+                      or not os.path.isfile("media/" + path)
+                  ):
                       sys.exit("media.json 2.1.0 binding file %s is not in media/mcap/" % path)
           for t in trials:
               if not isinstance(t, dict) or "video" not in t:
