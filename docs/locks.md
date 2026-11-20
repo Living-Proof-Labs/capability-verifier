@@ -697,8 +697,13 @@ evaluator by commit, and never holds up the report. The evaluator resolves every
 `NOT_EVALUATED` (`missing_threshold`). Each result names the evaluator (id, version, and the pinned
 commit with a digest of its source). Its files go to the artifact `evaluator-results-livingproof-scenario-media-<configuration>`,
 which the report collects like the other evaluator results, so wall-contact steps and any
-`NOT_EVALUATED` step appear on the capability report. A pin older than the evaluator release that has
-the media runner leaves a `NO-MEDIA-RESULTS.txt` note instead.
+`NOT_EVALUATED` step appear on the capability report. The job is active with the scenario evaluator pinned at
+`v1.5.0` (commit `3fab127`), the first release with the media runner. A pin older than that
+leaves a `NO-MEDIA-RESULTS.txt` note instead, and a run without a world document does too. The job
+stops after 30 minutes. If one of its result files is truncated or its `media/thresholds.json` is
+missing, the collector leaves that result off the report, names it on stderr and in
+`evaluator-result-problems.txt` in the report directory, and carries on; any other citation
+problem still fails the collection.
 
 ## Recorded hashes
 

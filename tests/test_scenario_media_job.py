@@ -207,6 +207,7 @@ def test_a_result_whose_media_thresholds_file_is_missing_is_reported_not_fatal(t
 
     directory = tmp_path / "evaluator-results"
     shutil.copytree(RESULTS, directory)
+    shutil.copytree(directory / "livingproof-scenario-media", directory / "a-other-run")
     (directory / "livingproof-scenario-media" / "media" / "thresholds.json").unlink()
     manifest, report = tmp_path / "manifest.json", tmp_path / "report"
     report.mkdir()
@@ -214,7 +215,7 @@ def test_a_result_whose_media_thresholds_file_is_missing_is_reported_not_fatal(t
     assert main([str(manifest), str(directory), str(report)]) == 0
     err = capsys.readouterr().err
     assert "media/thresholds.json" in err and "missing" in err
-    assert "evaluator_results" not in json.loads(manifest.read_text())["results"][0]
+    assert len(json.loads(manifest.read_text())["results"][0]["evaluator_results"]) == 1
     assert "media/thresholds.json" in (report / "evaluator-result-problems.txt").read_text()
 
 

@@ -34,10 +34,20 @@ from pathlib import Path, PurePosixPath
 RESULT_FORMAT = re.compile(r"^livingproof-evaluator-result/1\.\d+\.\d+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _THRESHOLDS_NAME = "thresholds.json"
+_MEDIA_PREFIX = "media/"  # where the scenario media job cites its thresholds.json
+PROBLEMS_FILE = "evaluator-result-problems.txt"
 
 
 class ThresholdCitationError(ValueError):
     """The cited thresholds.json is missing, altered, or a different path."""
+
+
+class ThresholdMissingError(ThresholdCitationError):
+    """The cited thresholds.json is not among the results (``relative`` is the cited path)."""
+
+    def __init__(self, message: str, relative: str):
+        super().__init__(message)
+        self.relative = relative
 
 
 def collect(
@@ -66,11 +76,16 @@ def collect(
         raise TypeError("bundle is missing results")
     directory = Path(directory)
     found = []
+    problems: list[str] = []
     if directory.is_dir():
         for path in sorted(directory.rglob("*.json")):
             if not path.is_file() or path.is_symlink():
                 continue
-            document = json.loads(path.read_text(encoding="utf-8"))
+            try:
+                document = json.loads(path.read_text(encoding="utf-8"))
+            except ValueError as exc:  # truncated, invalid JSON or not UTF-8
+                problems.append(f"{path.relative_to(directory).as_posix()}: not valid JSON ({exc})")
+                continue
             if (
                 isinstance(document, dict)
                 and isinstance(document.get("format"), str)
@@ -102,9 +117,18 @@ def collect(
         if result is None:
             tally["skipped"] += 1
             continue
+        try:
+            _take_thresholds(path, document, directory, exports)
+        except ThresholdMissingError as exc:
+            # Only the media job's results (cited under media/) are tolerated: the document is
+            # left off the report and the problem is listed. Any other missing citation fails.
+            if not exc.relative.startswith(_MEDIA_PREFIX):
+                raise
+            problems.append(f"{path.relative_to(directory).as_posix()}: {exc}")
+            tally["skipped"] += 1
+            continue
         tally["appended"] += 1
         trial_appended += 1
-        _take_thresholds(path, document, directory, exports)
         matched.append((trial_id, result, document))
     for trial_id, result, document in matched:
         entries = result.get("evaluator_results")
@@ -122,6 +146,7 @@ def collect(
     # Used by main() so a run-level result cannot hide a missing trial result.
     if counts is not None:
         counts["_trial_appended"] = trial_appended
+        counts["_problems"] = problems
     return bundle
 
 
@@ -187,8 +212,8 @@ def _cited_file(result_path: Path, item: dict, results_root: Path) -> tuple[str,
             f"substituted: {where} cites {relative}, but the file is {got}"
         )
     if not candidate.is_file():
-        raise ThresholdCitationError(
-            f"missing: {where} cites {relative}, and that file is not in the results"
+        raise ThresholdMissingError(
+            f"missing: {where} cites {relative}, and that file is not in the results", relative
         )
     data = candidate.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
@@ -340,6 +365,11 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     trial_appended = counts.pop("_trial_appended", 0)
+    problems = counts.pop("_problems", [])
+    for line in problems:
+        print(f"evaluator result not collected: {line}", file=sys.stderr)
+    if problems:
+        (Path(args[2]) / PROBLEMS_FILE).write_text("\n".join(problems) + "\n", encoding="utf-8")
     for name in sorted(counts):
         tally = counts[name]
         print(
