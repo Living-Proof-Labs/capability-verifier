@@ -24,6 +24,8 @@ FROZEN_FORMATS = {
     "livingproof-hallway-evidence/2.0.0",
     "livingproof-hallway-media/1.0.0",
     "livingproof-hallway-media/2.0.0",
+    # Read, never written here: sim-mujoco 2.1.0 media (capability-verifier#199).
+    "livingproof-hallway-media/2.1.0",
 }
 DEFINITIONS = (
     "unitree-g1-playground",
