@@ -441,6 +441,80 @@ def test_the_workflow_reads_index_for_media_2_and_seed_for_media_1(tmp_path):
     assert "pass-seed=7" in text and "fail-seed=8" in text
 
 
+def _media_2_1(tmp_path, *, drop=None, edit=None):
+    """A media/ folder as livingproof-sim-mujoco PR 147 (4cf8901) writes it: a binding per trial."""
+    doc = json.loads((FIXTURES / "media-2.1.0.json").read_text())
+    if edit:
+        edit(doc)
+    media = tmp_path / "media"
+    (media / "mcap").mkdir(parents=True)
+    (media / "media.json").write_text(json.dumps(doc))
+    for trial in doc["trials"]:
+        for kind in ("mcap", "binding"):
+            entry = trial.get(kind)
+            if isinstance(entry, dict) and entry["path"] != drop:
+                (media / entry["path"]).write_text("{}")
+    return subprocess.run(
+        [sys.executable, "-c", _media_script()],
+        check=False,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_the_workflow_accepts_media_2_1_0_and_reads_index(tmp_path):
+    done = _media_2_1(tmp_path)
+    assert done.returncode == 0, done.stderr
+    assert "pass-seed=1" in done.stdout and "fail-seed=3" in done.stdout
+    assert "video/trial-01-pass.mp4" in done.stdout
+    assert "livingproof-hallway-media/2.1.0" in _media_script()
+
+
+def test_media_2_1_0_names_its_trial_key_and_older_formats_still_do():
+    for name, key in (
+        ("media-2.1.0.json", "index"),
+        ("media-2.0.0.json", "index"),
+        ("media-1.0.0.json", "seed"),
+    ):
+        assert hallway.media_trial_key(json.loads((FIXTURES / name).read_text())) == key
+    assert "livingproof-hallway-media/2.1.0" in hallway.MEDIA_FORMATS
+    with pytest.raises(hallway.ManifestError, match="livingproof-hallway-media/9.0.0"):
+        hallway.media_trial_key(json.loads((FIXTURES / "media-unknown.json").read_text()))
+    with pytest.raises(hallway.ManifestError):
+        hallway.media_trial_key({"format": "livingproof-hallway-media/3.0.0"})
+
+
+def test_media_2_1_0_stops_when_a_trial_has_no_binding_entry(tmp_path):
+    done = _media_2_1(tmp_path, edit=lambda doc: doc["trials"][1].pop("binding"))
+    assert done.returncode != 0
+    assert "binding" in done.stderr and "Traceback" not in done.stderr
+
+
+def test_media_2_1_0_stops_when_a_binding_file_is_missing_from_media(tmp_path):
+    done = _media_2_1(tmp_path, drop="mcap/trial-02.binding.json")
+    assert done.returncode != 0
+    assert "mcap/trial-02.binding.json" in done.stderr and "Traceback" not in done.stderr
+
+
+def test_media_2_0_0_needs_no_binding(tmp_path):
+    ok, _ = _run_media(tmp_path, "media-2.0.0.json")
+    assert ok.returncode == 0, ok.stderr
+
+
+def test_the_media_artifact_uploads_the_folder_with_the_binding_files():
+    """The media job's artifact carries mcap/ whole (so every trial-NN.binding.json), and the
+    run-integrity job downloads that same artifact."""
+    text = WORKFLOW.read_text()
+    step = text[text.index("      - id: mcap\n") :]
+    step = step[: step.index("      - id: video-pass")]
+    paths = [line.strip() for line in step.split("path: |")[1].splitlines()[1:] if "/" in line]
+    assert "media/mcap/" in paths[0] or any(p.endswith("*.binding.json") for p in paths)
+    assert "media/media.json" in paths
+    assert "if-no-files-found: error" in step
+    assert text.count("name: ${{ inputs.artifact-prefix }}mcap-${{ matrix.configuration }}") >= 2
+
+
 def test_the_workflow_rejects_an_unknown_media_format(tmp_path):
     done, _ = _run_media(tmp_path, "media-unknown.json")
     assert done.returncode != 0
