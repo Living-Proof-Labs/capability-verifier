@@ -383,7 +383,9 @@ def main(argv: list[str] | None = None) -> int:
     for line in problems:
         print(f"evaluator result not collected: {line}", file=sys.stderr)
     if problems:
-        (Path(args[2]) / PROBLEMS_FILE).write_text("\n".join(problems) + "\n", encoding="utf-8")
+        problems_path = Path(args[2]) / PROBLEMS_FILE
+        problems_path.parent.mkdir(parents=True, exist_ok=True)  # reports/ may not exist yet
+        problems_path.write_text("\n".join(problems) + "\n", encoding="utf-8")
     for name in sorted(counts):
         tally = counts[name]
         print(
