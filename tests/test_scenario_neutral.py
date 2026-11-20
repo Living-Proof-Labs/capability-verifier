@@ -52,7 +52,7 @@ def test_released_pins_are_tags():
     project = (ROOT / "pyproject.toml").read_text()
     assert (
         "livingproof-evaluator-scenario @ git+https://github.com/Living-Proof-Labs/"
-        "livingproof-evaluator-scenario.git@v1.3.0"
+        "livingproof-evaluator-scenario.git@v1.5.0"
     ) in project
     assert (
         "livingproof-scenario-parameters @ git+https://github.com/Living-Proof-Labs/"
