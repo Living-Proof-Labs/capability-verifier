@@ -700,10 +700,12 @@ which the report collects like the other evaluator results, so wall-contact step
 `NOT_EVALUATED` step appear on the capability report. The job is active with the scenario evaluator pinned at
 `v1.5.0` (commit `3fab127`), the first release with the media runner. A pin older than that
 leaves a `NO-MEDIA-RESULTS.txt` note instead, and a run without a world document does too. The job
-stops after 30 minutes. If one of its result files is truncated or its `media/thresholds.json` is
-missing, the collector leaves that result off the report, names it on stderr and in
-`evaluator-result-problems.txt` in the report directory, and carries on; any other citation
-problem still fails the collection.
+stops after 30 minutes. The collector leaves any result file that is not valid JSON (truncated, invalid or not
+UTF-8), from any evaluator, and any media result whose `media/thresholds.json` is missing, off the
+report. It names each one, with its reason, on stdout ("skipped (unusable result: ...)") and
+stderr, and in `evaluator-result-problems.txt` in the report directory, where each line names the
+evaluator (id and version, or "unknown" when the file cannot be read). It then carries on. A
+missing citation outside `media/`, and any altered or substituted one, still fails the collection.
 
 ## Recorded hashes
 

@@ -1099,6 +1099,7 @@ jobs:
               directory = Path(directory)
               found = []
               problems: list[str] = []
+              unusable: list[tuple[str, str, str]] = []  # (evaluator, file, reason)
               if directory.is_dir():
                   for path in sorted(directory.rglob("*.json")):
                       if not path.is_file() or path.is_symlink():
@@ -1106,7 +1107,7 @@ jobs:
                       try:
                           document = json.loads(path.read_text(encoding="utf-8"))
                       except ValueError as exc:  # truncated, invalid JSON or not UTF-8
-                          problems.append(f"{path.relative_to(directory).as_posix()}: not valid JSON ({exc})")
+                          _note(unusable, problems, path, directory, None, f"not valid JSON ({exc})")
                           continue
                       if (
                           isinstance(document, dict)
@@ -1146,8 +1147,7 @@ jobs:
                       # left off the report and the problem is listed. Any other missing citation fails.
                       if not exc.relative.startswith(_MEDIA_PREFIX):
                           raise
-                      problems.append(f"{path.relative_to(directory).as_posix()}: {exc}")
-                      tally["skipped"] += 1
+                      _note(unusable, problems, path, directory, evaluator, str(exc))
                       continue
                   tally["appended"] += 1
                   trial_appended += 1
@@ -1169,7 +1169,19 @@ jobs:
               if counts is not None:
                   counts["_trial_appended"] = trial_appended
                   counts["_problems"] = problems
+                  counts["_unusable"] = unusable
               return bundle
+
+
+          def _note(unusable, problems, path, directory, evaluator, reason) -> None:
+              """Record a result left off the report: which file, which evaluator (if known), and why."""
+              where = path.relative_to(directory).as_posix()
+              if isinstance(evaluator, dict) and isinstance(evaluator.get("id"), str):
+                  label = f"{evaluator['id']} {evaluator.get('version') or '(no version)'}"
+              else:
+                  label = "unknown"
+              unusable.append((label, where, reason))
+              problems.append(f"{where} [evaluator {label}]: {reason}")
 
 
           def _citations(document: dict) -> list[dict]:
@@ -1388,6 +1400,8 @@ jobs:
                   return 1
               trial_appended = counts.pop("_trial_appended", 0)
               problems = counts.pop("_problems", [])
+              for label, where, reason in counts.pop("_unusable", []):
+                  print(f"evaluator {label}: skipped (unusable result: {where}: {reason})")
               for line in problems:
                   print(f"evaluator result not collected: {line}", file=sys.stderr)
               if problems:
