@@ -807,6 +807,15 @@ jobs:
           uv sync --locked --directory evaluator
           eval_site=$(evaluator/.venv/bin/python -c 'import site; print(next(p for p in site.getsitepackages() if p.endswith("site-packages")))')
           export PYTHONPATH="evaluator/src:${eval_site}:src"
+          imported=$(uv run --no-sync python -c 'import livingproof_evaluator_scenario as package; print(package.__file__)')
+          case "$imported" in
+            */evaluator/src/livingproof_evaluator_scenario/*) ;;
+            evaluator/src/livingproof_evaluator_scenario/*) ;;
+            *)
+              echo "livingproof_evaluator_scenario imported from ${imported}, not evaluator/src" >&2
+              exit 1
+              ;;
+          esac
           # The version the evaluator writes into each result (importlib.metadata).
           reported=$(uv run --no-sync python -c 'import importlib.metadata as m; print(m.version("livingproof-evaluator-scenario"))')
           if [ "$reported" != "$release" ]; then
