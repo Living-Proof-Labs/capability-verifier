@@ -23,7 +23,7 @@ verify = "capability_verifier.plugin:verify"
 [dependency-groups]
 dev = [
     "playwright==1.64.1",
-    "pytest==8.4.2",
+    "pytest==9.0.3",
     "pytest-bdd==8.1.0",
     "ruff==0.17.5",
     "zensical==0.0.73",
