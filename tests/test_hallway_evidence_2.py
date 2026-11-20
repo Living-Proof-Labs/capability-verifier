@@ -751,3 +751,74 @@ def test_media_2_1_0_binding_path_cannot_climb_out_of_mcap(tmp_path):
     (tmp_path / "outside.binding.json").write_text("{}")
     done = _media_2_1(tmp_path, edit=climb)
     assert done.returncode != 0
+
+
+def _media_2_1_prepared(tmp_path, path, build):
+    """media/ as _media_2_1 writes it, then `build(media)` adds files or links; run the step."""
+    doc = json.loads((FIXTURES / "media-2.1.0.json").read_text())
+    doc["trials"][0]["binding"]["path"] = path
+    media = tmp_path / "media"
+    (media / "mcap").mkdir(parents=True)
+    (media / "media.json").write_text(json.dumps(doc))
+    for trial in doc["trials"]:
+        for kind in ("mcap", "binding"):
+            entry = trial.get(kind)
+            if isinstance(entry, dict) and entry["path"] != path:
+                (media / entry["path"]).write_text("{}")
+    build(media)
+    return subprocess.run(
+        [sys.executable, "-c", _media_script()],
+        check=False,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _assert_rejected(done):
+    assert done.returncode != 0
+    assert "not in media/mcap/" in done.stderr and "Traceback" not in done.stderr
+
+
+def test_media_2_1_0_binding_symlink_cannot_escape_mcap(tmp_path):
+    """Verification (#201): a symlink under mcap/ that points outside media/mcap/ is rejected."""
+    (tmp_path / "secret.json").write_text("{}")
+
+    def build(media):
+        (media / "mcap" / "link.binding.json").symlink_to(tmp_path / "secret.json")
+
+    _assert_rejected(_media_2_1_prepared(tmp_path, "mcap/link.binding.json", build))
+
+
+def test_media_2_1_0_binding_symlinked_directory_cannot_escape_mcap(tmp_path):
+    (tmp_path / "outdir").mkdir()
+    (tmp_path / "outdir" / "x.binding.json").write_text("{}")
+
+    def build(media):
+        (media / "mcap" / "sub").symlink_to(tmp_path / "outdir")
+
+    _assert_rejected(_media_2_1_prepared(tmp_path, "mcap/sub/x.binding.json", build))
+
+
+def test_media_2_1_0_binding_in_a_lookalike_folder_is_rejected(tmp_path):
+    """`mcap2/` shares the `mcap` prefix but is not media/mcap/."""
+
+    def build(media):
+        (media / "mcap2").mkdir()
+        (media / "mcap2" / "trial-01.binding.json").write_text("{}")
+
+    _assert_rejected(_media_2_1_prepared(tmp_path, "mcap2/trial-01.binding.json", build))
+
+
+def test_media_2_1_0_absolute_binding_path_is_rejected(tmp_path):
+    other = tmp_path / "abs.binding.json"
+    other.write_text("{}")
+    _assert_rejected(_media_2_1_prepared(tmp_path, str(other), lambda media: None))
+
+
+def test_media_2_1_0_a_symlink_that_stays_inside_mcap_is_accepted(tmp_path):
+    def build(media):
+        (media / "mcap" / "alias.binding.json").symlink_to(media / "mcap" / "trial-02.binding.json")
+
+    done = _media_2_1_prepared(tmp_path, "mcap/alias.binding.json", build)
+    assert done.returncode == 0, done.stderr
