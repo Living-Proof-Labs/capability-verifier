@@ -706,7 +706,8 @@ it names the locked commit, and only then runs `uv sync`. Before grading, the jo
 (exit 1, no results): an evaluator imported from anywhere but `evaluator/src` (a stale copy in the
 verifier environment), and a build whose `importlib.metadata` version is not the release the pin step
 printed ("reports ... not the locked ..."). So each result names the release, not `0.1.dev1`. The
-evaluator pin is `v1.5.3` (commit `ca9d337`); the media runner arrived in `v1.5.0` (commit `3fab127`),
+evaluator pin is `v1.5.3` (commit `ca9d337`), which is also the verifier's own pinned dependency
+(`pyproject.toml` and `uv.lock`); the media runner arrived in `v1.5.0` (commit `3fab127`),
 and a pin older than that leaves a `NO-MEDIA-RESULTS.txt` note instead. A run without a world
 document leaves one too. The job stops after 30 minutes. The collector leaves any result file that is not valid JSON (truncated, invalid or not
 UTF-8), from any evaluator, and any media result whose `media/thresholds.json` is missing, off the
