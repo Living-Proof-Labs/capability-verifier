@@ -104,5 +104,9 @@ def test_collect_alone_gives_the_evaluator_in_each_problem(tmp_path):
 def test_the_docs_say_any_unreadable_result_is_left_off():
     text = (ROOT / "docs" / "locks.md").read_text()
     section = text.split("## Recordings in the scenario media job")[1].split("\n## ")[0]
-    assert "any result file" in section
-    assert "names the evaluator" in section
+    flat = " ".join(section.split())  # the sentences wrap across lines
+    assert "any result file that is not valid JSON (truncated, invalid or not UTF-8)" in flat
+    assert (
+        'where each line names the evaluator (id and version, or "unknown" when the file '
+        "cannot be read)"
+    ) in flat
