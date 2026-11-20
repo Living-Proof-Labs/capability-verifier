@@ -110,3 +110,18 @@ def test_the_docs_say_any_unreadable_result_is_left_off():
         'where each line names the evaluator (id and version, or "unknown" when the file '
         "cannot be read)"
     ) in flat
+
+
+def test_every_result_unusable_and_no_report_directory_still_gives_the_normal_message(
+    tmp_path, capsys
+):
+    """The workflow runs the collector before reports/ exists; nothing collected must not mean a
+    traceback from writing the problems file."""
+    directory, manifest, report = _setup(tmp_path)
+    report.rmdir()
+    for name in ("stock-seed-01.json", "stock-seed-02.json"):
+        (directory / MEDIA / name).write_text("{")
+    assert main([str(manifest), str(directory), str(report)]) == 1
+    err = capsys.readouterr().err
+    assert "no evaluator result was appended" in err
+    assert (report / PROBLEMS_FILE).read_text().count("not valid JSON") == 2
