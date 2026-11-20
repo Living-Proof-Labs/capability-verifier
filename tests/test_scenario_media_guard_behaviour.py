@@ -41,6 +41,7 @@ def _run(
     release: str = "1.5.3",
     reported: str = "1.5.3",
     workflow_src: bool = True,
+    imported: str = "evaluator/src/livingproof_evaluator_scenario/__init__.py",
 ):
     log = tmp_path / "calls.log"
     bin_dir = tmp_path / "bin"
@@ -53,6 +54,7 @@ def _run(
     _stub(
         bin_dir / "uv",
         'case "$*" in\n'
+        f'  *package.__file__*) echo "{imported}" ;;\n'
         f'  *importlib.metadata*) echo "version-read" >> "{log}"; echo {reported} ;;\n'
         f'  *run_scenario_media.py*) echo "runner $*" >> "{log}" ;;\n'
         f'  sync*) echo "sync $*" >> "{log}" ;;\n'
@@ -142,3 +144,33 @@ def test_the_workflow_source_checkout_is_the_one_scenario_evaluator_uses():
     assert media["with"]["path"] == "workflow-src"
     assert media["with"]["repository"] == "${{ job.workflow_repository }}"
     assert media["with"]["ref"] == "${{ job.workflow_sha }}"
+
+
+@pytest.mark.parametrize(
+    "imported",
+    [
+        "/venv/lib/python3.12/site-packages/livingproof_evaluator_scenario/__init__.py",
+        "src/livingproof_evaluator_scenario/__init__.py",
+        "",
+    ],
+    ids=["site-packages copy", "verifier source copy", "no import"],
+)
+def test_an_import_from_outside_the_evaluator_checkout_is_refused_before_the_runner(
+    tmp_path, imported
+):
+    # A stale copy in the verifier environment must not grade the recordings (as scenario-evaluator).
+    done, calls = _run(tmp_path, imported=imported)
+    assert done.returncode == 1, done.stderr
+    assert "not evaluator/src" in done.stderr
+    assert not any(call.startswith(("runner", "version-read")) for call in calls)
+
+
+def test_the_import_check_reads_the_evaluator_checkout_before_the_version(tmp_path):
+    done, calls = _run(tmp_path)
+    assert done.returncode == 0, done.stderr
+    assert [call.split()[0] for call in calls if call.split()[0] != "pin-path"] == [
+        "pin",
+        "sync",
+        "version-read",
+        "runner",
+    ]
