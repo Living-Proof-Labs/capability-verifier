@@ -31,6 +31,7 @@ artifact pattern in ``EVALUATOR_RESULTS_PATTERN``; a bundle with no trials (a
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import re
@@ -42,6 +43,7 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _THRESHOLDS_NAME = "thresholds.json"
 _MEDIA_PREFIX = "media/"  # where the scenario media job cites its thresholds.json
 PROBLEMS_FILE = "evaluator-result-problems.txt"
+INTEGRITY_FILE = "integrity-lines.txt"
 
 
 class ThresholdCitationError(ValueError):
@@ -346,7 +348,10 @@ NOT_RUN_ID = "livingproof-run-integrity"
 
 def _not_run_reason(directory: Path, job_result: str) -> str:
     """Why there is no integrity result: the job's own note when it wrote one, else its result."""
-    for note in sorted(Path(directory).rglob("no-result.txt")) if Path(directory).is_dir() else []:
+    notes = sorted(Path(directory).rglob("no-result.txt")) if Path(directory).is_dir() else []
+    for note in notes:
+        if NOT_RUN_ID not in note.parent.name:
+            continue  # only the run-integrity job's artifact explains a missing integrity result
         try:
             text = note.read_text(encoding="utf-8").strip()
         except (OSError, ValueError):
@@ -386,7 +391,7 @@ def integrity_report_lines(bundle: dict) -> list[str]:
     if isinstance(missing, dict):
         lines.append(
             f"Run Integrity: NOT RUN ({missing.get('job_result')}): {missing.get('reason')} "
-            "The run is INCONCLUSIVE; the robot grade above is not backed by an integrity result."
+            "The run is INCONCLUSIVE; the robot grade is not backed by an integrity result."
         )
     if not isinstance(stored, dict):
         return lines
@@ -411,14 +416,66 @@ def _write_integrity_lines(report_dir: Path, bundle: dict) -> None:
     if not lines:
         return
     report_dir.mkdir(parents=True, exist_ok=True)
-    (report_dir / "integrity-lines.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (report_dir / INTEGRITY_FILE).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+_VERDICT = re.compile(r": overall [A-Za-z_ ]+\.\s*$")
+_HTML_VERDICT = re.compile(r"<p class=(['\"])stored-status\1>[^<]*</p>")
+
+
+def place_integrity_lines(report_dir: Path) -> bool:
+    """Put the run-integrity lines next to the verdict in report.md, report.txt and report.html.
+
+    The reporter does not know the integrity result, so the lines the collector wrote are placed
+    after rendering: in Markdown and text right after each ``... overall <GRADE>.`` line, in HTML
+    right after each stored-status paragraph, so no format shows a verdict without the state.
+    Where the verdict is not found (a reporter that words it differently), the lines go at the
+    end instead, and the first format never loses them. Returns False when there are no lines.
+    """
+    source = report_dir / INTEGRITY_FILE
+    if not source.is_file():
+        return False
+    lines = [line for line in source.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not lines:
+        return False
+    for name, blank in (("report.md", True), ("report.txt", False)):
+        path = report_dir / name
+        if not path.is_file():
+            continue
+        out: list[str] = []
+        placed = False
+        for line in path.read_text(encoding="utf-8").splitlines():
+            out.append(line)
+            if _VERDICT.search(line) and not line.startswith(("|", "<")):
+                for extra in lines:
+                    out += ["", extra] if blank else [extra]
+                placed = True
+        if not placed:
+            out += ["", *lines]
+        path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    page = report_dir / "report.html"
+    if page.is_file():
+        text = page.read_text(encoding="utf-8")
+        shown = "".join(
+            f"<p class='stored-status integrity-status'>{html.escape(line, quote=False)}</p>"
+            for line in lines
+        )
+        text, count = _HTML_VERDICT.subn(lambda found: found.group(0) + shown, text)
+        if not count:
+            text = text.replace("<main class='wrap'>", "<main class='wrap'>" + shown, 1)
+        page.write_text(text, encoding="utf-8")
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if len(args) == 2 and args[0] == "--place-integrity":
+        place_integrity_lines(Path(args[1]))
+        return 0
     if len(args) != 3:
         print(
-            "usage: collect_evaluator_results.py BUNDLE_MANIFEST RESULTS_DIR REPORT_DIR",
+            "usage: collect_evaluator_results.py BUNDLE_MANIFEST RESULTS_DIR REPORT_DIR\n"
+            "       collect_evaluator_results.py --place-integrity REPORT_DIR",
             file=sys.stderr,
         )
         return 2
