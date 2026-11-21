@@ -134,7 +134,10 @@ MEDIA_V1 = "livingproof-hallway-media/1.0.0"
 MEDIA_V2 = "livingproof-hallway-media/2.0.0"
 # 2.1.0 adds a binding entry per trial (livingproof-sim-mujoco 2.1.0 media): same trial key as 2.0.0.
 MEDIA_V2_1 = "livingproof-hallway-media/2.1.0"
-MEDIA_FORMATS = frozenset({MEDIA_V1, MEDIA_V2, MEDIA_V2_1})
+# 2.2.0 adds robot_mcap per trial (livingproof-sim-mujoco v3.9.0): the robot adapter's own recording,
+# mcap/trial-NN.robot.mcap, next to the simulator's ``mcap``. The binding stays. Same trial key.
+MEDIA_V2_2 = "livingproof-hallway-media/2.2.0"
+MEDIA_FORMATS = frozenset({MEDIA_V1, MEDIA_V2, MEDIA_V2_1, MEDIA_V2_2})
 
 
 class ManifestError(ValueError):
@@ -379,7 +382,7 @@ def validate_manifest(manifest) -> None:
 
 
 def media_trial_key(document) -> str:
-    """Trial identity key for a media manifest: ``index`` at 2.0.0 and 2.1.0, ``seed`` at legacy 1.0.0."""
+    """Trial identity key for a media manifest: ``index`` from 2.0.0 to 2.2.0, ``seed`` at legacy 1.0.0."""
     if not isinstance(document, dict):
         raise ManifestError("media manifest: expected a JSON object")
     fmt = document.get("format", _ABSENT)
@@ -387,7 +390,7 @@ def media_trial_key(document) -> str:
         raise ManifestError("media field 'format' is missing")
     if not isinstance(fmt, str):
         raise ManifestError("media field 'format' has the wrong type")
-    if fmt in (MEDIA_V2, MEDIA_V2_1):
+    if fmt in (MEDIA_V2, MEDIA_V2_1, MEDIA_V2_2):
         return "index"
     if fmt == MEDIA_V1:
         return "seed"

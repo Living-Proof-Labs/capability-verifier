@@ -1,0 +1,51 @@
+{
+  "format": "livingproof-observation-binding/1.0.0",
+  "kind": "merged",
+  "trial_id": "trial-01",
+  "robot": {
+    "id": "pub-toy",
+    "configuration": "stock"
+  },
+  "producer": {
+    "id": "livingproof-sim-mujoco"
+  },
+  "recording": {
+    "uri": "trial-01.mcap",
+    "sha256": "5275a03fe487826374cb2913cbf8f1ec696d86f4e520c4496e056dfa4d49a574"
+  },
+  "observables": {
+    "base": {
+      "topic": "/base_pose",
+      "encoding": "json",
+      "schema": "foxglove.PoseInFrame",
+      "fields": {
+        "x": "pose.position.x",
+        "y": "pose.position.y"
+      },
+      "frame": "world",
+      "body": "base"
+    },
+    "body_contact": {
+      "topic": "/wall_contacts",
+      "encoding": "json",
+      "schema": "livingproof.WallContact",
+      "fields": {
+        "wall": "wall",
+        "start": "start",
+        "end": "end",
+        "depth": "depth"
+      },
+      "frame": "world"
+    }
+  },
+  "bound_observables": [
+    "base",
+    "body_contact"
+  ],
+  "unbound": [
+    {
+      "id": "base_height",
+      "reason": "robot-entry-missing"
+    }
+  ]
+}

@@ -691,7 +691,8 @@ change, and only the time the integrity result is ready moves later.
 ## Recordings in the scenario media job
 
 The `scenario-media` job runs the scenario evaluator on each trial's MCAP, read through that trial's
-binding file (media 2.1.0). It needs the `media` job, runs only when the lock pins the scenario
+binding file (media 2.1.0 and 2.2.0; the 2.2.0 `robot_mcap` recording is not read here, only Run Integrity
+reads it). It needs the `media` job, runs only when the lock pins the scenario
 evaluator by commit, and never holds up the report. The evaluator resolves every limit from the run's
 `manifest.json`; the job passes none, and a limit the manifest cannot give leaves its step
 `NOT_EVALUATED` (`missing_threshold`). Each result names the evaluator (id, version, and the pinned
@@ -706,7 +707,8 @@ it names the locked commit, and only then runs `uv sync`. Before grading, the jo
 (exit 1, no results): an evaluator imported from anywhere but `evaluator/src` (a stale copy in the
 verifier environment), and a build whose `importlib.metadata` version is not the release the pin step
 printed ("reports ... not the locked ..."). So each result names the release, not `0.1.dev1`. The
-evaluator pin is `v1.5.3` (commit `ca9d337`); the media runner arrived in `v1.5.0` (commit `3fab127`),
+evaluator pin is `v1.5.3` (commit `ca9d337`), which is also the verifier's own pinned dependency
+(`pyproject.toml` and `uv.lock`); the media runner arrived in `v1.5.0` (commit `3fab127`),
 and a pin older than that leaves a `NO-MEDIA-RESULTS.txt` note instead. A run without a world
 document leaves one too. The job stops after 30 minutes. The collector leaves any result file that is not valid JSON (truncated, invalid or not
 UTF-8), from any evaluator, and any media result whose `media/thresholds.json` is missing, off the
