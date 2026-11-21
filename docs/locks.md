@@ -684,6 +684,15 @@ limit is `plan.recording.max_gap_seconds`, read by the evaluator from the eviden
 then the lock. Neither this repository nor the evaluator has a default for it, so a run that
 declares none is not judged, with or without media.
 
+A failed or refused Run Integrity is shown, not omitted. The `report` job does not require
+`run-integrity` to succeed, and passes its result to the collector. With no integrity result
+collected (the job failed, the evaluator refused the run with exit 2, or it was cancelled or
+skipped, or it succeeded and left nothing) the stored assessment gets `integrity_not_run` (the job
+result and the reason: the job's own `no-result.txt` line when it wrote one, else the job result),
+every assessment run is `INCONCLUSIVE`, and `report.md` and `report.txt` end with a
+`Run Integrity: NOT RUN (...)` line. The robot grade is stored as before and is not changed. The
+job result is the matrix aggregate, so one failed configuration is reported for each.
+
 Run Integrity starts after `verify` and `media` (the `media` job needs `verify`), where it used to
 start after `evidence`. `report` already waited for all of them, so the run's total time does not
 change, and only the time the integrity result is ready moves later.

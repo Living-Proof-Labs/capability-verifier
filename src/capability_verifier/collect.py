@@ -10,6 +10,12 @@ on the assessment, keyed by ``evaluator.id``. More than one integrity
 evaluator per run is kept. A failed integrity result marks each assessment
 run ``INCONCLUSIVE`` and never changes the robot grade.
 
+When the run-integrity job's result is given (``RUN_INTEGRITY_RESULT``) and no integrity result
+was collected, whether the job failed, was refused by the evaluator (exit 2), was cancelled or
+skipped, or succeeded and left nothing, the run is not shown as clean: ``assessment.integrity_not_run``
+records the job result and the reason, every assessment run is ``INCONCLUSIVE``, and the report
+gets a "Run Integrity: NOT RUN" line (#214).
+
 A result that cites ``thresholds.json`` keeps that input reference. The file
 at the cited path is copied into the report output, and its SHA-256 has to
 match the citation. A missing file, different bytes, or a different path
@@ -55,6 +61,7 @@ def collect(
     directory: Path,
     report_dir: Path | None = None,
     counts: dict | None = None,
+    integrity_job: str | None = None,
 ) -> dict:
     """Append this bundle's result documents. ``bundle`` is updated.
 
@@ -68,6 +75,9 @@ def collect(
     Each appended document that cites ``thresholds.json`` is checked against
     the file at that URI, relative to the result file. When ``report_dir`` is
     set, the matching bytes are copied there under the cited relative path.
+
+    ``integrity_job`` is the run-integrity job's result (``success``, ``failure``, ``cancelled``,
+    ``skipped``). Without it nothing about a missing integrity result is stored.
 
     ``counts``, when given, is filled with ``{evaluator id: {"appended": n,
     "skipped": m}}``.
@@ -139,6 +149,8 @@ def collect(
             raise TypeError(f"result {trial_id!r} evaluator_results is not a list")
         entries.append(document)
     _attach_integrity(bundle, integrity_docs)
+    if integrity_job and not integrity_docs:
+        _attach_not_run(bundle, integrity_job, _not_run_reason(directory, integrity_job))
     if report_dir is not None:
         report = Path(report_dir)
         _write_thresholds(report, exports)
@@ -329,13 +341,55 @@ def _attach_integrity(bundle: dict, documents: list[dict]) -> None:
             run["conclusion"] = "INCONCLUSIVE"
 
 
+NOT_RUN_ID = "livingproof-run-integrity"
+
+
+def _not_run_reason(directory: Path, job_result: str) -> str:
+    """Why there is no integrity result: the job's own note when it wrote one, else its result."""
+    for note in sorted(Path(directory).rglob("no-result.txt")) if Path(directory).is_dir() else []:
+        try:
+            text = note.read_text(encoding="utf-8").strip()
+        except (OSError, ValueError):
+            continue
+        if text:
+            return text.splitlines()[0]
+    if job_result == "success":
+        return "the run-integrity job succeeded but left no result"
+    return (
+        f"the run-integrity job ended {job_result} and left no result "
+        "(see its log; an evaluator that refuses a run exits 2 and writes none)"
+    )
+
+
+def _attach_not_run(bundle: dict, job_result: str, reason: str) -> None:
+    assessment = bundle.get("assessment")
+    if not isinstance(assessment, dict):
+        assessment = {}
+        bundle["assessment"] = assessment
+    assessment["integrity_not_run"] = {
+        "evaluator": NOT_RUN_ID,
+        "job_result": job_result,
+        "reason": reason,
+    }
+    runs = assessment.get("runs") if isinstance(assessment.get("runs"), list) else []
+    for run in runs:
+        if isinstance(run, dict):
+            run["conclusion"] = "INCONCLUSIVE"
+
+
 def integrity_report_lines(bundle: dict) -> list[str]:
     """Plain report lines for each stored run-level integrity result."""
     assessment = bundle.get("assessment") if isinstance(bundle.get("assessment"), dict) else {}
     stored = assessment.get("integrity_results") if isinstance(assessment, dict) else None
-    if not isinstance(stored, dict):
-        return []
     lines = []
+    missing = assessment.get("integrity_not_run") if isinstance(assessment, dict) else None
+    if isinstance(missing, dict):
+        lines.append(
+            f"Run Integrity: NOT RUN ({missing.get('job_result')}): {missing.get('reason')} "
+            "The run is INCONCLUSIVE; the robot grade above is not backed by an integrity result."
+        )
+    if not isinstance(stored, dict):
+        return lines
     for key, document in stored.items():
         if not isinstance(document, dict):
             continue
@@ -372,7 +426,13 @@ def main(argv: list[str] | None = None) -> int:
     bundle = json.loads(manifest.read_text(encoding="utf-8"))
     counts: dict = {}
     try:
-        collect(bundle, Path(args[1]), Path(args[2]), counts)
+        collect(
+            bundle,
+            Path(args[1]),
+            Path(args[2]),
+            counts,
+            integrity_job=os.environ.get("RUN_INTEGRITY_RESULT") or None,
+        )
     except ThresholdCitationError as exc:
         print(str(exc), file=sys.stderr)
         return 1
