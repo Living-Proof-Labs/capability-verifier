@@ -689,9 +689,20 @@ A failed or refused Run Integrity is shown, not omitted. The `report` job does n
 collected (the job failed, the evaluator refused the run with exit 2, or it was cancelled or
 skipped, or it succeeded and left nothing) the stored assessment gets `integrity_not_run` (the job
 result and the reason: the job's own `no-result.txt` line when it wrote one, else the job result),
-every assessment run is `INCONCLUSIVE`, and `report.md` and `report.txt` end with a
+every assessment run is `INCONCLUSIVE`, and the reports show a
 `Run Integrity: NOT RUN (...)` line. The robot grade is stored as before and is not changed. The
-job result is the matrix aggregate, so one failed configuration is reported for each.
+job result is the matrix aggregate, so one failed configuration is reported for each. The reason is
+the first line of the run-integrity job's own `no-result.txt`; a note in any other evaluator's
+artifact is never used.
+
+The integrity line sits with the verdict in every format, never after the footer: in `report.md`
+and `report.txt` right after the `... overall <GRADE>.` line, and in `report.html` right after each
+"Stored overall status" line, with the same weight. It shows whichever state applies: the stored
+result (`Run Integrity: COMPLETED`, `ERROR` or `INCONCLUSIVE`) or `NOT RUN (<job result>)`. A run
+the evaluator refused (exit 2, no result) is the `NOT RUN (failure)` case, with the refusal as the
+reason when the job wrote it. The reporter has no integrity input, so the workflow places the lines
+after rendering (`collect_evaluator_results.py --place-integrity reports`) and before it writes
+`SHA256SUMS`, so the sums cover the edited files. The reporter's own grade line is unchanged.
 
 Run Integrity starts after `verify` and `media` (the `media` job needs `verify`), where it used to
 start after `evidence`. `report` already waited for all of them, so the run's total time does not

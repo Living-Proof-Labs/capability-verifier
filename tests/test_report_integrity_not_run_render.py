@@ -3,7 +3,7 @@
 
 Runs the workflow's collect step, then its render step with reporter 3.6.0 (downloaded as
 test_rendered_html_shows_each_trial_duration does), on a real bundle 1.1.0 export, and reads
-report.md and report.txt. The HTML is not checked: the reporter does not show integrity there yet.
+report.md and report.txt. The placement next to the verdict, and the HTML, are in test_report_integrity_next_to_verdict.py.
 Proposed by Vera in the capability-verifier#216 review.
 """
 

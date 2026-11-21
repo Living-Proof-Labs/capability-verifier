@@ -136,6 +136,8 @@ MEDIA_V2 = "livingproof-hallway-media/2.0.0"
 MEDIA_V2_1 = "livingproof-hallway-media/2.1.0"
 # 2.2.0 adds robot_mcap per trial (livingproof-sim-mujoco v3.9.0): the robot adapter's own recording,
 # mcap/trial-NN.robot.mcap, next to the simulator's ``mcap``. The binding stays. Same trial key.
+# This module only accepts the format and reads its trial key. The robot_mcap entry and file are
+# checked by the media step in .github/workflows/scenario.yml, and the evaluator checks the bytes.
 MEDIA_V2_2 = "livingproof-hallway-media/2.2.0"
 MEDIA_FORMATS = frozenset({MEDIA_V1, MEDIA_V2, MEDIA_V2_1, MEDIA_V2_2})
 
