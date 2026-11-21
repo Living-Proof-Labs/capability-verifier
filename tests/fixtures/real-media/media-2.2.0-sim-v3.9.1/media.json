@@ -1,0 +1,32 @@
+{
+  "format": "livingproof-hallway-media/2.2.0",
+  "configuration": "stock",
+  "run_id": "walk-hallway-pub-toy-stock-20261121T225116Z",
+  "trials": [
+    {
+      "index": 1,
+      "observation_sha256": "c5c074142831dc756945f0b88aa23da2a3fa77835e96b2ef74b95fae68d6dc96",
+      "mcap": {
+        "path": "mcap/trial-01.mcap",
+        "bytes": 7701,
+        "sha256": "5275a03fe487826374cb2913cbf8f1ec696d86f4e520c4496e056dfa4d49a574"
+      },
+      "robot_mcap": {
+        "path": "mcap/trial-01.robot.mcap",
+        "bytes": 4859,
+        "sha256": "820dcacaa296ce7b4cf164b551004ff64872b97edcfe33a1895efcb7ec4103b2"
+      },
+      "binding": {
+        "path": "mcap/trial-01.binding.json",
+        "bytes": 1067,
+        "sha256": "45ed50e1fc0391854f531eea186e299795c0ace617a6b580985a9205ae5573fb"
+      },
+      "status": "PASS",
+      "video": {
+        "path": "video/trial-01-pass.mp4",
+        "bytes": 12098,
+        "sha256": "f80f39e6c77e7db3b0d7ca5e077e425b3726fc7bdc3529b20bcafbbbaaa051ca"
+      }
+    }
+  ]
+}
