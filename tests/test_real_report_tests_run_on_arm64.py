@@ -62,3 +62,27 @@ def test_the_task_names_every_test_file_that_uses_the_real_report_fixture():
 def test_the_host_taskfile_wraps_it_like_the_other_container_tasks():
     commands = " ".join(str(c) for c in HOST["tasks"]["test:real-report"]["cmds"])
     assert "docker compose run --build --rm verifier test:real-report" in commands
+
+
+def test_the_arm64_job_keeps_its_junit_report_when_the_tests_fail():
+    """The task writes artifacts/real-report.xml. The runner must retain it for review."""
+    job = next(
+        candidate
+        for candidate in WORKFLOW["jobs"].values()
+        if candidate.get("runs-on") == "ubuntu-24.04-arm"
+        and any("test:real-report" in str(step.get("run", "")) for step in candidate["steps"])
+    )
+    uploads = [step for step in job["steps"] if "upload-artifact" in str(step.get("uses", ""))]
+    assert len(uploads) == 1
+    (step,) = uploads
+    assert step["uses"] == "actions/upload-artifact@v4.6.2"
+    assert step["if"] == "${{ !cancelled() }}"
+    saved = step["with"]
+    assert saved["name"] == (
+        "real-report-arm64-${{ github.event.pull_request.head.sha || github.sha }}"
+    )
+    assert saved["path"] == "artifacts/real-report.xml"
+    assert saved["retention-days"] == 14
+    assert saved["if-no-files-found"] == "error"
+    commands = " ".join(str(command) for command in RUNTIME["tasks"]["test:real-report"]["cmds"])
+    assert "--junitxml=artifacts/real-report.xml" in commands
