@@ -14,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "artifacts/docs"
+REPO_URL = "https://github.com/Living-Proof-Labs/capability-verifier"
 
 
 def source_identity():
@@ -57,8 +58,31 @@ def command(*args):
     return subprocess.check_output(args, cwd=ROOT, text=True).strip()
 
 
+def release_identity(context):
+    tag = os.environ.get("DOCS_RELEASE_TAG")
+    if not tag:
+        return {}
+    run = os.environ["DOCS_RELEASE_RUN_ID"]
+    attempt = os.environ["DOCS_RELEASE_RUN_ATTEMPT"]
+    if (
+        not re.fullmatch(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", tag)
+        or os.environ.get("LIVINGPROOF_VERIFIER_VERSION") != tag[1:]
+        or context["exitstatus"] != 0
+        or not re.fullmatch(r"[1-9][0-9]*", run)
+        or not re.fullmatch(r"[1-9][0-9]*", attempt)
+    ):
+        raise ValueError("Released manual must match the verified stable tag, version and run")
+    return {
+        "release_tag": tag,
+        "release_version": tag[1:],
+        "release_run_id": run,
+        "release_run_attempt": attempt,
+    }
+
+
 def build():
     context = json.loads((ROOT / "artifacts/test-context.json").read_text())
+    release = release_identity(context)
     if context["sources"] != source_identity():
         raise ValueError("Verification inputs changed; run task verify before task docs")
     commit = os.environ.get("SOURCE_COMMIT") or command("git", "rev-parse", "HEAD")
@@ -165,6 +189,7 @@ def build():
     (stage / "scenarios.md").write_text("\n".join(lines) + "\n")
     build_info = {
         **context,
+        **release,
         "junit_sha256": hashlib.sha256(report.read_bytes()).hexdigest(),
         "generator": "zensical 0.0.73",
     }
@@ -172,16 +197,23 @@ def build():
     (stage / "feature-results.json").write_text(json.dumps(statuses, indent=2) + "\n")
     shutil.copyfile(report, OUT / "results.xml")
     package = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    tag = release.get("release_tag")
+    label = f"Docs: {tag}" if tag else f"Docs: development · {commit[:7]}"
+    publication = (
+        f"This manual was built and verified after the [immutable published release]"
+        f"({REPO_URL}/releases/tag/{tag})."
+        if tag
+        else f"[Published verifier releases]({REPO_URL}/releases) identify distributed"
+        " versions separately from this development manual."
+    )
     (stage / "provenance.md").write_text(
         '<span id="version-context"></span>\n\n# Version and source\n\n'
-        f"**Docs: development · {commit[:7]}** — "
+        f"**{label}** — "
         f"[exact source tree](https://github.com/Living-Proof-Labs/capability-verifier/tree/{commit}).\n\n"
         f"Full documentation source revision: `{commit}`.\n\n"
         f"Checkout identity: `{context['version']}`. Verification run: {context['run']}.\n\n"
         f"Python project metadata: `{package['version']}` (development placeholder). "
-        "This is not a package release label. "
-        "[Published verifier releases](https://github.com/Living-Proof-Labs/capability-verifier/releases) "
-        "identify distributed versions separately from this moving development manual.\n\n"
+        f"This project metadata is not a package release label. {publication}\n\n"
         "Historical manuals are not maintained; consult the exact source release tag "
         "for installed versions. Fixture, catalog and executor versions remain the explicit "
         "released pins described in Start here and recorded in the manifests.\n\n"
@@ -195,7 +227,7 @@ def build():
         footer = (
             "\n\n---\n\n"
             "[Documentation home](https://docs.livingprooflabs.com/) · "
-            f"[Docs: development · {commit[:7]}]({relative('provenance.md')}) · "
+            f"[{label}]({relative('provenance.md')}) · "
             f"[Source](https://github.com/Living-Proof-Labs/capability-verifier/tree/{commit}) · "
             "[Help / report an issue](https://github.com/Living-Proof-Labs/capability-verifier/issues) · "
             f"[License]({relative('docs/license.md')})\n"

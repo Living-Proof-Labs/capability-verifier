@@ -272,23 +272,23 @@ def test_repository_workflows_authenticate_every_main_freshness_read():
             calls.append(name)
         problems.extend(freshness_problems(name, text))
     assert problems == [], "\n".join(problems)
-    assert calls == ["verify.yml"]
-    document = yaml.safe_load((WORKFLOWS / "verify.yml").read_text())
-    job = document["jobs"]["documentation-deploy"]
+    assert calls == ["documentation-deploy.yml"]
+    document = yaml.safe_load((WORKFLOWS / "documentation-deploy.yml").read_text())
+    job = document["jobs"]["deploy"]
     assert job["permissions"] == {
         "contents": "read",
         "pages": "write",
         "id-token": "write",
     }
     steps = job["steps"]
-    guard = steps[0]
+    guard = steps[-2]
     assert guard["name"] == "Check current main inside deployment lock"
     assert guard["env"]["EXPECTED_SHA"] == "${{ github.sha }}"
     assert guard["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
     assert "urlopen(request, timeout=30)" in guard["run"]
     assert "urlopen(url" not in guard["run"]
     assert STALE_MESSAGE in guard["run"]
-    assert steps[1]["uses"].startswith("actions/deploy-pages@")
+    assert steps[-1]["uses"].startswith("actions/deploy-pages@")
 
 
 def test_unauthenticated_urllib_freshness_read_fails():
@@ -320,8 +320,8 @@ def test_contents_write_fails_even_when_the_read_sends_a_token():
 
 
 def _run_guard(tmp_path, *, remote_sha, http_status):
-    document = yaml.safe_load((WORKFLOWS / "verify.yml").read_text())
-    guard = document["jobs"]["documentation-deploy"]["steps"][0]
+    document = yaml.safe_load((WORKFLOWS / "documentation-deploy.yml").read_text())
+    guard = document["jobs"]["deploy"]["steps"][-2]
     (tmp_path / "sitecustomize.py").write_text(SITECUSTOMIZE)
     capture = tmp_path / "capture.json"
     result = subprocess.run(

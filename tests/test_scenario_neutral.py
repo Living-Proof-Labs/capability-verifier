@@ -26,6 +26,8 @@ FROZEN_FORMATS = {
     "livingproof-hallway-media/2.0.0",
     # Read, never written here: sim-mujoco 2.1.0 media (capability-verifier#199).
     "livingproof-hallway-media/2.1.0",
+    # Read, never written here: sim-mujoco v3.9.0 media adds robot_mcap (capability-verifier#212).
+    "livingproof-hallway-media/2.2.0",
 }
 DEFINITIONS = (
     "unitree-g1-playground",

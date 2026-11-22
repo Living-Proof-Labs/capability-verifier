@@ -1,0 +1,62 @@
+{
+  "format": "livingproof-observation-binding/1.0.0",
+  "kind": "merged",
+  "trial_id": "trial-01",
+  "robot": {
+    "id": "unitree-g1",
+    "configuration": "stock"
+  },
+  "producer": {
+    "id": "livingproof-sim-mujoco"
+  },
+  "recording": {
+    "uri": "trial-01.mcap",
+    "sha256": "07815967b345f2c5118a0e85955925432923eef76e37352e00988b813c4c0a44"
+  },
+  "observables": {
+    "base": {
+      "topic": "/base_pose",
+      "encoding": "json",
+      "schema": "foxglove.PoseInFrame",
+      "fields": {
+        "x": "pose.position.x",
+        "y": "pose.position.y"
+      },
+      "frame": "world",
+      "body": "pelvis"
+    },
+    "base_height": {
+      "topic": "/base_pose",
+      "encoding": "json",
+      "schema": "foxglove.PoseInFrame",
+      "fields": {
+        "z": "pose.position.z"
+      },
+      "frame": "world",
+      "nominal": {
+        "value": 0.78,
+        "unit": "meters",
+        "source": "measured",
+        "ref": "https://github.com/Living-Proof-Labs/livingproof-unitree-g1@379a20e29caf136414ca3413e7244a73a0298290:configurations/stock.json"
+      }
+    },
+    "body_contact": {
+      "topic": "/wall_contacts",
+      "encoding": "json",
+      "schema": "livingproof.WallContact",
+      "fields": {
+        "wall": "wall",
+        "start": "start",
+        "end": "end",
+        "depth": "depth"
+      },
+      "frame": "world"
+    }
+  },
+  "bound_observables": [
+    "base",
+    "base_height",
+    "body_contact"
+  ],
+  "unbound": []
+}

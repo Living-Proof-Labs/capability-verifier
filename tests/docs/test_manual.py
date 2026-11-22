@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 import pytest
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 SITE = Path(__file__).resolve().parents[2] / "artifacts/docs/html"
 GITHUB_API = re.compile(r"^https://api\.github\.com/")
@@ -229,23 +229,58 @@ def test_missing_manual_stylesheet_fails_asset_check(browser_page):
 
 
 def test_themes_and_mobile_navigation(browser_page):
-    page, base, _context = browser_page
-    page.goto(base)
-    page.locator('label[title="Switch to light mode"]').click()
-    page.locator('label[title="Switch to dark mode"]').click()
-    assert page.locator("body").get_attribute("data-md-color-scheme") == "slate"
-    page.set_viewport_size({"width": 390, "height": 844})
-    page.goto(base)
-    page.locator('label.md-header__button[for="__drawer"]').first.click()
-    page.locator("label.md-nav__link").filter(has_text="Reference").click()
-    page.get_by_role("link", name="Tasks", exact=True).first.click()
-    page.wait_for_url("**/tasks.html")
-    assert page.locator("h1").inner_text().rstrip("¶") == "Task reference"
-    page.screenshot(path=str(SITE.parent / "mobile-manual.png"), full_page=True)
+    _page, base, context = browser_page
+    isolated = context.browser.new_context()
+    try:
+        install_github_stub(isolated)
+        page = open_page(isolated)
+        page.goto(base)
+        light_toggle = page.locator('label[title="Switch to light mode"]')
+        expect(light_toggle).to_be_visible()
+        light_toggle.click()
+        expect(page.locator("body")).to_have_attribute("data-md-color-scheme", "default")
+        dark_toggle = page.locator('label[title="Switch to dark mode"]')
+        expect(dark_toggle).to_be_visible()
+        dark_toggle.click()
+        expect(page.locator("body")).to_have_attribute("data-md-color-scheme", "slate")
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.goto(base)
+        drawer_button = page.locator('label.md-header__button[for="__drawer"]').first
+        expect(drawer_button).to_be_visible()
+        drawer_button.click()
+        expect(page.locator("#__drawer")).to_be_checked()
+        drawer = page.get_by_role("navigation", name="Navigation", exact=True)
+        reference = drawer.locator("label.md-nav__link").filter(
+            has_text=re.compile(r"^\s*Reference\s*$")
+        )
+        expect(reference).to_be_in_viewport()
+        item = reference.locator("..")
+        toggle = item.locator(":scope > input.md-nav__toggle[type=checkbox]")
+        toggle_id = toggle.get_attribute("id")
+        assert toggle_id is not None
+        expect(reference).to_have_attribute("for", toggle_id)
+        expect(toggle).not_to_be_checked()
+        reference.click()
+        expect(toggle).to_be_checked()
+        section = item.locator(":scope > nav")
+        tasks = section.get_by_role("link", name="Tasks", exact=True)
+        expect(tasks).to_have_attribute("href", re.compile(r"^(?:\./)?tasks\.html$"))
+        expect(tasks).to_be_visible()
+        expect(tasks).to_be_in_viewport()
+        tasks.click()
+        expect(page).to_have_url(f"{base}tasks.html", timeout=10000)
+        expect(page.locator("h1")).to_have_text(re.compile(r"^Task reference\s*¶?$"))
+        page.screenshot(path=str(SITE.parent / "mobile-manual.png"), full_page=True)
+    finally:
+        isolated.close()
 
 
 def test_shared_discovery_and_preserved_bookmarks():
-    commit = json.loads((SITE / "build.json").read_text())["commit"]
+    info = json.loads((SITE / "build.json").read_text())
+    commit = info["commit"]
+    expected_tag = os.environ.get("DOCS_RELEASE_TAG") or None
+    assert info.get("release_tag") == expected_tag
+    label = f"Docs: {expected_tag}" if expected_tag else "Docs: development"
     for name in (
         "index.html",
         "tasks.html",
@@ -262,7 +297,7 @@ def test_shared_discovery_and_preserved_bookmarks():
         assert "https://docs.livingprooflabs.com/" in links
         assert f"https://github.com/Living-Proof-Labs/capability-verifier/tree/{commit}" in links
         assert "https://github.com/Living-Proof-Labs/capability-verifier/issues" in links
-        assert "Docs: development" in content
+        assert label in content
     bookmarks = {
         "index.html": [
             "documentation-preview",
@@ -275,7 +310,13 @@ def test_shared_discovery_and_preserved_bookmarks():
     }
     for name, anchors in bookmarks.items():
         assert set(anchors) <= Links((SITE / name).read_text()).ids
-    assert "development placeholder" in (SITE / "provenance.html").read_text()
+    provenance = (SITE / "provenance.html").read_text()
+    assert "development placeholder" in provenance
+    if expected_tag:
+        assert info["release_version"] == expected_tag[1:]
+        assert info["release_run_id"] == os.environ["DOCS_RELEASE_RUN_ID"]
+        assert info["release_run_attempt"] == os.environ["DOCS_RELEASE_RUN_ATTEMPT"]
+        assert f"/capability-verifier/releases/tag/{expected_tag}" in provenance
     assert "No line coverage is measured" in (SITE / "scenarios.html").read_text()
 
 

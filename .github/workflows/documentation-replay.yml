@@ -1,0 +1,50 @@
+name: Replay released verifier documentation
+on:
+  workflow_dispatch:
+    inputs:
+      replay_tag:
+        description: Existing immutable stable tag at current main, for Pages delivery only
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  version:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release-candidate.yml@v9.9.2
+    with:
+      replay-tag: ${{ inputs.replay_tag }}
+  manual:
+    needs: version
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      inputs.replay_tag == format('v{0}', needs.version.outputs.semver-version) &&
+      needs.version.outputs.commit == github.sha &&
+      needs.version.outputs.run-id == github.run_id &&
+      needs.version.outputs.run-attempt == github.run_attempt
+    permissions:
+      contents: read
+    uses: ./.github/workflows/documentation-release.yml
+    with:
+      release_tag: ${{ inputs.replay_tag }}
+      version: ${{ needs.version.outputs.semver-version }}
+      commit: ${{ needs.version.outputs.commit }}
+  deploy:
+    needs: [version, manual]
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      needs.manual.outputs.artifact-id != '' && needs.manual.outputs.digest != ''
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/documentation-deploy.yml
+    with:
+      release_tag: ${{ inputs.replay_tag }}
+      version: ${{ needs.version.outputs.semver-version }}
+      commit: ${{ needs.version.outputs.commit }}
+      attempt: ${{ needs.manual.outputs.attempt }}
+      artifact_id: ${{ needs.manual.outputs.artifact-id }}
+      digest: ${{ needs.manual.outputs.digest }}

@@ -238,4 +238,5 @@ def test_the_docs_say_the_job_pins_the_locked_tag_and_refuses_a_wrong_version():
     assert "evaluator_pin --checkout evaluator" in section
     assert "evaluator/src" in section and "not the locked" in section
     assert "`0.1.dev1`" in section
+    assert "verifier's own pinned dependency" in section and "`uv.lock`" in section
     assert "does nothing" not in section

@@ -41,7 +41,7 @@ def _run(
     release: str = "1.5.3",
     reported: str = "1.5.3",
     workflow_src: bool = True,
-    imported: str = "evaluator/src/livingproof_evaluator_scenario/__init__.py",
+    imported: str = "/home/runner/work/r/r/evaluator/src/livingproof_evaluator_scenario/__init__.py",
 ):
     log = tmp_path / "calls.log"
     bin_dir = tmp_path / "bin"
@@ -54,7 +54,8 @@ def _run(
     _stub(
         bin_dir / "uv",
         'case "$*" in\n'
-        f'  *package.__file__*) echo "{imported}" ;;\n'
+        '  *"import livingproof_evaluator_scenario as package"*)'
+        f' echo "{imported}" ;;\n'
         f'  *importlib.metadata*) echo "version-read" >> "{log}"; echo {reported} ;;\n'
         f'  *run_scenario_media.py*) echo "runner $*" >> "{log}" ;;\n'
         f'  sync*) echo "sync $*" >> "{log}" ;;\n'
@@ -174,3 +175,22 @@ def test_the_import_check_reads_the_evaluator_checkout_before_the_version(tmp_pa
         "version-read",
         "runner",
     ]
+
+
+def test_the_import_check_accepts_the_absolute_path_python_reports(tmp_path):
+    # Python reports an absolute __file__ for an entry of PYTHONPATH, even a relative one, so the
+    # runner's path is /.../evaluator/src/...; the check has to accept that form, not only a relative one.
+    absolute = "/home/runner/work/r/r/evaluator/src/livingproof_evaluator_scenario/__init__.py"
+    done, calls = _run(tmp_path, imported=absolute)
+    assert done.returncode == 0, done.stderr
+    assert calls[-1].startswith("runner")
+
+
+def test_a_relative_path_is_refused_because_python_never_reports_one(tmp_path):
+    # __file__ is always absolute, so a relative path means the check was fed something else.
+    done, calls = _run(
+        tmp_path, imported="evaluator/src/livingproof_evaluator_scenario/__init__.py"
+    )
+    assert done.returncode == 1, done.stderr
+    assert "not evaluator/src" in done.stderr
+    assert not any(call.startswith("runner") for call in calls)

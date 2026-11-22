@@ -1,0 +1,11 @@
+{
+  "format": "livingproof-specs-files/0.1",
+  "run_id": "walk-corner-left-unitree-g1-stock-20261121T210048Z",
+  "repository": "Living-Proof-Labs/robot-capability-specs",
+  "tag": "v3.1.0",
+  "commit": "9ee830201f05943feb2b9787eea2ea747431d935",
+  "files": {
+    "specs/scenarios/walk-corner-left/description.json": "a0e7f73350bd573ca342e9a3d19f48c6aab07ada207e99b5861a6d975a163be3",
+    "specs/scenarios/walk-corner-left/parameters.json": "c9550c4e9462eb9b92e8efddd8b36a9d93d9977e111e9f3e8446927433dd2d4b"
+  }
+}

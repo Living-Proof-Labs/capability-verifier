@@ -44,6 +44,7 @@ JOB_PERMISSIONS = {
     "documentation": None,
     "verifier-image-record": None,
     # contents: read is the freshness API only. This job does not get contents: write.
+    "documentation-release": {"contents": "read"},
     "documentation-deploy": {"contents": "read", "pages": "write", "id-token": "write"},
 }
 

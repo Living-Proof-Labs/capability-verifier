@@ -311,7 +311,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
-    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@v9.7.9
+    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@v9.9.2
     with:
       draft-release: true
   release-reports:
@@ -687,18 +687,49 @@ jobs:
         id: preview
         if: ${{ !cancelled() }}
         with:
-          name: documentation-${{ github.event.pull_request.head.sha || github.sha }}
+          name: documentation-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
           path: |
             artifacts/docs/
             artifacts/docs-tests.xml
             artifacts/test-context.json
           retention-days: 14
           if-no-files-found: error
+      - name: Require the ID from this preview upload
+        env:
+          PREVIEW_ID: ${{ steps.preview.outputs.artifact-id }}
+        run: |
+          [[ "$PREVIEW_ID" =~ ^[1-9][0-9]*$ ]] || { echo "Missing or invalid preview artifact ID" >&2; exit 1; }
+      # REST metadata can be visible before the same-run download service can
+      # retrieve the archive. Retry the actual download, never a name lookup
+      # or a locally reconstructed ZIP.
       - name: Download the actual review artifact for layout verification
+        id: download-preview
+        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: documentation-${{ github.event.pull_request.head.sha || github.sha }}
+        with: &preview-download
+          artifact-ids: ${{ steps.preview.outputs.artifact-id }}
+          merge-multiple: true
           path: artifacts/preview-extracted
+      - name: Wait before retrying the preview download
+        if: steps.download-preview.outcome == 'failure'
+        run: |
+          rm -rf -- artifacts/preview-extracted
+          sleep 5
+      - name: Retry downloading the actual review artifact
+        id: retry-download-preview
+        if: steps.download-preview.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: *preview-download
+      - name: Wait before the last preview download attempt
+        if: steps.retry-download-preview.outcome == 'failure'
+        run: |
+          rm -rf -- artifacts/preview-extracted
+          sleep 25
+      - name: Require the actual review artifact on the last attempt
+        if: steps.retry-download-preview.outcome == 'failure'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: *preview-download
       - name: Verify shipped preview instructions against the extracted archive
         run: task docs:archive:check
       - name: Preview download
@@ -706,54 +737,36 @@ jobs:
         env:
           PREVIEW_URL: ${{ steps.preview.outputs.artifact-url }}
         run: echo "[Manual preview and individual test evidence]($PREVIEW_URL) — 14-day retention. Extract all files and serve docs/html over loopback HTTP; see docs/documentation.md." >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        with:
-          path: artifacts/docs/html
+  documentation-release:
+    needs: [release, release-reports]
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.release.result == 'success' && needs.release-reports.result == 'success' &&
+      needs.release.outputs.draft-created == 'true' && needs.release.outputs.commit == github.sha &&
+      needs.release.outputs.version != '' &&
+      needs.release.outputs.git-tag == format('v{0}', needs.release.outputs.version)
+    permissions:
+      contents: read
+    uses: ./.github/workflows/documentation-release.yml
+    with:
+      release_tag: ${{ needs.release.outputs.git-tag }}
+      version: ${{ needs.release.outputs.version }}
+      commit: ${{ needs.release.outputs.commit }}
   documentation-deploy:
-    needs: [documentation, release, release-reports]
-    if: needs.release.outputs.draft-created == 'true' && needs.release-reports.result == 'success'
-    runs-on: ubuntu-24.04
+    needs: [release, documentation-release]
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.documentation-release.outputs.artifact-id != '' &&
+      needs.documentation-release.outputs.digest != ''
     permissions:
       contents: read
       pages: write
       id-token: write
-    concurrency:
-      group: capability-verifier-pages
-      cancel-in-progress: false
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    env:
-      RELEASE_TAG: ${{ needs.release.outputs.git-tag }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: ${{ needs.release.outputs.git-tag }}
-          fetch-depth: 0
-          fetch-tags: true
-          persist-credentials: false
-      - name: Require release tag to match the exact verified commit
-        run: |
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$GITHUB_SHA"
-      - name: Check current main inside deployment lock
-        env:
-          EXPECTED_SHA: ${{ github.sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          python - <<'PYCODE'
-          import json, os, urllib.request
-          token = os.environ['GITHUB_TOKEN']
-          url = 'https://api.github.com/repos/Living-Proof-Labs/capability-verifier/git/ref/heads/main'
-          request = urllib.request.Request(
-              url,
-              headers={'Authorization': f'Bearer {token}'},
-          )
-          with urllib.request.urlopen(request, timeout=30) as response:
-              current = json.load(response)['object']['sha']
-          if current != os.environ['EXPECTED_SHA']:
-              raise SystemExit('Refusing stale documentation: main advanced')
-          PYCODE
-      - uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
-        id: deployment
+    uses: ./.github/workflows/documentation-deploy.yml
+    with:
+      release_tag: ${{ needs.release.outputs.git-tag }}
+      version: ${{ needs.release.outputs.version }}
+      commit: ${{ needs.release.outputs.commit }}
+      attempt: ${{ needs.documentation-release.outputs.attempt }}
+      artifact_id: ${{ needs.documentation-release.outputs.artifact-id }}
+      digest: ${{ needs.documentation-release.outputs.digest }}

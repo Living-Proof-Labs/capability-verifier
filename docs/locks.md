@@ -684,6 +684,45 @@ limit is `plan.recording.max_gap_seconds`, read by the evaluator from the eviden
 then the lock. Neither this repository nor the evaluator has a default for it, so a run that
 declares none is not judged, with or without media.
 
+A failed or refused Run Integrity is shown, not omitted. The `report` job does not require
+`run-integrity` to succeed, and passes its result to the collector. With no integrity result
+collected (the job failed, the evaluator refused the run with exit 2, or it was cancelled or
+skipped, or it succeeded and left nothing) the stored assessment gets `integrity_not_run` (the job
+result and the reason: the evaluator's refusal message, else the job's own `no-result.txt` line, else the job result),
+every assessment run is `INCONCLUSIVE`, and the reports show a
+`Run Integrity: REFUSED` or `Run Integrity: NOT RUN (...)` line. The robot grade is stored as before and is not changed. The
+job result is the matrix aggregate, so one failed configuration is reported for each. The reason is
+the first line of the run-integrity job's own `no-result.txt`; a note in any other evaluator's
+artifact is never used.
+
+The integrity line sits with the verdict in every format, never after the footer: in `report.md`
+and `report.txt` right after the verdict line (the reporter words it `...; overall PASS. 100% required.`
+with trial counts, or `...: overall PASS.` without; both are matched), and in `report.html` right after each
+"Stored overall status" line, with the same weight. It uses one of four labels, which change only
+how the result is shown and never what is stored:
+
+| Label | When | Stored as |
+| --- | --- | --- |
+| `PASS` | the evaluator ran and the check passed | `test_system_status` `COMPLETED` |
+| `FAILED` | the evaluator ran and the check failed | `ERROR` (or `success: false`) |
+| `REFUSED: <message>` | the evaluator refused the run (exit 2, no result); the reason is its own message | `assessment.integrity_not_run` with `refused: true` |
+| `NOT RUN (<job result>)` | the check never ran: cancelled, skipped, or the job ended without a result and without a refusal | `assessment.integrity_not_run` |
+
+Any other stored status (`INCONCLUSIVE`, or one a later evaluator adds) is shown as it is. A
+`PASS` line reads `Run Integrity: PASS`. The run-integrity step knows the evaluator's exit status:
+on exit 2 it keeps the evaluator's last message line in `refused.txt` in the same artifact (still
+failing the job), and the collector reads it from the run-integrity artifact only. Any exit 2 is `REFUSED`, whatever the
+cause (a media refusal, a malformed request, or a tool's own exit 2), and the reason is the
+message itself, so they read differently. The message is capped at 500 characters, ends in a full
+stop before "The run is INCONCLUSIVE", and is backslash-escaped in `report.md` and HTML-escaped in
+`report.html`; `report.txt` shows it as it is. Only an artifact named
+`[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>` (or its inner
+`livingproof-run-integrity` directory) counts, not a lookalike name. A
+`no-result.txt` note is the reason for `NOT RUN`, as before. The reporter has no integrity input,
+so the workflow places the lines after rendering
+(`collect_evaluator_results.py --place-integrity reports`) and before it writes `SHA256SUMS`, so
+the sums cover the edited files. The reporter's own grade line is unchanged.
+
 Run Integrity starts after `verify` and `media` (the `media` job needs `verify`), where it used to
 start after `evidence`. `report` already waited for all of them, so the run's total time does not
 change, and only the time the integrity result is ready moves later.
@@ -691,7 +730,8 @@ change, and only the time the integrity result is ready moves later.
 ## Recordings in the scenario media job
 
 The `scenario-media` job runs the scenario evaluator on each trial's MCAP, read through that trial's
-binding file (media 2.1.0). It needs the `media` job, runs only when the lock pins the scenario
+binding file (media 2.1.0 and 2.2.0; the 2.2.0 `robot_mcap` recording is not read here, only Run Integrity
+reads it). It needs the `media` job, runs only when the lock pins the scenario
 evaluator by commit, and never holds up the report. The evaluator resolves every limit from the run's
 `manifest.json`; the job passes none, and a limit the manifest cannot give leaves its step
 `NOT_EVALUATED` (`missing_threshold`). Each result names the evaluator (id, version, and the pinned
@@ -706,7 +746,8 @@ it names the locked commit, and only then runs `uv sync`. Before grading, the jo
 (exit 1, no results): an evaluator imported from anywhere but `evaluator/src` (a stale copy in the
 verifier environment), and a build whose `importlib.metadata` version is not the release the pin step
 printed ("reports ... not the locked ..."). So each result names the release, not `0.1.dev1`. The
-evaluator pin is `v1.5.3` (commit `ca9d337`); the media runner arrived in `v1.5.0` (commit `3fab127`),
+evaluator pin is `v1.5.3` (commit `ca9d337`), which is also the verifier's own pinned dependency
+(`pyproject.toml` and `uv.lock`); the media runner arrived in `v1.5.0` (commit `3fab127`),
 and a pin older than that leaves a `NO-MEDIA-RESULTS.txt` note instead. A run without a world
 document leaves one too. The job stops after 30 minutes. The collector leaves any result file that is not valid JSON (truncated, invalid or not
 UTF-8), from any evaluator, and any media result whose `media/thresholds.json` is missing, off the
