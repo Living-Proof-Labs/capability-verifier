@@ -33,6 +33,7 @@ JOB_PERMISSIONS = {
     "devcontainer": None,
     "verify": {"contents": "read", "checks": "write"},
     "report": None,
+    "real-report-arm64": None,
     "report-results": None,
     "release": {"contents": "write"},
     "release-reports": {"contents": "write"},
