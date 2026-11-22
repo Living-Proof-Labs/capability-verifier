@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 import pytest
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 SITE = Path(__file__).resolve().parents[2] / "artifacts/docs/html"
 GITHUB_API = re.compile(r"^https://api\.github\.com/")
@@ -229,19 +229,34 @@ def test_missing_manual_stylesheet_fails_asset_check(browser_page):
 
 
 def test_themes_and_mobile_navigation(browser_page):
-    page, base, _context = browser_page
-    page.goto(base)
-    page.locator('label[title="Switch to light mode"]').click()
-    page.locator('label[title="Switch to dark mode"]').click()
-    assert page.locator("body").get_attribute("data-md-color-scheme") == "slate"
-    page.set_viewport_size({"width": 390, "height": 844})
-    page.goto(base)
-    page.locator('label.md-header__button[for="__drawer"]').first.click()
-    page.locator("label.md-nav__link").filter(has_text="Reference").click()
-    page.get_by_role("link", name="Tasks", exact=True).first.click()
-    page.wait_for_url("**/tasks.html")
-    assert page.locator("h1").inner_text().rstrip("¶") == "Task reference"
-    page.screenshot(path=str(SITE.parent / "mobile-manual.png"), full_page=True)
+    _page, base, context = browser_page
+    page = open_page(context)
+    try:
+        page.goto(base)
+        light_toggle = page.locator('label[title="Switch to light mode"]')
+        expect(light_toggle).to_be_visible()
+        light_toggle.click()
+        dark_toggle = page.locator('label[title="Switch to dark mode"]')
+        expect(dark_toggle).to_be_visible()
+        dark_toggle.click()
+        expect(page.locator("body")).to_have_attribute("data-md-color-scheme", "slate")
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.goto(base)
+        drawer_button = page.locator('label.md-header__button[for="__drawer"]').first
+        expect(drawer_button).to_be_visible()
+        drawer_button.click()
+        expect(page.locator("#__drawer")).to_be_checked()
+        reference = page.locator("label.md-nav__link").filter(has_text="Reference")
+        expect(reference).to_be_visible()
+        reference.click()
+        tasks = page.get_by_role("link", name="Tasks", exact=True).first
+        expect(tasks).to_be_visible()
+        tasks.click()
+        page.wait_for_url("**/tasks.html")
+        expect(page.locator("h1")).to_contain_text("Task reference")
+        page.screenshot(path=str(SITE.parent / "mobile-manual.png"), full_page=True)
+    finally:
+        page.close()
 
 
 def test_shared_discovery_and_preserved_bookmarks():
