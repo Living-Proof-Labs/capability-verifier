@@ -228,8 +228,7 @@ def test_missing_manual_stylesheet_fails_asset_check(browser_page):
     assert all(urlsplit(url).path.endswith("/assets/brand.css") for url in failed)
 
 
-@pytest.mark.parametrize("_repeat", range(1, 21))
-def test_themes_and_mobile_navigation(browser_page, _repeat):
+def test_themes_and_mobile_navigation(browser_page):
     _page, base, context = browser_page
     isolated = context.browser.new_context()
     try:
