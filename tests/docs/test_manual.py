@@ -228,14 +228,18 @@ def test_missing_manual_stylesheet_fails_asset_check(browser_page):
     assert all(urlsplit(url).path.endswith("/assets/brand.css") for url in failed)
 
 
-def test_themes_and_mobile_navigation(browser_page):
+@pytest.mark.parametrize("_repeat", range(1, 21))
+def test_themes_and_mobile_navigation(browser_page, _repeat):
     _page, base, context = browser_page
-    page = open_page(context)
+    isolated = context.browser.new_context()
     try:
+        install_github_stub(isolated)
+        page = open_page(isolated)
         page.goto(base)
         light_toggle = page.locator('label[title="Switch to light mode"]')
         expect(light_toggle).to_be_visible()
         light_toggle.click()
+        expect(page.locator("body")).to_have_attribute("data-md-color-scheme", "default")
         dark_toggle = page.locator('label[title="Switch to dark mode"]')
         expect(dark_toggle).to_be_visible()
         dark_toggle.click()
@@ -246,17 +250,23 @@ def test_themes_and_mobile_navigation(browser_page):
         expect(drawer_button).to_be_visible()
         drawer_button.click()
         expect(page.locator("#__drawer")).to_be_checked()
-        reference = page.locator("label.md-nav__link").filter(has_text="Reference")
-        expect(reference).to_be_visible()
+        drawer = page.get_by_role("navigation", name="Navigation", exact=True)
+        reference = drawer.locator("label.md-nav__link").filter(
+            has_text=re.compile(r"^\s*Reference\s*$")
+        )
+        expect(reference).to_be_in_viewport()
         reference.click()
-        tasks = page.get_by_role("link", name="Tasks", exact=True).first
-        expect(tasks).to_be_visible()
+        section = reference.locator("..").locator("nav")
+        expect(section).to_have_attribute("aria-expanded", "true")
+        tasks = section.get_by_role("link", name="Tasks", exact=True)
+        expect(tasks).to_have_attribute("href", re.compile(r"^(?:\./)?tasks\.html$"))
+        expect(tasks).to_be_in_viewport()
         tasks.click()
-        page.wait_for_url("**/tasks.html")
-        expect(page.locator("h1")).to_contain_text("Task reference")
+        expect(page).to_have_url(f"{base}tasks.html", timeout=10000)
+        expect(page.locator("h1")).to_have_text(re.compile(r"^Task reference\s*¶?$"))
         page.screenshot(path=str(SITE.parent / "mobile-manual.png"), full_page=True)
     finally:
-        page.close()
+        isolated.close()
 
 
 def test_shared_discovery_and_preserved_bookmarks():
