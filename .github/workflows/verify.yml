@@ -694,43 +694,42 @@ jobs:
             artifacts/test-context.json
           retention-days: 14
           if-no-files-found: error
-      - name: Wait for preview artifact visibility
-        if: steps.preview.outcome == 'success'
+      - name: Require the ID from this preview upload
         env:
-          ARTIFACT_ID: ${{ steps.preview.outputs.artifact-id }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_TOKEN: ${{ github.token }}
+          PREVIEW_ID: ${{ steps.preview.outputs.artifact-id }}
         run: |
-          python - <<'PYCODE'
-          import os, time, urllib.error, urllib.request
-          artifact_id = os.environ['ARTIFACT_ID']
-          repo = os.environ['GITHUB_REPOSITORY']
-          token = os.environ['GITHUB_TOKEN']
-          url = f'https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}'
-          for delay in (1, 2, 4, 8, 15, 0):
-              req = urllib.request.Request(
-                  url,
-                  headers={
-                      'Authorization': f'Bearer {token}',
-                      'Accept': 'application/vnd.github+json',
-                  },
-              )
-              try:
-                  with urllib.request.urlopen(req, timeout=15) as resp:
-                      if resp.status == 200:
-                          break
-              except urllib.error.HTTPError as exc:
-                  if exc.code != 404 or delay == 0:
-                      raise
-              time.sleep(delay)
-          else:
-              raise SystemExit(f'Artifact {artifact_id} did not become visible in time')
-          PYCODE
+          [[ "$PREVIEW_ID" =~ ^[1-9][0-9]*$ ]] || { echo "Missing or invalid preview artifact ID" >&2; exit 1; }
+      # REST metadata can be visible before the same-run download service can
+      # retrieve the archive. Retry the actual download, never a name lookup
+      # or a locally reconstructed ZIP.
       - name: Download the actual review artifact for layout verification
+        id: download-preview
+        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: documentation-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+        with: &preview-download
+          artifact-ids: ${{ steps.preview.outputs.artifact-id }}
+          merge-multiple: true
           path: artifacts/preview-extracted
+      - name: Wait before retrying the preview download
+        if: steps.download-preview.outcome == 'failure'
+        run: |
+          rm -rf -- artifacts/preview-extracted
+          sleep 5
+      - name: Retry downloading the actual review artifact
+        id: retry-download-preview
+        if: steps.download-preview.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: *preview-download
+      - name: Wait before the last preview download attempt
+        if: steps.retry-download-preview.outcome == 'failure'
+        run: |
+          rm -rf -- artifacts/preview-extracted
+          sleep 25
+      - name: Require the actual review artifact on the last attempt
+        if: steps.retry-download-preview.outcome == 'failure'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: *preview-download
       - name: Verify shipped preview instructions against the extracted archive
         run: task docs:archive:check
       - name: Preview download
