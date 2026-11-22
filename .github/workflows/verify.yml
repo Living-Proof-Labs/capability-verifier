@@ -155,6 +155,13 @@ jobs:
         with:
           version: '3.54.0'
       - run: task test:real-report
+      - uses: actions/upload-artifact@v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: real-report-arm64-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/real-report.xml
+          retention-days: 14
+          if-no-files-found: error
   report:
     needs: verify
     strategy:
