@@ -152,7 +152,13 @@ def collect(
         entries.append(document)
     _attach_integrity(bundle, integrity_docs)
     if integrity_job and not integrity_docs:
-        _attach_not_run(bundle, integrity_job, _not_run_reason(directory, integrity_job))
+        refusal = _refusal(directory)
+        _attach_not_run(
+            bundle,
+            integrity_job,
+            refusal if refusal is not None else _not_run_reason(directory, integrity_job),
+            refused=refusal is not None,
+        )
     if report_dir is not None:
         report = Path(report_dir)
         _write_thresholds(report, exports)
@@ -346,6 +352,29 @@ def _attach_integrity(bundle: dict, documents: list[dict]) -> None:
 NOT_RUN_ID = "livingproof-run-integrity"
 
 
+REFUSED_FILE = "refused.txt"
+_REFUSED_DEFAULT = "the evaluator refused the run (exit 2) and wrote no result"
+
+
+def _refusal(directory: Path) -> str | None:
+    """The evaluator's refusal message when the run-integrity step left ``refused.txt``, else None.
+
+    The step writes it only when the evaluator exits 2, so its presence is what makes a missing
+    result a refusal and not a check that never ran. Only the run-integrity artifact counts.
+    """
+    if not Path(directory).is_dir():
+        return None
+    for note in sorted(Path(directory).rglob(REFUSED_FILE)):
+        if NOT_RUN_ID not in note.parent.name:
+            continue
+        try:
+            text = note.read_text(encoding="utf-8").strip()
+        except (OSError, ValueError):
+            text = ""
+        return text.splitlines()[0] if text else _REFUSED_DEFAULT
+    return None
+
+
 def _not_run_reason(directory: Path, job_result: str) -> str:
     """Why there is no integrity result: the job's own note when it wrote one, else its result."""
     notes = sorted(Path(directory).rglob("no-result.txt")) if Path(directory).is_dir() else []
@@ -366,7 +395,7 @@ def _not_run_reason(directory: Path, job_result: str) -> str:
     )
 
 
-def _attach_not_run(bundle: dict, job_result: str, reason: str) -> None:
+def _attach_not_run(bundle: dict, job_result: str, reason: str, refused: bool = False) -> None:
     assessment = bundle.get("assessment")
     if not isinstance(assessment, dict):
         assessment = {}
@@ -376,10 +405,22 @@ def _attach_not_run(bundle: dict, job_result: str, reason: str) -> None:
         "job_result": job_result,
         "reason": reason,
     }
+    if refused:
+        assessment["integrity_not_run"]["refused"] = True
     runs = assessment.get("runs") if isinstance(assessment.get("runs"), list) else []
     for run in runs:
         if isinstance(run, dict):
             run["conclusion"] = "INCONCLUSIVE"
+
+
+def _label(document: dict, status: str) -> str:
+    """The word the report shows: PASS or FAILED, else the stored status as it is.
+
+    Display only: the stored result keeps COMPLETED, ERROR and the rest.
+    """
+    if _integrity_failed(document):
+        return "FAILED"
+    return "PASS" if status == "COMPLETED" else status
 
 
 def integrity_report_lines(bundle: dict) -> list[str]:
@@ -389,10 +430,14 @@ def integrity_report_lines(bundle: dict) -> list[str]:
     lines = []
     missing = assessment.get("integrity_not_run") if isinstance(assessment, dict) else None
     if isinstance(missing, dict):
-        lines.append(
-            f"Run Integrity: NOT RUN ({missing.get('job_result')}): {missing.get('reason')} "
-            "The run is INCONCLUSIVE; the robot grade is not backed by an integrity result."
-        )
+        tail = "The run is INCONCLUSIVE; the robot grade is not backed by an integrity result."
+        if missing.get("refused"):
+            lines.append(f"Run Integrity: REFUSED: {missing.get('reason')} {tail}")
+        else:
+            lines.append(
+                f"Run Integrity: NOT RUN ({missing.get('job_result')}): {missing.get('reason')} "
+                + tail
+            )
     if not isinstance(stored, dict):
         return lines
     for key, document in stored.items():
@@ -407,7 +452,7 @@ def integrity_report_lines(bundle: dict) -> list[str]:
         status = run.get("test_system_status")
         if not isinstance(status, str) or not status:
             status = "UNKNOWN"
-        lines.append(f"{name}: {status}")
+        lines.append(f"{name}: {_label(document, status)}")
     return lines
 
 
