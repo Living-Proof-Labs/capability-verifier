@@ -492,7 +492,7 @@ _HTML_VERDICT = re.compile(r"<p class=(['\"])stored-status\1>[^<]*</p>")
 
 def _md_escape(line: str) -> str:
     """Backslash-escape what Markdown would act on, so an evaluator's message stays plain text."""
-    return re.sub(r"([\\`*\[\]<>|])", r"\\\1", line)
+    return re.sub(r"([\\`*_~&\[\]<>|])", r"\\\1", line)
 
 
 def place_integrity_lines(report_dir: Path) -> bool:

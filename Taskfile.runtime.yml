@@ -21,6 +21,17 @@ tasks:
   test:
     cmds:
       - uv run --locked --no-sync pytest -v --junitxml=artifacts/results.xml
+  test:real-report:
+    desc: The report-placement tests that render the real corner-left bundle (run natively on arm64 too)
+    cmds:
+      - >-
+        uv run --locked --no-sync pytest -v --junitxml=artifacts/real-report.xml
+        tests/test_report_integrity_pinned_reporter.py
+        tests/test_report_integrity_next_to_verdict.py
+        tests/test_report_integrity_not_run_render.py
+        tests/test_report_integrity_real_reporter_wording.py
+        tests/test_report_integrity_display_edges.py
+        tests/test_report_integrity_message_text.py
   demo:
     desc: Run released Gherkin examples and show retained verification reports
     cmds:

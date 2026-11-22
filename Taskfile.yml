@@ -24,6 +24,10 @@ tasks:
     cmds:
       - mkdir -p artifacts
       - docker compose run --build --rm verifier test
+  test:real-report:
+    cmds:
+      - mkdir -p artifacts
+      - docker compose run --build --rm verifier test:real-report
   verify:
     cmds:
       - mkdir -p artifacts

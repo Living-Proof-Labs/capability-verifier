@@ -715,7 +715,10 @@ failing the job), and the collector reads it from the run-integrity artifact onl
 cause (a media refusal, a malformed request, or a tool's own exit 2), and the reason is the
 message itself, so they read differently. The message is capped at 500 characters, ends in a full
 stop before "The run is INCONCLUSIVE", and is backslash-escaped in `report.md` and HTML-escaped in
-`report.html`; `report.txt` shows it as it is. Only an artifact named
+`report.html`; `report.txt` shows it as it is. Markdown escaping covers backslash, backtick,
+asterisk, underscore, tilde, ampersand, brackets, angle brackets, and pipe, so emphasis, a
+labelled link, and an HTML entity in a refusal stay plain text. A bare URL is still auto-linked,
+and the address shows in full. Only an artifact named
 `[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>` (or its inner
 `livingproof-run-integrity` directory) counts, not a lookalike name. A
 `no-result.txt` note is the reason for `NOT RUN`, as before. The reporter has no integrity input,
