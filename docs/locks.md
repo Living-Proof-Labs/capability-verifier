@@ -688,10 +688,40 @@ A failed or refused Run Integrity is shown, not omitted. The `report` job does n
 `run-integrity` to succeed, and passes its result to the collector. With no integrity result
 collected (the job failed, the evaluator refused the run with exit 2, or it was cancelled or
 skipped, or it succeeded and left nothing) the stored assessment gets `integrity_not_run` (the job
-result and the reason: the job's own `no-result.txt` line when it wrote one, else the job result),
-every assessment run is `INCONCLUSIVE`, and `report.md` and `report.txt` end with a
-`Run Integrity: NOT RUN (...)` line. The robot grade is stored as before and is not changed. The
-job result is the matrix aggregate, so one failed configuration is reported for each.
+result and the reason: the evaluator's refusal message, else the job's own `no-result.txt` line, else the job result),
+every assessment run is `INCONCLUSIVE`, and the reports show a
+`Run Integrity: REFUSED` or `Run Integrity: NOT RUN (...)` line. The robot grade is stored as before and is not changed. The
+job result is the matrix aggregate, so one failed configuration is reported for each. The reason is
+the first line of the run-integrity job's own `no-result.txt`; a note in any other evaluator's
+artifact is never used.
+
+The integrity line sits with the verdict in every format, never after the footer: in `report.md`
+and `report.txt` right after the verdict line (the reporter words it `...; overall PASS. 100% required.`
+with trial counts, or `...: overall PASS.` without; both are matched), and in `report.html` right after each
+"Stored overall status" line, with the same weight. It uses one of four labels, which change only
+how the result is shown and never what is stored:
+
+| Label | When | Stored as |
+| --- | --- | --- |
+| `PASS` | the evaluator ran and the check passed | `test_system_status` `COMPLETED` |
+| `FAILED` | the evaluator ran and the check failed | `ERROR` (or `success: false`) |
+| `REFUSED: <message>` | the evaluator refused the run (exit 2, no result); the reason is its own message | `assessment.integrity_not_run` with `refused: true` |
+| `NOT RUN (<job result>)` | the check never ran: cancelled, skipped, or the job ended without a result and without a refusal | `assessment.integrity_not_run` |
+
+Any other stored status (`INCONCLUSIVE`, or one a later evaluator adds) is shown as it is. A
+`PASS` line reads `Run Integrity: PASS`. The run-integrity step knows the evaluator's exit status:
+on exit 2 it keeps the evaluator's last message line in `refused.txt` in the same artifact (still
+failing the job), and the collector reads it from the run-integrity artifact only. Any exit 2 is `REFUSED`, whatever the
+cause (a media refusal, a malformed request, or a tool's own exit 2), and the reason is the
+message itself, so they read differently. The message is capped at 500 characters, ends in a full
+stop before "The run is INCONCLUSIVE", and is backslash-escaped in `report.md` and HTML-escaped in
+`report.html`; `report.txt` shows it as it is. Only an artifact named
+`[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>` (or its inner
+`livingproof-run-integrity` directory) counts, not a lookalike name. A
+`no-result.txt` note is the reason for `NOT RUN`, as before. The reporter has no integrity input,
+so the workflow places the lines after rendering
+(`collect_evaluator_results.py --place-integrity reports`) and before it writes `SHA256SUMS`, so
+the sums cover the edited files. The reporter's own grade line is unchanged.
 
 Run Integrity starts after `verify` and `media` (the `media` job needs `verify`), where it used to
 start after `evidence`. `report` already waited for all of them, so the run's total time does not

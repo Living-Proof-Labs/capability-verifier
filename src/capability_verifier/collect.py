@@ -31,6 +31,7 @@ artifact pattern in ``EVALUATOR_RESULTS_PATTERN``; a bundle with no trials (a
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import re
@@ -42,6 +43,7 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _THRESHOLDS_NAME = "thresholds.json"
 _MEDIA_PREFIX = "media/"  # where the scenario media job cites its thresholds.json
 PROBLEMS_FILE = "evaluator-result-problems.txt"
+INTEGRITY_FILE = "integrity-lines.txt"
 
 
 class ThresholdCitationError(ValueError):
@@ -150,7 +152,13 @@ def collect(
         entries.append(document)
     _attach_integrity(bundle, integrity_docs)
     if integrity_job and not integrity_docs:
-        _attach_not_run(bundle, integrity_job, _not_run_reason(directory, integrity_job))
+        refusal = _refusal(directory)
+        _attach_not_run(
+            bundle,
+            integrity_job,
+            refusal if refusal is not None else _not_run_reason(directory, integrity_job),
+            refused=refusal is not None,
+        )
     if report_dir is not None:
         report = Path(report_dir)
         _write_thresholds(report, exports)
@@ -344,15 +352,63 @@ def _attach_integrity(bundle: dict, documents: list[dict]) -> None:
 NOT_RUN_ID = "livingproof-run-integrity"
 
 
+REFUSED_FILE = "refused.txt"
+_MESSAGE_CAP = 500
+_INTEGRITY_ARTIFACT = re.compile(
+    rf"(?:{re.escape(NOT_RUN_ID)}|(?:.*-)?evaluator-results-{re.escape(NOT_RUN_ID)}-[^/]+)"
+)
+
+
+def _is_integrity_artifact(directory: Path) -> bool:
+    """True for the run-integrity job's own artifact: its inner directory, or the artifact name
+    ``[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>``, not a lookalike."""
+    return _INTEGRITY_ARTIFACT.fullmatch(directory.name) is not None
+
+
+def _cap(text: str) -> str:
+    return text if len(text) <= _MESSAGE_CAP else text[: _MESSAGE_CAP - 3].rstrip() + "..."
+
+
+def _sentence(text: str) -> str:
+    """``text`` ended with a full stop (none added when it already ends one), so a sentence can follow."""
+    text = text.rstrip()
+    return text if text.endswith((".", "!", "?")) else text + "."
+
+
+_REFUSED_DEFAULT = "the evaluator refused the run (exit 2) and wrote no result"
+
+
+def _refusal(directory: Path) -> str | None:
+    """The evaluator's refusal message when the run-integrity step left ``refused.txt``, else None.
+
+    The step writes it only when the evaluator exits 2, so its presence is what makes a missing
+    result a refusal and not a check that never ran. Only the run-integrity artifact counts.
+    """
+    if not Path(directory).is_dir():
+        return None
+    for note in sorted(Path(directory).rglob(REFUSED_FILE)):
+        if not _is_integrity_artifact(note.parent):
+            continue
+        try:
+            text = note.read_text(encoding="utf-8").strip()
+        except (OSError, ValueError):
+            text = ""
+        return _cap(text.splitlines()[0].strip()) if text else _REFUSED_DEFAULT
+    return None
+
+
 def _not_run_reason(directory: Path, job_result: str) -> str:
     """Why there is no integrity result: the job's own note when it wrote one, else its result."""
-    for note in sorted(Path(directory).rglob("no-result.txt")) if Path(directory).is_dir() else []:
+    notes = sorted(Path(directory).rglob("no-result.txt")) if Path(directory).is_dir() else []
+    for note in notes:
+        if not _is_integrity_artifact(note.parent):
+            continue  # only the run-integrity job's artifact explains a missing integrity result
         try:
             text = note.read_text(encoding="utf-8").strip()
         except (OSError, ValueError):
             continue
         if text:
-            return text.splitlines()[0]
+            return _cap(text.splitlines()[0].strip())
     if job_result == "success":
         return "the run-integrity job succeeded but left no result"
     return (
@@ -361,7 +417,7 @@ def _not_run_reason(directory: Path, job_result: str) -> str:
     )
 
 
-def _attach_not_run(bundle: dict, job_result: str, reason: str) -> None:
+def _attach_not_run(bundle: dict, job_result: str, reason: str, refused: bool = False) -> None:
     assessment = bundle.get("assessment")
     if not isinstance(assessment, dict):
         assessment = {}
@@ -371,10 +427,22 @@ def _attach_not_run(bundle: dict, job_result: str, reason: str) -> None:
         "job_result": job_result,
         "reason": reason,
     }
+    if refused:
+        assessment["integrity_not_run"]["refused"] = True
     runs = assessment.get("runs") if isinstance(assessment.get("runs"), list) else []
     for run in runs:
         if isinstance(run, dict):
             run["conclusion"] = "INCONCLUSIVE"
+
+
+def _label(document: dict, status: str) -> str:
+    """The word the report shows: PASS or FAILED, else the stored status as it is.
+
+    Display only: the stored result keeps COMPLETED, ERROR and the rest.
+    """
+    if _integrity_failed(document):
+        return "FAILED"
+    return "PASS" if status == "COMPLETED" else status
 
 
 def integrity_report_lines(bundle: dict) -> list[str]:
@@ -384,10 +452,14 @@ def integrity_report_lines(bundle: dict) -> list[str]:
     lines = []
     missing = assessment.get("integrity_not_run") if isinstance(assessment, dict) else None
     if isinstance(missing, dict):
-        lines.append(
-            f"Run Integrity: NOT RUN ({missing.get('job_result')}): {missing.get('reason')} "
-            "The run is INCONCLUSIVE; the robot grade above is not backed by an integrity result."
-        )
+        tail = "The run is INCONCLUSIVE; the robot grade is not backed by an integrity result."
+        if missing.get("refused"):
+            lines.append(f"Run Integrity: REFUSED: {_sentence(str(missing.get('reason')))} {tail}")
+        else:
+            lines.append(
+                f"Run Integrity: NOT RUN ({missing.get('job_result')}): "
+                f"{_sentence(str(missing.get('reason')))} " + tail
+            )
     if not isinstance(stored, dict):
         return lines
     for key, document in stored.items():
@@ -402,7 +474,7 @@ def integrity_report_lines(bundle: dict) -> list[str]:
         status = run.get("test_system_status")
         if not isinstance(status, str) or not status:
             status = "UNKNOWN"
-        lines.append(f"{name}: {status}")
+        lines.append(f"{name}: {_label(document, status)}")
     return lines
 
 
@@ -411,14 +483,72 @@ def _write_integrity_lines(report_dir: Path, bundle: dict) -> None:
     if not lines:
         return
     report_dir.mkdir(parents=True, exist_ok=True)
-    (report_dir / "integrity-lines.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (report_dir / INTEGRITY_FILE).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+_VERDICT = re.compile(r"[:;] overall [A-Z][A-Za-z_ ]*\.(?:\s.*)?$")
+_HTML_VERDICT = re.compile(r"<p class=(['\"])stored-status\1>[^<]*</p>")
+
+
+def _md_escape(line: str) -> str:
+    """Backslash-escape what Markdown would act on, so an evaluator's message stays plain text."""
+    return re.sub(r"([\\`*\[\]<>|])", r"\\\1", line)
+
+
+def place_integrity_lines(report_dir: Path) -> bool:
+    """Put the run-integrity lines next to the verdict in report.md, report.txt and report.html.
+
+    The reporter does not know the integrity result, so the lines the collector wrote are placed
+    after rendering: in Markdown and text right after each ``... overall <GRADE>.`` line, in HTML
+    right after each stored-status paragraph, so no format shows a verdict without the state.
+    Where the verdict is not found (a reporter that words it differently), the lines go at the
+    end instead, and the first format never loses them. Returns False when there are no lines.
+    """
+    source = report_dir / INTEGRITY_FILE
+    if not source.is_file():
+        return False
+    lines = [line for line in source.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not lines:
+        return False
+    for name, blank in (("report.md", True), ("report.txt", False)):
+        path = report_dir / name
+        if not path.is_file():
+            continue
+        out: list[str] = []
+        placed = False
+        for line in path.read_text(encoding="utf-8").splitlines():
+            out.append(line)
+            if _VERDICT.search(line) and not line.startswith(("|", "<")):
+                for extra in lines:
+                    shown = _md_escape(extra) if blank else extra
+                    out += ["", shown] if blank else [shown]
+                placed = True
+        if not placed:
+            out += ["", *(_md_escape(x) if blank else x for x in lines)]
+        path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    page = report_dir / "report.html"
+    if page.is_file():
+        text = page.read_text(encoding="utf-8")
+        shown = "".join(
+            f"<p class='stored-status integrity-status'>{html.escape(line, quote=False)}</p>"
+            for line in lines
+        )
+        text, count = _HTML_VERDICT.subn(lambda found: found.group(0) + shown, text)
+        if not count:
+            text = text.replace("<main class='wrap'>", "<main class='wrap'>" + shown, 1)
+        page.write_text(text, encoding="utf-8")
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if len(args) == 2 and args[0] == "--place-integrity":
+        place_integrity_lines(Path(args[1]))
+        return 0
     if len(args) != 3:
         print(
-            "usage: collect_evaluator_results.py BUNDLE_MANIFEST RESULTS_DIR REPORT_DIR",
+            "usage: collect_evaluator_results.py BUNDLE_MANIFEST RESULTS_DIR REPORT_DIR\n"
+            "       collect_evaluator_results.py --place-integrity REPORT_DIR",
             file=sys.stderr,
         )
         return 2

@@ -100,7 +100,7 @@ def test_integrity_failure_is_inconclusive_and_leaves_the_robot_grade(tmp_path):
         assert run["grade"] == "PASS"
     from capability_verifier.collect import integrity_report_lines
 
-    assert "Run Integrity: ERROR" in integrity_report_lines(bundle)
+    assert "Run Integrity: FAILED" in integrity_report_lines(bundle)
 
 
 def test_two_integrity_evaluators_are_both_kept(tmp_path):
@@ -129,5 +129,5 @@ def test_two_integrity_evaluators_are_both_kept(tmp_path):
     from capability_verifier.collect import integrity_report_lines
 
     lines = integrity_report_lines(bundle)
-    assert "Run Integrity: COMPLETED" in lines
-    assert "Pins: COMPLETED" in lines
+    assert "Run Integrity: PASS" in lines
+    assert "Pins: PASS" in lines

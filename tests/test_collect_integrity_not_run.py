@@ -80,7 +80,7 @@ def test_a_result_that_is_there_is_not_called_not_run(tmp_path):
     )
     collect(bundle, downloads, integrity_job="success")
     assert "integrity_not_run" not in bundle["assessment"]
-    assert integrity_report_lines(bundle) == ["Run Integrity: COMPLETED"]
+    assert integrity_report_lines(bundle) == ["Run Integrity: PASS"]
 
 
 def test_without_the_job_result_nothing_changes(tmp_path):
@@ -121,3 +121,73 @@ def test_the_report_job_runs_whatever_run_integrity_did_and_is_told_what_it_did(
     assert "run-integrity" not in condition and "!cancelled()" in condition
     assert "needs: [plan, verify, scenario-evaluator, scenario-media, media, run-integrity]" in job
     assert "RUN_INTEGRITY_RESULT: ${{ needs.run-integrity.result }}" in job
+
+
+def test_a_no_result_note_from_another_evaluator_is_not_the_integrity_reason(tmp_path):
+    """Only the run-integrity job writes ``no-result.txt`` today; the search is scoped anyway."""
+    bundle, _ = _bundle(tmp_path)
+    downloads = _empty(tmp_path)
+    other = downloads / "evaluator-results-livingproof-scenario-stock"
+    other.mkdir()
+    (other / "no-result.txt").write_text("a note from the scenario evaluator\n")
+    collect(bundle, downloads, integrity_job="failure")
+    reason = bundle["assessment"]["integrity_not_run"]["reason"]
+    assert "scenario evaluator" not in reason and "ended failure" in reason
+
+
+def test_the_run_integrity_jobs_own_note_is_still_the_reason(tmp_path):
+    bundle, _ = _bundle(tmp_path)
+    downloads = _empty(tmp_path)
+    mine = downloads / "evaluator-results-livingproof-run-integrity-stock"
+    mine.mkdir()
+    (mine / "no-result.txt").write_text("media is refused: no trials\n")
+    collect(bundle, downloads, integrity_job="failure")
+    assert bundle["assessment"]["integrity_not_run"]["reason"] == "media is refused: no trials"
+
+
+def _with_refusal(tmp_path, note, *, job="failure"):
+    bundle, _ = _bundle(tmp_path)
+    downloads = _empty(tmp_path)
+    mine = downloads / "evaluator-results-livingproof-run-integrity-stock"
+    mine.mkdir()
+    (mine / "refused.txt").write_text(note)
+    collect(bundle, downloads, integrity_job=job)
+    return bundle
+
+
+def test_a_refusal_is_labelled_refused_with_the_evaluator_s_note_as_the_reason(tmp_path):
+    note = (
+        "livingproof-evaluator-run: media is refused: media.json has no trials; no result written"
+    )
+    bundle = _with_refusal(tmp_path, note + "\n")
+    stored = bundle["assessment"]["integrity_not_run"]
+    assert stored["refused"] is True and stored["job_result"] == "failure"
+    assert stored["reason"] == note
+    (line,) = integrity_report_lines(bundle)
+    assert line.startswith(f"Run Integrity: REFUSED: {note}")
+    assert "NOT RUN" not in line and "INCONCLUSIVE" in line
+
+
+def test_a_refusal_with_no_note_still_says_refused(tmp_path):
+    bundle = _with_refusal(tmp_path, "\n")
+    (line,) = integrity_report_lines(bundle)
+    assert line.startswith("Run Integrity: REFUSED: ") and "exit 2" in line
+
+
+def test_a_refusal_note_in_another_evaluators_artifact_does_not_make_it_refused(tmp_path):
+    bundle, _ = _bundle(tmp_path)
+    downloads = _empty(tmp_path)
+    other = downloads / "evaluator-results-livingproof-scenario-stock"
+    other.mkdir()
+    (other / "refused.txt").write_text("not ours\n")
+    collect(bundle, downloads, integrity_job="failure")
+    assert not bundle["assessment"]["integrity_not_run"].get("refused")
+
+
+@pytest.mark.parametrize("job", ["failure", "cancelled", "skipped", "success"])
+def test_a_check_that_never_ran_still_says_not_run(job, tmp_path):
+    bundle, _ = _bundle(tmp_path)
+    collect(bundle, _empty(tmp_path), integrity_job=job)
+    assert not bundle["assessment"]["integrity_not_run"].get("refused")
+    (line,) = integrity_report_lines(bundle)
+    assert line.startswith(f"Run Integrity: NOT RUN ({job})") and "REFUSED" not in line

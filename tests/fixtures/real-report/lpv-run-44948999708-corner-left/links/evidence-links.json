@@ -1,0 +1,17 @@
+{
+  "run": "https://github.com/Living-Proof-Labs/livingproof-verification/actions/runs/44948999708",
+  "links": [
+    {
+      "label": "MCAP, all 1 trials",
+      "url": "https://github.com/Living-Proof-Labs/livingproof-verification/actions/runs/44948999708/artifacts/14725530559",
+      "kind": "mcap"
+    },
+    {
+      "label": "video",
+      "url": "https://github.com/Living-Proof-Labs/livingproof-verification/actions/runs/44948999708/artifacts/14724419745",
+      "kind": "video",
+      "seed": 1,
+      "status": "PASS"
+    }
+  ]
+}
