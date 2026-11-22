@@ -19,7 +19,9 @@ from test_walk_hallway_workflow import _bundle_with_varied_durations, _reporter_
 NOT_RUN = "Run Integrity: NOT RUN"
 
 
-def _job(tmp_path, monkeypatch, *, integrity: dict | None, note: str | None):
+def _job(
+    tmp_path, monkeypatch, *, integrity: dict | None, note: str | None, refusal: str | None = None
+):
     bundle = _bundle_with_varied_durations(tmp_path, monkeypatch)
     job = tmp_path / "job"
     (job / "verified").mkdir(parents=True)
@@ -46,6 +48,8 @@ def _job(tmp_path, monkeypatch, *, integrity: dict | None, note: str | None):
     (integrity_dir / "specs-files.json").write_text("{}\n")
     if note is not None:
         (integrity_dir / "no-result.txt").write_text(note + "\n")
+    if refusal is not None:
+        (integrity_dir / "refused.txt").write_text(refusal + "\n")
     if integrity is not None:
         (integrity_dir / "result.json").write_text(json.dumps(integrity) + "\n")
     return job
