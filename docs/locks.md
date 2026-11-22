@@ -696,7 +696,8 @@ the first line of the run-integrity job's own `no-result.txt`; a note in any oth
 artifact is never used.
 
 The integrity line sits with the verdict in every format, never after the footer: in `report.md`
-and `report.txt` right after the `... overall <GRADE>.` line, and in `report.html` right after each
+and `report.txt` right after the verdict line (the reporter words it `...; overall PASS. 100% required.`
+with trial counts, or `...: overall PASS.` without; both are matched), and in `report.html` right after each
 "Stored overall status" line, with the same weight. It uses one of four labels, which change only
 how the result is shown and never what is stored:
 
@@ -710,7 +711,13 @@ how the result is shown and never what is stored:
 Any other stored status (`INCONCLUSIVE`, or one a later evaluator adds) is shown as it is. A
 `PASS` line reads `Run Integrity: PASS`. The run-integrity step knows the evaluator's exit status:
 on exit 2 it keeps the evaluator's last message line in `refused.txt` in the same artifact (still
-failing the job), and the collector reads it from the run-integrity artifact only. A
+failing the job), and the collector reads it from the run-integrity artifact only. Any exit 2 is `REFUSED`, whatever the
+cause (a media refusal, a malformed request, or a tool's own exit 2), and the reason is the
+message itself, so they read differently. The message is capped at 500 characters, ends in a full
+stop before "The run is INCONCLUSIVE", and is backslash-escaped in `report.md` and HTML-escaped in
+`report.html`; `report.txt` shows it as it is. Only an artifact named
+`[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>` (or its inner
+`livingproof-run-integrity` directory) counts, not a lookalike name. A
 `no-result.txt` note is the reason for `NOT RUN`, as before. The reporter has no integrity input,
 so the workflow places the lines after rendering
 (`collect_evaluator_results.py --place-integrity reports`) and before it writes `SHA256SUMS`, so
