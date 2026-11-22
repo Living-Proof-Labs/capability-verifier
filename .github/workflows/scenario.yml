@@ -1439,6 +1439,28 @@ jobs:
 
 
           REFUSED_FILE = "refused.txt"
+          _MESSAGE_CAP = 500
+          _INTEGRITY_ARTIFACT = re.compile(
+              rf"(?:{re.escape(NOT_RUN_ID)}|(?:.*-)?evaluator-results-{re.escape(NOT_RUN_ID)}-[^/]+)"
+          )
+
+
+          def _is_integrity_artifact(directory: Path) -> bool:
+              """True for the run-integrity job's own artifact: its inner directory, or the artifact name
+              ``[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>``, not a lookalike."""
+              return _INTEGRITY_ARTIFACT.fullmatch(directory.name) is not None
+
+
+          def _cap(text: str) -> str:
+              return text if len(text) <= _MESSAGE_CAP else text[: _MESSAGE_CAP - 3].rstrip() + "..."
+
+
+          def _sentence(text: str) -> str:
+              """``text`` ended with a full stop (none added when it already ends one), so a sentence can follow."""
+              text = text.rstrip()
+              return text if text.endswith((".", "!", "?")) else text + "."
+
+
           _REFUSED_DEFAULT = "the evaluator refused the run (exit 2) and wrote no result"
 
 
@@ -1451,13 +1473,13 @@ jobs:
               if not Path(directory).is_dir():
                   return None
               for note in sorted(Path(directory).rglob(REFUSED_FILE)):
-                  if NOT_RUN_ID not in note.parent.name:
+                  if not _is_integrity_artifact(note.parent):
                       continue
                   try:
                       text = note.read_text(encoding="utf-8").strip()
                   except (OSError, ValueError):
                       text = ""
-                  return text.splitlines()[0] if text else _REFUSED_DEFAULT
+                  return _cap(text.splitlines()[0].strip()) if text else _REFUSED_DEFAULT
               return None
 
 
@@ -1465,14 +1487,14 @@ jobs:
               """Why there is no integrity result: the job's own note when it wrote one, else its result."""
               notes = sorted(Path(directory).rglob("no-result.txt")) if Path(directory).is_dir() else []
               for note in notes:
-                  if NOT_RUN_ID not in note.parent.name:
+                  if not _is_integrity_artifact(note.parent):
                       continue  # only the run-integrity job's artifact explains a missing integrity result
                   try:
                       text = note.read_text(encoding="utf-8").strip()
                   except (OSError, ValueError):
                       continue
                   if text:
-                      return text.splitlines()[0]
+                      return _cap(text.splitlines()[0].strip())
               if job_result == "success":
                   return "the run-integrity job succeeded but left no result"
               return (
@@ -1518,11 +1540,11 @@ jobs:
               if isinstance(missing, dict):
                   tail = "The run is INCONCLUSIVE; the robot grade is not backed by an integrity result."
                   if missing.get("refused"):
-                      lines.append(f"Run Integrity: REFUSED: {missing.get('reason')} {tail}")
+                      lines.append(f"Run Integrity: REFUSED: {_sentence(str(missing.get('reason')))} {tail}")
                   else:
                       lines.append(
-                          f"Run Integrity: NOT RUN ({missing.get('job_result')}): {missing.get('reason')} "
-                          + tail
+                          f"Run Integrity: NOT RUN ({missing.get('job_result')}): "
+                          f"{_sentence(str(missing.get('reason')))} " + tail
                       )
               if not isinstance(stored, dict):
                   return lines
@@ -1550,8 +1572,13 @@ jobs:
               (report_dir / INTEGRITY_FILE).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-          _VERDICT = re.compile(r": overall [A-Za-z_ ]+\.\s*$")
+          _VERDICT = re.compile(r"[:;] overall [A-Z][A-Za-z_ ]*\.(?:\s.*)?$")
           _HTML_VERDICT = re.compile(r"<p class=(['\"])stored-status\1>[^<]*</p>")
+
+
+          def _md_escape(line: str) -> str:
+              """Backslash-escape what Markdown would act on, so an evaluator's message stays plain text."""
+              return re.sub(r"([\\`*\[\]<>|])", r"\\\1", line)
 
 
           def place_integrity_lines(report_dir: Path) -> bool:
@@ -1579,10 +1606,11 @@ jobs:
                       out.append(line)
                       if _VERDICT.search(line) and not line.startswith(("|", "<")):
                           for extra in lines:
-                              out += ["", extra] if blank else [extra]
+                              shown = _md_escape(extra) if blank else extra
+                              out += ["", shown] if blank else [shown]
                           placed = True
                   if not placed:
-                      out += ["", *lines]
+                      out += ["", *(_md_escape(x) if blank else x for x in lines)]
                   path.write_text("\n".join(out) + "\n", encoding="utf-8")
               page = report_dir / "report.html"
               if page.is_file():
