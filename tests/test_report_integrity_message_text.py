@@ -170,3 +170,15 @@ def test_the_step_keeps_uvs_own_exit_2_line_as_the_refusal_text(tmp_path):
     assert done.returncode == 2
     results = work / "evaluator-results" / "livingproof-run-integrity"
     assert (results / "refused.txt").read_text() == UV + "\n"
+
+
+@pytest.mark.parametrize("char", ["_", "~", "&"])
+def test_underscore_tilde_and_ampersand_are_escaped_in_the_md_message_only(char, tmp_path):
+    md, txt = _placed(tmp_path, f"Run Integrity: REFUSED: a{char}b{char}c")
+    assert md == f"Run Integrity: REFUSED: a\\{char}b\\{char}c"
+    assert txt == f"Run Integrity: REFUSED: a{char}b{char}c"
+
+
+def test_italics_strikethrough_and_entities_in_a_message_stay_plain_text_in_md(tmp_path):
+    md, _ = _placed(tmp_path, "Run Integrity: REFUSED: _it_ ~~s~~ &lt;b&gt;")
+    assert md == "Run Integrity: REFUSED: \\_it\\_ \\~\\~s\\~\\~ \\&lt;b\\&gt;"
