@@ -83,4 +83,6 @@ def test_the_job_s_own_no_result_note_is_the_reason_shown(tmp_path, monkeypatch)
     note = "no Run Integrity result for this run: planned_trials is 0"
     job = _job(tmp_path, monkeypatch, integrity=None, note=note)
     md, txt = _run(job, tmp_path, "failure")
-    assert f"{NOT_RUN} (failure): {note}" in md and f"{NOT_RUN} (failure): {note}" in txt
+    # md backslash-escapes the underscore in ``planned_trials``; txt is verbatim.
+    assert f"{NOT_RUN} (failure): {note.replace('_', '\\_')}" in md
+    assert f"{NOT_RUN} (failure): {note}" in txt
