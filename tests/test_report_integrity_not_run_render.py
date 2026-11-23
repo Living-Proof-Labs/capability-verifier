@@ -14,7 +14,12 @@ import os
 import subprocess
 
 import pytest
-from test_walk_hallway_workflow import _bundle_with_varied_durations, _reporter_3_6_0, _step
+from test_walk_hallway_workflow import (
+    _bundle_with_varied_durations,
+    _isolated_collector,
+    _reporter_3_6_0,
+    _step,
+)
 
 NOT_RUN = "Run Integrity: NOT RUN"
 
@@ -61,7 +66,12 @@ def _run(job, tmp_path, result):
     env["RUN_INTEGRITY_RESULT"] = result
     env["EVALUATOR_RESULTS_PATTERN"] = "evaluator-results-*-playground"
     for name in ("Append each evaluator's result documents", "Validate, then render"):
-        subprocess.run(["bash", "-e", "-c", _step(name)], cwd=job, env=env, check=True)
+        subprocess.run(
+            ["bash", "-e", "-c", _isolated_collector(_step(name), job)],
+            cwd=job,
+            env=env,
+            check=True,
+        )
     return (job / "reports" / "report.md").read_text(), (job / "reports" / "report.txt").read_text()
 
 

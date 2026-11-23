@@ -19,7 +19,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
-from test_walk_hallway_workflow import _step
+from test_walk_hallway_workflow import _isolated_collector, _step
 
 REAL = Path(__file__).parent / "fixtures" / "real-report" / "lpv-run-44948999708-corner-left"
 RELEASE = (
@@ -86,7 +86,12 @@ def _render(tmp_path, reporter, *, result_json=None, refusal=None, job="success"
     env["RUN_INTEGRITY_RESULT"] = job
     env["EVALUATOR_RESULTS_PATTERN"] = "evaluator-results-*-stock"
     for name in ("Append each evaluator's result documents", "Validate, then render"):
-        subprocess.run(["bash", "-e", "-c", _step(name)], cwd=job_dir, env=env, check=True)
+        subprocess.run(
+            ["bash", "-e", "-c", _isolated_collector(_step(name), job_dir)],
+            cwd=job_dir,
+            env=env,
+            check=True,
+        )
     read = lambda n: (job_dir / "reports" / n).read_text(encoding="utf-8")
     return read("report.md").splitlines(), read("report.txt").splitlines(), job_dir
 
