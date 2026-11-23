@@ -585,31 +585,58 @@ def _autolink_delim(text: str) -> int:
     return link_end
 
 
-# Named or numeric entities, not Markdown delimiters. ``&#126;`` is '~'; HTML has no name for it.
-_TRIMMED_MARK = {"*": "&ast;", "_": "&lowbar;", "~": "&#126;"}
+_TAIL_MARKS = frozenset("*_~")
 
 
-def _encode_trimmed(text: str) -> str:
-    """Write a trimmed autolink tail so its ``*``, ``_`` and ``~`` cannot start markup."""
-    pieces: list[str] = []
-    pending: list[str] = []
+def _tail_can_mark(text: str) -> bool:
+    return any(ch in _TAIL_MARKS for ch in text)
 
-    def flush() -> None:
-        if pending:
-            # '&' is not a backslash escape here. '\&' would be swallowed into the href, and a
-            # trailing '&name;' is the entity cmark already trims off the link (it decodes to text).
-            pieces.append(_md_escape_text("".join(pending)).replace("\\&", "&"))
-            pending.clear()
 
-    for ch in text:
-        mark = _TRIMMED_MARK.get(ch)
-        if mark is None:
-            pending.append(ch)
-        else:
-            flush()
-            pieces.append(mark)
-    flush()
-    return "".join(pieces)
+def _span_can_be_angle_autolink(span: str) -> bool:
+    """A raw ``<...>`` is safe only for a span that cannot itself open or close a tag."""
+    if not span:
+        return False
+    for ch in span:
+        if ch in "<>" or ch.isspace() or ord(ch) < 32 or ord(ch) == 127:
+            return False
+    return True
+
+
+def _scheme_address(span: str) -> bool:
+    return span.lower().startswith(("http://", "https://", "ftp://"))
+
+
+def _escape_trimmed_tail(text: str, *, keep_ampersand: bool) -> str:
+    """Escape a trimmed tail. ``*``, ``_`` and ``~`` become ``\\*``, ``\\_`` and ``\\~``.
+
+    A trailing ``&name;`` is left with a raw ``&`` when the tail is not shielded: ``\\&`` would
+    be swallowed into the href, and cmark then decodes the entity to text. After an angle
+    autolink the backslash is outside the link, so ``&`` is escaped normally.
+    """
+    escaped = _md_escape_text(text)
+    if keep_ampersand:
+        return escaped.replace("\\&", "&")
+    return escaped
+
+
+def _shield_address(kept: str, tail: str) -> str:
+    """Keep a trimmed ``*``, ``_`` or ``~`` from emphasising the words after the address.
+
+    A scheme address is wrapped in a CommonMark angle autolink, ``<https://e.com/a>``, and only
+    when the tail needs it. ``www.`` is not a scheme, so it cannot be an angle autolink: the dot
+    is escaped and the rest of the span is escaped, which leaves the characters visible and
+    unlinked. A span that contains whitespace, ``<``, ``>`` or a control character is not
+    wrapped; the scheme's slashes are escaped instead, so no raw bracket is written.
+    """
+    if kept.startswith("www."):
+        return "www\\." + _md_escape_text(kept[4:] + tail)
+    if _scheme_address(kept) and _span_can_be_angle_autolink(kept):
+        assert _span_can_be_angle_autolink(kept)
+        return "<" + kept + ">" + _escape_trimmed_tail(tail, keep_ampersand=False)
+    if _scheme_address(kept):
+        scheme = kept.lower().find("://")
+        return kept[:scheme] + ":\\/\\/" + _md_escape_text(kept[scheme + 3 :] + tail)
+    return _md_escape_text(kept + tail)
 
 
 def _url_span(line: str, index: int) -> tuple[int, int] | None:
@@ -668,19 +695,24 @@ def _md_escape(line: str) -> str:
     """Backslash-escape what Markdown would act on, so an evaluator's message stays plain text.
 
     Only the span cmark-gfm will actually auto-link is copied through, after the same
-    trailing-punctuation trim cmark applies. The trimmed ``*``, ``_`` and ``~`` are written
-    as entities so they cannot emphasise or strike the words after the address. An
-    ``https://`` run whose host is not a real link is escaped with everything else. ``<`` is
-    written ``&lt;`` and ``>`` is written ``&gt;``: a backslash there is swallowed by the
-    autolink and the following tag becomes raw HTML.
+    trailing-punctuation trim cmark applies. When that trimmed tail contains ``*``, ``_`` or
+    ``~``, a scheme address is written as an angle autolink (``<https://e.com/a>\\~``) so the
+    href stays the address and the mark is a backslash escape, not emphasis. The angle brackets
+    are the only raw ``<`` and ``>`` this function writes. An ``https://`` run whose host is
+    not a real link is escaped with everything else, and a ``<`` in the message is ``&lt;``.
     """
     parts: list[str] = []
     cursor = 0
     for start, end in _autolink_spans(line):
-        kept = start + _autolink_delim(line[start:end])
+        kept_end = start + _autolink_delim(line[start:end])
+        kept = line[start:kept_end]
+        tail = line[kept_end:end]
         parts.append(_md_escape_text(line[cursor:start]))
-        parts.append(line[start:kept])
-        parts.append(_encode_trimmed(line[kept:end]))
+        if _tail_can_mark(tail):
+            parts.append(_shield_address(kept, tail))
+        else:
+            parts.append(kept)
+            parts.append(_escape_trimmed_tail(tail, keep_ampersand=True))
         cursor = end
     parts.append(_md_escape_text(line[cursor:]))
     return "".join(parts)

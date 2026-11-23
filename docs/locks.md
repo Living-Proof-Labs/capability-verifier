@@ -722,10 +722,13 @@ backslash, so a tag cannot open even when it is placed straight after an address
 GitHub's Markdown will actually auto-link is left as written: `http`, `https`, `ftp`, or `www`,
 in any letter case for the scheme. `_`, `&` and `~` stay in that link and in the visible address,
 including a query string and a fragment. Trailing punctuation cmark removes from that link
-(`?!.,:*_~'"`, an unbalanced `)`, a trailing `&name;`) is not left raw: `*` is `&ast;`, `_` is
-`&lowbar;` and `~` is `&#126;`, so it cannot emphasise or strike the words that follow, such as
-PASSED. An `https://` run that is not a real link, such as `https://*bold*`, is still escaped.
-`report.html` HTML-escapes the original line once, so `&` is
+(`?!.,:*_~'"`, an unbalanced `)`, a trailing `&name;`) is not left raw when it contains `*`, `_`
+or `~`. The address is then written as an angle autolink, `<https://e.com/a>`, and the trimmed
+mark is backslash-escaped (`\~`, `\*`, `\_`), so the href is the address, the character is the
+ASCII mark, and it cannot strike a word such as PASSED. A `www.` address has no scheme, so it
+is not wrapped; the dot is escaped and the address is not linked. Those brackets are the only
+raw `<` and `>` written for a refusal. An `https://` run that is not a real link, such as
+`https://*bold*`, is still escaped. `report.html` HTML-escapes the original line once, so `&` is
 `&amp;` and is not escaped again. Only an artifact named
 `[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>` (or its inner
 `livingproof-run-integrity` directory) counts, not a lookalike name. A

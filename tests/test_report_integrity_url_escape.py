@@ -14,11 +14,20 @@ import random
 import re
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 from cmarkgfm.cmark import Options, markdown_to_html_with_extensions
 
-from capability_verifier.collect import _md_escape, place_integrity_lines
+from capability_verifier.collect import (
+    _autolink_delim,
+    _autolink_spans,
+    _md_escape,
+    _scheme_address,
+    _span_can_be_angle_autolink,
+    _tail_can_mark,
+    place_integrity_lines,
+)
 
 # Real addresses. Each one has '_', '&', '~', a query string and a fragment.
 URLS = [
@@ -323,9 +332,87 @@ def test_trimmed_punctuation_does_not_emphasise_or_strike(message):
     rendered = _rendered(_md_escape(message))
     assert not any(tag in {"em", "strong", "del"} for tag, _ in rendered.tags)
     _assert_no_injected_html(rendered)
+    assert "".join(rendered.text).strip() == message
     if "PASSED" in message:
-        assert "PASSED" in "".join(rendered.text)
-        assert "&#126;" in _md_escape(message)
+        assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == [
+            "https://e.com/",
+            "https://e.com/",
+        ]
+
+
+@pytest.mark.parametrize(
+    ("message", "href"),
+    [
+        ("https://e.com/a~", "https://e.com/a"),
+        ("https://e.com/a*", "https://e.com/a"),
+        ("https://e.com/a_", "https://e.com/a"),
+        ("https://e.com/a**", "https://e.com/a"),
+        ("https://e.com/a~~", "https://e.com/a"),
+    ],
+)
+def test_a_trimmed_mark_keeps_the_exact_href_and_the_ascii_character(message, href):
+    escaped = _md_escape(message)
+    assert escaped.startswith("<" + href + ">")
+    assert "&#126;" not in escaped and "&tilde;" not in escaped
+    rendered = _rendered(escaped)
+    assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == [href]
+    assert "".join(rendered.text).strip() == message
+    assert not any(tag in {"em", "strong", "del"} for tag, _ in rendered.tags)
+
+
+def test_a_plain_address_is_not_wrapped_in_angle_brackets():
+    """Angle form is only for a tail that can emphasise. A normal address stays bare."""
+    escaped = _md_escape("https://example.com/a_b?c=1&d=~x#frag_ment")
+    assert not escaped.startswith("<")
+    assert "<https://" not in escaped
+
+
+def test_a_greater_than_inside_a_marked_address_is_not_angle_wrapped():
+    """``>`` would close the angle autolink, so the span is not wrapped and is not linked."""
+    message = "https://e.com/a>b~"
+    escaped = _md_escape(message)
+    assert "<" not in escaped
+    rendered = _rendered(escaped)
+    assert "".join(rendered.text).strip() == message
+    assert not any(tag == "a" for tag, _ in rendered.tags)
+    assert not any(tag in {"em", "strong", "del"} for tag, _ in rendered.tags)
+
+
+def test_a_www_address_with_a_tilde_is_shown_exactly_and_not_linked():
+    message = "www.example.com/a_b~"
+    escaped = _md_escape(message)
+    assert escaped == "www\\.example.com/a\\_b\\~"
+    rendered = _rendered(escaped)
+    assert not any(tag == "a" for tag, _ in rendered.tags)
+    assert "".join(rendered.text).strip() == message
+    assert not any(tag in {"em", "strong", "del"} for tag, _ in rendered.tags)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "https://e.com/a~<img src=x onerror=alert(1)>",
+        "https://e.com/a~<script>alert(1)</script>",
+        "https://e.com/a><b>no</b>",
+        "https://e.com/<a href=https://evil.example/>Run Integrity: PASS</a>",
+        "see https://example.com/a<img src=https://evil.example/p.png>",
+    ],
+)
+def test_a_bracket_next_to_an_address_does_not_open_a_tag(message):
+    escaped = _md_escape(message)
+    # The only raw brackets are an angle autolink around a scheme address.
+    without_angles = escaped
+    while "<" in without_angles:
+        open_at = without_angles.index("<")
+        close_at = without_angles.find(">", open_at)
+        assert close_at != -1
+        inside = without_angles[open_at + 1 : close_at]
+        assert _scheme_address(inside)
+        assert _span_can_be_angle_autolink(inside)
+        without_angles = without_angles[:open_at] + without_angles[close_at + 1 :]
+    assert "<" not in without_angles
+    rendered = _rendered(escaped)
+    _assert_no_injected_html(rendered)
 
 
 def test_a_trimmed_underscore_stays_visible_and_out_of_the_href():
@@ -373,6 +460,24 @@ def test_non_ascii_punctuation_cannot_start_a_host():
     assert not any(tag == "em" for tag, _ in rendered.tags)
 
 
+def _expected_hrefs(message: str) -> list[str]:
+    hrefs = []
+    for start, end in _autolink_spans(message):
+        kept_end = start + _autolink_delim(message[start:end])
+        kept = message[start:kept_end]
+        tail = message[kept_end:end]
+        linked = True
+        if _tail_can_mark(tail) and (
+            kept.startswith("www.")
+            or not (_scheme_address(kept) and _span_can_be_angle_autolink(kept))
+        ):
+            linked = False
+        if not linked:
+            continue
+        hrefs.append(("http://" + kept) if kept.startswith("www.") else kept)
+    return hrefs
+
+
 def _main_escape(line: str) -> str:
     """The escaper on main: backslash every Markdown special, including inside addresses."""
     return re.sub(r"([\\`*_~&\[\]<>|])", r"\\\1", line)
@@ -391,14 +496,16 @@ def test_fuzz_trailing_punctuation_adds_no_emphasis_or_html():
         message = (
             f"see {rng.choice(hosts)}{tail} {rng.choice(words)} {rng.choice(hosts)}{tail2} end"
         )
-        for escaped, counter in ((_md_escape(message), "ours"), (_main_escape(message), "main")):
-            parsed = _rendered(escaped)
-            bad = [tag for tag, _ in parsed.tags if tag not in {"p", "a"}]
-            if bad:
-                if counter == "ours":
-                    ours += 1
-                else:
-                    main += 1
+        escaped = _md_escape(message)
+        parsed = _rendered(escaped)
+        if any(tag not in {"p", "a"} for tag, _ in parsed.tags):
+            ours += 1
+        assert [unquote(attrs["href"]) for tag, attrs in parsed.tags if tag == "a"] == (
+            _expected_hrefs(message)
+        )
+        plain = _rendered(_main_escape(message))
+        if any(tag not in {"p", "a"} for tag, _ in plain.tags):
+            main += 1
     assert ours == 0
     assert ours <= main
 
