@@ -8,7 +8,7 @@ dependencies = [
     "mujoco==3.17.0",
     "numpy==2.5.4",
     "pyyaml==6.0.3",
-    "imageio[ffmpeg]==2.38.1",
+    "imageio[ffmpeg]==2.38.2",
     "livingproof-sim-mujoco[torch]",
     "jsonschema==4.26.0",
     "referencing==0.37.0",
