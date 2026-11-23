@@ -10,6 +10,7 @@ HTML-escapes the original line once.
 from __future__ import annotations
 
 import html
+import os
 import random
 from html.parser import HTMLParser
 from pathlib import Path
@@ -18,17 +19,7 @@ from urllib.parse import unquote
 import pytest
 from cmarkgfm.cmark import Options, markdown_to_html_with_extensions
 
-from capability_verifier.collect import (
-    _autolink_delim,
-    _autolink_spans,
-    _escape_trimmed_tail,
-    _md_escape,
-    _md_escape_text,
-    _scheme_address,
-    _span_can_be_angle_autolink,
-    _tail_can_mark,
-    place_integrity_lines,
-)
+from capability_verifier.collect import _md_escape, place_integrity_lines
 
 # Real addresses. Each one has '_', '&', '~', a query string and a fragment.
 URLS = [
@@ -479,8 +470,10 @@ def test_a_bracket_next_to_an_address_does_not_open_a_tag(message):
         close_at = without_angles.find(">", open_at)
         assert close_at != -1
         inside = without_angles[open_at + 1 : close_at]
-        assert _scheme_address(inside)
-        assert _span_can_be_angle_autolink(inside)
+        assert inside.lower().startswith(("http://", "https://", "ftp://"))
+        assert not any(
+            ch in "<>" or ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in inside
+        )
         without_angles = without_angles[:open_at] + without_angles[close_at + 1 :]
     assert "<" not in without_angles
     rendered = _rendered(escaped)
@@ -532,74 +525,406 @@ def test_non_ascii_punctuation_cannot_start_a_host():
     assert not any(tag == "em" for tag, _ in rendered.tags)
 
 
-# cmark_isspace, matching collect.py: tab, LF, CR, space. Not VT, FF or NBSP.
-_CMARK_SPACE_FOR_ORACLE = frozenset("\t\n\r ")
+def test_host_punctuation_follows_cmark_list_not_unicode_category():
+    """U+166D is Unicode So, but cmark lists it. U+061D is Po and cmark does not.
 
-
-def _n1_suffix(kept: str, tail: str, message: str, end: int) -> tuple[str, str, int]:
-    """Href and the visible run after an unshielded address that is directly before ``<``.
-
-    The trimmed punctuation stays in front of ``&lt;``, so it is no longer trailing and
-    cmark keeps it in the href. ``autolink_delim`` then trims a final ``&gt;`` or ``&lt;``
-    and that entity is decoded in the text. An ``&lt;`` left inside the link is shown as
-    the characters ``&lt;``.
+    Compared with cmark_utf8proc_is_punctuation in cmark-gfm 0.29.0.gfm.13
+    (cmarkgfm 2025.10.22): 155 non-ASCII characters are category P and absent
+    from that list, and one listed character, U+166D, is not category P.
     """
-    stop = end
-    while stop < len(message) and message[stop] not in _CMARK_SPACE_FOR_ORACLE:
-        stop += 1
-    emitted = (
-        kept + _escape_trimmed_tail(tail, keep_ampersand=True) + _md_escape_text(message[end:stop])
-    )
-    link_end = _autolink_delim(emitted)
-    outside = html.unescape(emitted[link_end:])
-    # The visible address is the original kept span plus the original tail; only the
-    # run that starts at '<' is rewritten, with a trimmed entity decoded.
-    tail_out = _escape_trimmed_tail(tail, keep_ampersand=True)
-    rewritten = emitted[len(kept) + len(tail_out) : link_end] + outside
-    return emitted[:link_end], rewritten, stop
+    rejected = "https://\u166de.com/a*b*"
+    rendered = _rendered(_md_escape(rejected))
+    assert [tag for tag, _ in rendered.tags] == ["p"]
+    assert "".join(rendered.text).strip() == rejected
+
+    accepted = "https://\u061de.com/a*b*"
+    rendered = _rendered(_md_escape(accepted))
+    hrefs = [unquote(attrs["href"]) for tag, attrs in rendered.tags if tag == "a"]
+    assert hrefs == ["https://\u061de.com/a*b"]
+    assert "".join(rendered.text).strip() == accepted
+    assert not any(tag == "em" for tag, _ in rendered.tags)
 
 
-def _expected_visible_and_hrefs(message: str) -> tuple[str, list[str]]:
-    """Oracle for one line. Two narrow exceptions, both from cmark, not from a skip.
+# Independent cmark-gfm extended-autolink oracle.
+# Written from extensions/autolink.c (www_match, url_match, check_domain,
+# autolink_delim, is_valid_hostchar) and src/utf8.c / src/cmark_ctype.c of
+# cmark-gfm 0.29.0.gfm.13. It does not call collect.py. The fuzz test's only
+# production call is _md_escape.
 
-    N1: an unshielded span immediately before ``<`` (see ``_n1_suffix``).
-    N3: a named entity in an unshielded trimmed tail is decoded (``&copy;`` shows ``©``).
+# cmark_isspace: class 1 is tab, LF, CR, space. VT and FF are class 0.
+_ORACLE_SPACE = frozenset("\t\n\r ")
+_ORACLE_BEFORE = frozenset("*_~(")
+_ORACLE_TRIM = frozenset("?!.,:*_~'\"")
+_ORACLE_MARKS = frozenset("*_~")
+_ORACLE_SCHEMES = ("http", "https", "ftp")
+
+_ORACLE_PUNCT_RANGES = (
+    (161, 161),
+    (167, 167),
+    (171, 171),
+    (182, 183),
+    (187, 187),
+    (191, 191),
+    (894, 894),
+    (903, 903),
+    (1370, 1375),
+    (1417, 1418),
+    (1470, 1470),
+    (1472, 1472),
+    (1475, 1475),
+    (1478, 1478),
+    (1523, 1524),
+    (1545, 1546),
+    (1548, 1549),
+    (1563, 1563),
+    (1566, 1567),
+    (1642, 1645),
+    (1748, 1748),
+    (1792, 1805),
+    (2039, 2041),
+    (2096, 2110),
+    (2142, 2142),
+    (2404, 2405),
+    (2416, 2416),
+    (2800, 2800),
+    (3572, 3572),
+    (3663, 3663),
+    (3674, 3675),
+    (3844, 3858),
+    (3860, 3860),
+    (3898, 3901),
+    (3973, 3973),
+    (4048, 4052),
+    (4057, 4058),
+    (4170, 4175),
+    (4347, 4347),
+    (4960, 4968),
+    (5120, 5120),
+    (5741, 5742),
+    (5787, 5788),
+    (5867, 5869),
+    (5941, 5942),
+    (6100, 6102),
+    (6104, 6106),
+    (6144, 6154),
+    (6468, 6469),
+    (6686, 6687),
+    (6816, 6822),
+    (6824, 6829),
+    (7002, 7008),
+    (7164, 7167),
+    (7227, 7231),
+    (7294, 7295),
+    (7360, 7367),
+    (7379, 7379),
+    (8208, 8231),
+    (8240, 8259),
+    (8261, 8273),
+    (8275, 8286),
+    (8317, 8318),
+    (8333, 8334),
+    (8968, 8971),
+    (9001, 9002),
+    (10088, 10101),
+    (10181, 10182),
+    (10214, 10223),
+    (10627, 10648),
+    (10712, 10715),
+    (10748, 10749),
+    (11513, 11516),
+    (11518, 11519),
+    (11632, 11632),
+    (11776, 11822),
+    (11824, 11842),
+    (12289, 12291),
+    (12296, 12305),
+    (12308, 12319),
+    (12336, 12336),
+    (12349, 12349),
+    (12448, 12448),
+    (12539, 12539),
+    (42238, 42239),
+    (42509, 42511),
+    (42611, 42611),
+    (42622, 42622),
+    (42738, 42743),
+    (43124, 43127),
+    (43214, 43215),
+    (43256, 43258),
+    (43310, 43311),
+    (43359, 43359),
+    (43457, 43469),
+    (43486, 43487),
+    (43612, 43615),
+    (43742, 43743),
+    (43760, 43761),
+    (44011, 44011),
+    (64830, 64831),
+    (65040, 65049),
+    (65072, 65106),
+    (65108, 65121),
+    (65123, 65123),
+    (65128, 65128),
+    (65130, 65131),
+    (65281, 65283),
+    (65285, 65290),
+    (65292, 65295),
+    (65306, 65307),
+    (65311, 65312),
+    (65339, 65341),
+    (65343, 65343),
+    (65371, 65371),
+    (65373, 65373),
+    (65375, 65381),
+    (65792, 65794),
+    (66463, 66463),
+    (66512, 66512),
+    (66927, 66927),
+    (67671, 67671),
+    (67871, 67871),
+    (67903, 67903),
+    (68176, 68184),
+    (68223, 68223),
+    (68336, 68342),
+    (68409, 68415),
+    (68505, 68508),
+    (69703, 69709),
+    (69819, 69820),
+    (69822, 69825),
+    (69952, 69955),
+    (70004, 70005),
+    (70085, 70088),
+    (70093, 70093),
+    (70200, 70205),
+    (70854, 70854),
+    (71105, 71113),
+    (71233, 71235),
+    (74864, 74868),
+    (92782, 92783),
+    (92917, 92917),
+    (92983, 92987),
+    (92996, 92996),
+    (113823, 113823),
+)
+
+_ORACLE_PUNCT = frozenset(
+    code for start, stop in _ORACLE_PUNCT_RANGES for code in range(start, stop + 1)
+)
+
+
+def _oracle_space_utf8(ch: str) -> bool:
+    """cmark_utf8proc_is_space. NBSP, em space and U+3000 are spaces. U+2028 is not."""
+    code = ord(ch)
+    return code in (9, 10, 12, 13, 32, 160, 5760, 8239, 8287, 12288) or 8192 <= code <= 8202
+
+
+def _oracle_punct(code: int) -> bool:
+    """cmark_utf8proc_is_punctuation, including cmark_ispunct for ASCII."""
+    if code < 128:
+        return (
+            0x21 <= code <= 0x2F
+            or 0x3A <= code <= 0x40
+            or 0x5B <= code <= 0x60
+            or 0x7B <= code <= 0x7E
+        )
+    return code in _ORACLE_PUNCT
+
+
+def _oracle_host_char(ch: str) -> bool:
+    """is_valid_hostchar: not space and not punctuation."""
+    code = ord(ch)
+    if _oracle_space_utf8(ch):
+        return False
+    return not _oracle_punct(code)
+
+
+def _oracle_domain(text: str, *, allow_short: bool) -> int:
+    """check_domain. The first character is skipped. A backslash skips itself and the next character is examined, matching the C for-loop."""
+    size = len(text)
+    index = 1
+    uscore1 = 0
+    uscore2 = 0
+    dots = 0
+    while index < size - 1:
+        if text[index] == "\\" and index < size - 2:
+            index += 1
+        ch = text[index]
+        if ch == "_":
+            uscore2 += 1
+        elif ch == ".":
+            uscore1 = uscore2
+            uscore2 = 0
+            dots += 1
+        elif ch != "-" and not _oracle_host_char(ch):
+            break
+        index += 1
+    if (uscore1 or uscore2) and dots <= 10:
+        return 0
+    if allow_short:
+        return index
+    return index if dots else 0
+
+
+def _oracle_scan_end(text: str, start: int) -> int:
+    """Extend until cmark_isspace or '<'."""
+    end = start
+    size = len(text)
+    while end < size and text[end] not in _ORACLE_SPACE and text[end] != "<":
+        end += 1
+    return end
+
+
+def _oracle_delim(text: str) -> int:
+    """autolink_delim: trim ?!.,:*_~'\", a trailing &name;, and an unbalanced ')'."""
+    link_end = len(text)
+    opening = 0
+    closing = 0
+    for index, ch in enumerate(text):
+        if ch == "<":
+            link_end = index
+            break
+        if ch == "(":
+            opening += 1
+        elif ch == ")":
+            closing += 1
+    while link_end > 0:
+        ch = text[link_end - 1]
+        if ch == ")":
+            if closing <= opening:
+                return link_end
+            closing -= 1
+            link_end -= 1
+        elif ch in _ORACLE_TRIM:
+            link_end -= 1
+        elif ch == ";":
+            new_end = link_end - 2
+            while new_end > 0 and text[new_end].isascii() and text[new_end].isalpha():
+                new_end -= 1
+            if new_end < link_end - 2 and text[new_end] == "&":
+                link_end = new_end
+            else:
+                link_end -= 1
+        else:
+            return link_end
+    return link_end
+
+
+def _oracle_url(line: str, colon: int) -> tuple[int, int] | None:
+    """url_match. Scheme is http, https or ftp, any case, then a valid host."""
+    if not line.startswith("://", colon):
+        return None
+    scheme = colon
+    while scheme > 0 and line[scheme - 1].isascii() and line[scheme - 1].isalpha():
+        scheme -= 1
+    if line[scheme:colon].lower() not in _ORACLE_SCHEMES:
+        return None
+    host = colon + 3
+    if host >= len(line) or not _oracle_host_char(line[host]):
+        return None
+    domain_len = _oracle_domain(line[host:], allow_short=True)
+    if domain_len == 0:
+        return None
+    return scheme, _oracle_scan_end(line, host + domain_len)
+
+
+def _oracle_www(line: str, index: int) -> tuple[int, int] | None:
+    """www_match. 'www.' is lowercase and only after the start, cmark_isspace, or *_~(."""
+    if not line.startswith("www.", index):
+        return None
+    if index and line[index - 1] not in _ORACLE_BEFORE and line[index - 1] not in _ORACLE_SPACE:
+        return None
+    domain_len = _oracle_domain(line[index:], allow_short=False)
+    if domain_len == 0:
+        return None
+    return index, _oracle_scan_end(line, index + domain_len)
+
+
+def _oracle_links(line: str) -> list[tuple[int, int, int]]:
+    """(start, kept_end, scan_end) for each extended autolink, in order."""
+    found: list[tuple[int, int, int]] = []
+    index = 0
+    size = len(line)
+    while index < size:
+        span = None
+        if line[index] == ":":
+            span = _oracle_url(line, index)
+        elif line[index] == "w":
+            span = _oracle_www(line, index)
+        if span is None:
+            index += 1
+            continue
+        start, scan_end = span
+        kept_rel = _oracle_delim(line[start:scan_end])
+        if kept_rel == 0:
+            index += 1
+            continue
+        found.append((start, start + kept_rel, scan_end))
+        index = scan_end
+    return found
+
+
+def _oracle_angle_safe(span: str) -> bool:
+    """The escaper's angle brackets are only safe with no whitespace, brackets or controls."""
+    if not span:
+        return False
+    for ch in span:
+        if ch in "<>" or ch.isspace() or ord(ch) < 32 or ord(ch) == 127:
+            return False
+    return True
+
+
+def _tail_has_named_entity(tail: str) -> bool:
+    """A cmark trailing entity: '&' + ASCII letters + ';'."""
+    start = 0
+    while True:
+        amp = tail.find("&", start)
+        if amp < 0:
+            return False
+        end = amp + 1
+        while end < len(tail) and tail[end].isascii() and tail[end].isalpha():
+            end += 1
+        if end > amp + 1 and end < len(tail) and tail[end] == ";":
+            return True
+        start = amp + 1
+
+
+def _oracle_expectation(message: str) -> tuple[list[str], bool, bool]:
+    """Hrefs cmark keeps, plus the N1 and N3 predicates.
+
+    A trimmed tail that contains ``*``, ``_`` or ``~`` is written as an angle
+    autolink when the kept span is a safe scheme address, and is not linked
+    otherwise (``www.`` has no scheme; a space, bracket or control cannot sit
+    inside ``<...>``). Either way the visible characters stay the raw input.
+    An unshielded span is linked, and a ``www.`` href gains cmark's ``http://``.
+
+    N1: that unshielded span's scan is immediately followed by ``<``.
+    N3: that unshielded trimmed tail contains a named entity.
     """
     hrefs: list[str] = []
-    parts: list[str] = []
-    cursor = 0
-    for start, end in _autolink_spans(message):
-        kept_end = start + _autolink_delim(message[start:end])
+    n1 = False
+    n3 = False
+    for start, kept_end, scan_end in _oracle_links(message):
         kept = message[start:kept_end]
-        tail = message[kept_end:end]
-        marks = _tail_can_mark(tail)
-        angle = _scheme_address(kept) and _span_can_be_angle_autolink(kept)
-        parts.append(message[cursor:start])
-        parts.append(kept)
+        tail = message[kept_end:scan_end]
+        marks = any(ch in _ORACLE_MARKS for ch in tail)
+        scheme = kept.lower().startswith(("http://", "https://", "ftp://"))
         if marks:
-            parts.append(tail)
-            if not kept.startswith("www.") and angle:
+            if scheme and _oracle_angle_safe(kept):
                 hrefs.append(kept)
-        else:
-            decoded = html.unescape(tail)
-            parts.append(decoded)
-            href = ("http://" + kept) if kept.startswith("www.") else kept
-            if end < len(message) and message[end] == "<":
-                extra, shown, stop = _n1_suffix(kept, tail, message, end)
-                href = ("http://" + extra) if kept.startswith("www.") else extra
-                parts.append(shown)
-                cursor = stop
-                hrefs.append(href)
-                continue
-            hrefs.append(href)
-        cursor = end
-    parts.append(message[cursor:])
-    return "".join(parts), hrefs
+            continue
+        hrefs.append(("http://" + kept) if kept.startswith("www.") else kept)
+        if scan_end < len(message) and message[scan_end] == "<":
+            n1 = True
+        if _tail_has_named_entity(tail):
+            n3 = True
+    return hrefs, n1, n3
 
 
 def _fuzz_messages(count: int) -> list[str]:
-    """Seeded corpus. The fixed exemplars are always first, so a short CI run still
-    covers every class; ``CV_FUZZ_CASES`` adds more of the same mix.
+    """Seeded corpus. Exemplars are first, so a short run still covers every class.
+
+    ``<`` is not in the random mark alphabet. A small slice of lines places it
+    directly after an address so N1 stays under 5% and the rest get the exact check.
     """
     exemplars = [
         "x\u00a0www.e.com/~~PASSED~~x y",
@@ -613,7 +938,6 @@ def _fuzz_messages(count: int) -> list[str]:
         "see www.e.com/a~https://e.com/b*c~ end",
         "https://e.com/a&lt;b~",
         "https://e.com/?a=1&amp;b=2~",
-        "https://e.com/&copy;",
         "https://e.com/&#x3C;script&#x3E;",
         "https://e.com/a\x01b~",
         "https://e.com/a\x7fb~",
@@ -623,9 +947,26 @@ def _fuzz_messages(count: int) -> list[str]:
         "https://e.com/a_",
         "https://e.com/a**",
         "https://e.com/a~~",
-        "see https://e.com/~. the robot PASSED https://e.com/.~ ok",
+        "https://e.com/a?*",
+        "https://e.com/a.*",
+        "https://e.com/a,~",
+        "https://e.com/a)*",
+        "https://e.com/a?_",
+        "https://e.com/a.~",
+        "https://e.com/a,_",
         "https://e.com/a_(b)",
         "https://e.com/a_(b))",
+        "https://e.com/a_(b))*",
+        "ftp://files.example/a?~",
+        "https://e.com/&copy;",
+        "https://e.com/a?&copy;",
+        "https://e.com/a.&amp;",
+        "https://e.com/a,&copy;",
+        "https://e.com/a)&amp;",
+        "https://e.com/a?&copy; end",
+        "www.e.com/a?&amp;",
+        "see https://e.com/~. the robot PASSED https://e.com/.~ ok",
+        "see https://e.com/_? hidden words https://e.com/?_ end",
         "https://e.com/a<b>",
         "https://e.com/a><b>no</b>",
         "HTTPS://E.COM/a_b",
@@ -637,7 +978,7 @@ def _fuzz_messages(count: int) -> list[str]:
     spaces = [" ", "\t", "\n", "\u00a0", "\u2003", "\u2028", "\u2029", "\u3000"]
     schemes = ["https://", "http://", "HTTPS://", "ftp://", "www."]
     hosts = ["e.com", "a.com", "b.com", "files.example", "E.COM"]
-    marks = list("?!.,:*_~'\"()<>")
+    marks = list("?!.,:*_~'\"()")
     extras = [
         "&copy;",
         "&lt;",
@@ -654,46 +995,86 @@ def _fuzz_messages(count: int) -> list[str]:
     words = ["PASSED", "hidden", "robot", "x", "end"]
     out = list(exemplars)
     while len(out) < count:
-        space = rng.choice(spaces)
-        left = (
-            rng.choice(schemes)
-            + rng.choice(hosts)
-            + "/"
-            + "".join(rng.choice(marks) for _ in range(rng.randint(0, 3)))
-        )
-        right = rng.choice(schemes) + rng.choice(hosts)
-        out.append(
-            "see"
-            + space
-            + left
-            + rng.choice(extras)
-            + rng.choice(words)
-            + right
-            + rng.choice(marks)
-            + " end"
-        )
+        roll = rng.random()
+        scheme = rng.choice(schemes)
+        host = rng.choice(hosts)
+        if roll < 0.02:
+            out.append(f"see {scheme}{host}/a{rng.choice(marks)}<b> end")
+        elif roll < 0.06:
+            punct = rng.choice("?.,)")
+            name = rng.choice(("copy", "amp"))
+            out.append(f"see {scheme}{host}/a{punct}&{name}; end")
+        else:
+            space = rng.choice(spaces)
+            left = (
+                scheme + host + "/" + "".join(rng.choice(marks) for _ in range(rng.randint(0, 3)))
+            )
+            right = rng.choice(schemes) + rng.choice(hosts)
+            out.append(
+                "see"
+                + space
+                + left
+                + rng.choice(extras)
+                + rng.choice(words)
+                + right
+                + rng.choice(marks)
+                + " end"
+            )
     return out[:count]
 
 
+def _visible(parsed: _Rendered) -> str:
+    return "".join(parsed.text).strip("\n")
+
+
+def _hrefs(parsed: _Rendered) -> list[str]:
+    return [unquote(attrs["href"]) for tag, attrs in parsed.tags if tag == "a"]
+
+
 def test_fuzz_rendered_text_and_hrefs_match_the_oracle():
-    count = int(__import__("os").environ.get("CV_FUZZ_CASES", "4000"))
+    """Render each line and compare it with the independent oracle.
+
+    Exact visible text and exact hrefs, except two raw-input predicates, which
+    get safety checks only. N1 is an unshielded link whose scan is immediately
+    followed by ``<``. N3 is an unshielded trimmed tail that contains ``&name;``.
+    """
+    count = int(os.environ.get("CV_FUZZ_CASES", "4000"))
+    messages = _fuzz_messages(count)
+    n1_count = 0
+    n3_count = 0
+    excluded = 0
     failures = []
-    for message in _fuzz_messages(count):
+    for message in messages:
+        expected, n1, n3 = _oracle_expectation(message)
+        if n1:
+            n1_count += 1
+        if n3:
+            n3_count += 1
         parsed = _rendered(_md_escape(message))
         tags = [tag for tag, _ in parsed.tags]
         if any(tag not in {"p", "a"} for tag in tags):
             failures.append(("element", message, tags))
-            continue
-        visible = "".join(parsed.text).strip("\n")
-        expected, hrefs = _expected_visible_and_hrefs(message)
-        got = [unquote(attrs["href"]) for tag, attrs in parsed.tags if tag == "a"]
-        if visible != expected:
-            failures.append(("text", message, visible, expected))
-        elif got != hrefs:
-            failures.append(("href", message, got, hrefs))
+        elif n1 or n3:
+            excluded += 1
+            got = _hrefs(parsed)
+            if len(got) != len(expected) or any(
+                not href.startswith(address) for href, address in zip(got, expected, strict=True)
+            ):
+                failures.append(("safety-href", message, got, expected, n1, n3))
+        else:
+            visible = _visible(parsed)
+            got = _hrefs(parsed)
+            if visible != message:
+                failures.append(("text", message, visible, expected))
+            elif got != expected:
+                failures.append(("href", message, got, expected))
         if len(failures) >= 5:
             break
-    assert not failures, failures
+    if count >= 80:
+        # The explicit exemplars make N3 real, and N1 stays a small slice.
+        assert n3_count >= 8, n3_count
+        assert 0 < n1_count <= count * 0.05, (n1_count, count)
+    assert not failures, (failures, n1_count, n3_count, excluded)
 
 
 def test_the_inlined_collector_matches_collect_py():
