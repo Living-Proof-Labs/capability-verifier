@@ -29,6 +29,7 @@ dev = [
     "zensical==0.0.73",
     "livingproof-capability-report @ https://github.com/Living-Proof-Labs/livingproof-capability-report/releases/download/v3.5.0/livingproof_capability_report-3.5.0-py3-none-any.whl",
     "livingproof-common @ https://github.com/Living-Proof-Labs/livingproof-common/releases/download/v1.0.0/livingproof_common-1.0.0-py3-none-any.whl",
+    "cmarkgfm==2025.10.22",
 ]
 
 [tool.uv]

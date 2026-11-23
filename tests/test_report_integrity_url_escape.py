@@ -1,19 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
-"""http(s) addresses in a refusal keep '_' '&' and '~' (#230, Vera's N1 on PR 223).
+"""http(s) addresses in a refusal keep '_' '&' and '~' only when GFM auto-links them (#230).
 
-L6 backslash-escapes those characters so an evaluator's message stays plain text. Doing that
-inside an address makes a GFM auto-link point somewhere else (the href gains ``%5C``) and the
-visible address shows the backslashes. The address is left as written in ``report.md``, shown
-verbatim in ``report.txt``, and HTML-escaped once in ``report.html`` so ``&`` is ``&amp;``.
-Link text and every other run of text stay escaped.
+Vera's review of PR 233: an ``https://`` run that GitHub will not auto-link must stay escaped
+(emphasis, strike-through, entities), and ``<`` must be written ``&lt;`` so a tag stuck to an
+address cannot become raw HTML in ``report.md``. ``report.txt`` is verbatim. ``report.html``
+HTML-escapes the original line once.
 """
 
 from __future__ import annotations
 
 import html
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
+from cmarkgfm.cmark import Options, markdown_to_html_with_extensions
 
 from capability_verifier.collect import place_integrity_lines
 
@@ -31,6 +32,7 @@ URLS = [
 ]
 
 PAGE = "<main class='wrap'><p class='stored-status'>Stored overall status: PASS</p></main>\n"
+ROOT = Path(__file__).parents[1]
 
 
 def _formats(tmp_path, line, *, verdict=True):
@@ -66,21 +68,63 @@ def _html(page):
     return inner
 
 
+def _render(markdown: str) -> str:
+    # Unsafe, and without the tag filter, so a leaked <script> or <img> is visible.
+    return markdown_to_html_with_extensions(
+        markdown,
+        options=Options.CMARK_OPT_UNSAFE,
+        extensions=["autolink", "strikethrough"],
+    )
+
+
+class _Rendered(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.tags: list[tuple[str, dict[str, str]]] = []
+        self.text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.tags.append((tag, {key: value or "" for key, value in attrs}))
+
+    def handle_data(self, data: str) -> None:
+        self.text.append(data)
+
+
+def _rendered(markdown: str) -> _Rendered:
+    parsed = _Rendered()
+    parsed.feed(_render(markdown))
+    return parsed
+
+
+def _assert_no_injected_html(parsed: _Rendered) -> None:
+    for tag, attrs in parsed.tags:
+        assert tag in {"p", "a"}, tag
+        if tag == "a":
+            href = attrs["href"]
+            assert href.lower().startswith(("http://", "https://", "ftp://"))
+            assert "javascript:" not in href.lower()
+
+
 @pytest.mark.parametrize("url", URLS)
 @pytest.mark.parametrize("verdict", [True, False])
 def test_an_http_address_keeps_underscore_ampersand_and_tilde(url, verdict, tmp_path):
     raw = f"Run Integrity: REFUSED: see {url}"
     md, txt, page = _formats(tmp_path, raw, verdict=verdict)
+    line = _md_txt(md, verdict=verdict, markdown=True)
     # The markdown token is what an autolinker copies into both the href and the visible text.
-    assert _md_txt(md, verdict=verdict, markdown=True) == raw
+    assert line == raw
     assert _md_txt(txt, verdict=verdict, markdown=False) == raw
     shown = _html(page)
     assert shown == html.escape(raw, quote=False)
     assert shown.count("&amp;") == url.count("&")
     assert "&amp;amp;" not in shown
     assert "\\" not in shown
-    for char in ("_", "&", "~"):
-        assert "\\" + char not in _md_txt(md, verdict=verdict, markdown=True)
+    rendered = _rendered(line)
+    _assert_no_injected_html(rendered)
+    hrefs = [attrs["href"] for tag, attrs in rendered.tags if tag == "a"]
+    assert hrefs == [url]
+    assert url in "".join(rendered.text)
+    assert "&amp;amp;" not in _render(line)
 
 
 def test_the_href_and_the_auto_linked_text_both_keep_the_address(tmp_path):
@@ -92,49 +136,181 @@ def test_the_href_and_the_auto_linked_text_both_keep_the_address(tmp_path):
     md, txt, page = _formats(tmp_path, raw)
     assert _md_txt(txt, verdict=True, markdown=False) == raw
     md_line = _md_txt(md, verdict=True, markdown=True)
-    # Bare address (auto-linked text) and the address in parentheses (the link target).
     assert md_line.count(url) == 2
     assert f"]({url})" in md_line
     assert "\\[click\\]" in md_line and "[click](" not in md_line
     assert "\\_it\\_" in md_line
     assert "\\~\\~s\\~\\~" in md_line
     assert "\\&lt;b\\&gt;" in md_line
-    assert "\\<script\\>alert(1)\\</script\\>" in md_line
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in md_line
     assert "<script>" not in md_line
     shown = _html(page)
     assert shown == html.escape(raw, quote=False)
     assert shown.count(html.escape(url, quote=False)) == 2
     assert "&amp;amp;" not in shown and "\\" not in shown
     assert "<script>" not in page and "&lt;script&gt;" in shown
+    rendered = _rendered(md_line)
+    _assert_no_injected_html(rendered)
+    assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == [url, url]
+    visible = "".join(rendered.text)
+    assert "_it_" in visible and "~~s~~" in visible and "&lt;b&gt;" in visible
+    assert all(tag != "script" for tag, _ in rendered.tags)
 
 
-def test_markup_stuck_to_an_address_stays_escaped_and_the_address_does_not(tmp_path):
-    url = URLS[0]
-    raw = f"Run Integrity: REFUSED: see {url}<script>alert(1)</script> `code` | cell"
-    md, _, page = _formats(tmp_path, raw)
-    assert _md_txt(md, verdict=True, markdown=True) == (
-        f"Run Integrity: REFUSED: see {url}\\<script\\>alert(1)\\</script\\> \\`code\\` \\| cell"
-    )
+@pytest.mark.parametrize(
+    "message",
+    [
+        "https://*bold*",
+        "https://_it_",
+        "https://~~x~~",
+        "https://&lt;b&gt;",
+        "https://&#x3C;script&#x3E;",
+    ],
+)
+def test_an_https_run_that_gfm_will_not_auto_link_stays_plain(message, tmp_path):
+    raw = f"Run Integrity: REFUSED: {message}"
+    md, txt, page = _formats(tmp_path, raw)
+    assert _md_txt(txt, verdict=True, markdown=False) == raw
+    line = _md_txt(md, verdict=True, markdown=True)
+    assert line != raw
+    rendered = _rendered(line)
+    assert [tag for tag, _ in rendered.tags] == ["p"]
+    assert "".join(rendered.text).strip() == raw
     assert _html(page) == html.escape(raw, quote=False)
-    assert "<script>" not in page
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "https://e.com/<a href=https://evil.example/>Run Integrity: PASS</a>",
+        "https://e.com/<h1 id=x>FAKE VERDICT</h1 >",
+        "see https://example.com/a<img src=https://evil.example/p.png>",
+        'https://example.com/"><img src=x onerror=alert(1)>',
+        "<script>alert(1)</script>",
+        "<img src=x onerror=alert(1)>",
+        "<b>bold</b>",
+        "<https://example.com/a_b?c=1&d=~x>",
+    ],
+)
+def test_a_tag_in_a_refusal_does_not_render_as_an_html_element(message, tmp_path):
+    raw = f"Run Integrity: REFUSED: {message}"
+    md, txt, page = _formats(tmp_path, raw)
+    assert _md_txt(txt, verdict=True, markdown=False) == raw
+    line = _md_txt(md, verdict=True, markdown=True)
+    assert "<" not in line
+    rendered = _rendered(line)
+    _assert_no_injected_html(rendered)
+    assert _html(page) == html.escape(raw, quote=False)
+    assert "&amp;amp;" not in _html(page)
+
+
+def test_an_angle_autolink_keeps_the_address_and_is_not_a_tag(tmp_path):
+    url = "https://example.com/a_b?c=1&d=~x#frag_ment"
+    raw = f"Run Integrity: REFUSED: <{url}>"
+    md, _, page = _formats(tmp_path, raw)
+    line = _md_txt(md, verdict=True, markdown=True)
+    assert line == f"Run Integrity: REFUSED: &lt;{url}&gt;"
+    rendered = _rendered(line)
+    _assert_no_injected_html(rendered)
+    assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == [url]
+    assert _html(page) == html.escape(raw, quote=False)
+
+
+@pytest.mark.parametrize(
+    ("message", "href"),
+    [
+        ("HTTPS://example.com/a_b?c=1&d=~x#frag", "HTTPS://example.com/a_b?c=1&d=~x#frag"),
+        ("Https://example.com/a_b?c=1&d=~x#frag", "Https://example.com/a_b?c=1&d=~x#frag"),
+        ("www.example.com/a_b?c=1&d=~x#frag", "http://www.example.com/a_b?c=1&d=~x#frag"),
+        ("ftp://files.example/a_b?c=1&d=~x#frag", "ftp://files.example/a_b?c=1&d=~x#frag"),
+    ],
+)
+def test_uppercase_schemes_www_and_ftp_autolink_with_the_address_intact(message, href, tmp_path):
+    md, txt, _ = _formats(tmp_path, f"Run Integrity: REFUSED: see {message}")
+    assert message in _md_txt(md, verdict=True, markdown=True)
+    assert message in _md_txt(txt, verdict=True, markdown=False)
+    rendered = _rendered(_md_txt(md, verdict=True, markdown=True))
+    _assert_no_injected_html(rendered)
+    assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == [href]
 
 
 def test_a_non_http_address_is_still_escaped_in_markdown(tmp_path):
-    raw = "Run Integrity: REFUSED: file:///tmp/a_b and ftp://files.example/a_b?c=1&d=~x"
+    raw = "Run Integrity: REFUSED: file:///tmp/a_b"
     md, txt, page = _formats(tmp_path, raw)
     assert _md_txt(txt, verdict=True, markdown=False) == raw
-    assert _md_txt(md, verdict=True, markdown=True) == (
-        "Run Integrity: REFUSED: file:///tmp/a\\_b and ftp://files.example/a\\_b?c=1\\&d=\\~x"
-    )
+    assert _md_txt(md, verdict=True, markdown=True) == "Run Integrity: REFUSED: file:///tmp/a\\_b"
     assert _html(page) == html.escape(raw, quote=False)
     assert "\\" not in _html(page)
+    assert [tag for tag, _ in _rendered(_md_txt(md, verdict=True, markdown=True)).tags] == ["p"]
 
 
-def test_an_address_that_will_not_auto_link_is_still_escaped(tmp_path):
-    raw = "Run Integrity: REFUSED: note:https://example.com/a_b_c?x=1&y=~z#frag_ment"
-    md, txt, page = _formats(tmp_path, raw)
-    assert _md_txt(txt, verdict=True, markdown=False) == raw
-    assert _md_txt(md, verdict=True, markdown=True) == (
-        "Run Integrity: REFUSED: note:https://example.com/a\\_b\\_c?x=1\\&y=\\~z#frag\\_ment"
-    )
-    assert _html(page) == html.escape(raw, quote=False)
+def test_a_www_address_after_an_asterisk_still_autolinks(tmp_path):
+    md, _, _ = _formats(tmp_path, "Run Integrity: REFUSED: *www.example.com/a_b")
+    line = _md_txt(md, verdict=True, markdown=True)
+    rendered = _rendered(line)
+    assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == [
+        "http://www.example.com/a_b"
+    ]
+    assert "\\_" not in line.split("www", 1)[1]
+
+
+def test_a_www_address_after_a_tab_still_autolinks(tmp_path):
+    md, _, _ = _formats(tmp_path, "Run Integrity: REFUSED: see\twww.example.com/a_b")
+    line = _md_txt(md, verdict=True, markdown=True)
+    rendered = _rendered(line)
+    assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == [
+        "http://www.example.com/a_b"
+    ]
+
+
+def test_backslash_backtick_brackets_and_pipe_stay_inside_the_link(tmp_path):
+    address = "https://example.com/a\\b`c[d]|e"
+    md, _, _ = _formats(tmp_path, f"Run Integrity: REFUSED: {address}")
+    line = _md_txt(md, verdict=True, markdown=True)
+    assert address in line
+    rendered = _rendered(line)
+    _assert_no_injected_html(rendered)
+    assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == [
+        "https://example.com/a%5Cb%60c%5Bd%5D%7Ce"
+    ]
+
+
+def test_a_greater_than_inside_an_address_stays_in_the_link(tmp_path):
+    md, _, _ = _formats(tmp_path, "Run Integrity: REFUSED: https://example.com/a>b")
+    line = _md_txt(md, verdict=True, markdown=True)
+    assert "https://example.com/a>b" in line
+    rendered = _rendered(line)
+    assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == [
+        "https://example.com/a%3Eb"
+    ]
+
+
+def test_html_escapes_ampersand_once_and_does_not_escape_quotes(tmp_path):
+    raw = 'Run Integrity: REFUSED: say "hi" & co <b>'
+    _, _, page = _formats(tmp_path, raw)
+    shown = _html(page)
+    assert shown == 'Run Integrity: REFUSED: say "hi" &amp; co &lt;b&gt;'
+    assert "&quot;" not in shown
+    assert "&amp;amp;" not in shown
+
+
+def test_brackets_after_a_non_link_do_not_become_a_labelled_link(tmp_path):
+    raw = "Run Integrity: REFUSED: https://*bold* [click](https://evil.example)"
+    md, _, _ = _formats(tmp_path, raw)
+    line = _md_txt(md, verdict=True, markdown=True)
+    assert "\\[click\\]" in line
+    rendered = _rendered(line)
+    _assert_no_injected_html(rendered)
+    texts = "".join(rendered.text)
+    assert "[click]" in texts
+    assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == ["https://evil.example"]
+
+
+def test_the_inlined_collector_matches_collect_py():
+    workflow = (ROOT / ".github/workflows/scenario.yml").read_text(encoding="utf-8")
+    start = workflow.index("<<'COLLECT'\n") + len("<<'COLLECT'\n")
+    end = workflow.index("\n          COLLECT\n", start)
+    indent = "          "
+    extracted = "\n".join(line.removeprefix(indent) for line in workflow[start:end].splitlines())
+    source = (ROOT / "src/capability_verifier/collect.py").read_text(encoding="utf-8")
+    assert extracted + "\n" == source

@@ -36,6 +36,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from pathlib import Path, PurePosixPath
 
 RESULT_FORMAT = re.compile(r"^livingproof-evaluator-result/1\.\d+\.\d+$")
@@ -488,38 +489,153 @@ def _write_integrity_lines(report_dir: Path, bundle: dict) -> None:
 
 _VERDICT = re.compile(r"[:;] overall [A-Z][A-Za-z_ ]*\.(?:\s.*)?$")
 _HTML_VERDICT = re.compile(r"<p class=(['\"])stored-status\1>[^<]*</p>")
-# http(s) run that stops before markup. '<' ends a GFM autolink and starts HTML; backslash,
-# backtick, brackets and pipe are markup too. They stay outside the address and are still
-# escaped. '_' '&' and '~' are part of the address.
-_URL = re.compile(r"https?://[^\s\\`\[\]<|]+")
-# GFM recognises an extended autolink at the start of a line, after whitespace, or after one of
-# these.
+# cmark-gfm extended autolinks. www. only counts at the start of a line, after whitespace, or
+# after one of these. http/https/ftp are recognised wherever the scheme is exactly those letters.
 _AUTOLINK_BEFORE = frozenset("*_~(")
+_SCHEMES = ("http", "https", "ftp")
+
+
+def _is_host_char(ch: str) -> bool:
+    """True when cmark-gfm would treat the character as part of a host label."""
+    if ch.isspace():
+        return False
+    if ord(ch) < 128:
+        return ch.isalnum()
+    return not unicodedata.category(ch).startswith("P")
+
+
+def _check_domain(text: str, *, allow_short: bool) -> int:
+    """Length of the host cmark-gfm's check_domain accepts, or 0 to reject the link.
+
+    The first character is skipped, matching cmark: the caller already required it to be a
+    host character for http(s)/ftp. Underscores in either of the last two labels reject the
+    link, unless the name has more than ten dots (cmark's own bound).
+    """
+    size = len(text)
+    i = 1
+    uscore1 = 0
+    uscore2 = 0
+    dots = 0
+    while i < size - 1:
+        ch = text[i]
+        if ch == "\\" and i < size - 2:
+            i += 2
+            continue
+        if ch == "_":
+            uscore2 += 1
+        elif ch == ".":
+            uscore1 = uscore2
+            uscore2 = 0
+            dots += 1
+        elif ch != "-" and not _is_host_char(ch):
+            break
+        i += 1
+    if (uscore1 or uscore2) and dots <= 10:
+        return 0
+    if allow_short:
+        return i
+    return i if dots else 0
+
+
+def _autolink_end(text: str, start: int) -> int:
+    end = start
+    size = len(text)
+    while end < size and not text[end].isspace() and text[end] != "<":
+        end += 1
+    return end
+
+
+def _url_span(line: str, index: int) -> tuple[int, int] | None:
+    if not line.startswith("://", index):
+        return None
+    scheme = index
+    while scheme > 0 and line[scheme - 1].isascii() and line[scheme - 1].isalpha():
+        scheme -= 1
+    name = line[scheme:index].lower()
+    if name not in _SCHEMES:
+        return None
+    host = index + 3
+    if host >= len(line) or not _is_host_char(line[host]):
+        return None
+    if _check_domain(line[host:], allow_short=True) == 0:
+        return None
+    end = _autolink_end(line, host)
+    # A CommonMark angle autolink is '<scheme:...>'. Its closing '>' is a delimiter, not part of
+    # the address. Leaving it in the span makes the extended autolink swallow it once '<' is '&lt;'.
+    if scheme and line[scheme - 1] == "<":
+        close = line.find(">", host, end)
+        if close != -1:
+            end = close
+    if end <= scheme:
+        return None
+    return scheme, end
+
+
+def _www_span(line: str, index: int) -> tuple[int, int] | None:
+    if not line.startswith("www.", index):
+        return None
+    if index and line[index - 1] not in _AUTOLINK_BEFORE and not line[index - 1].isspace():
+        return None
+    if _check_domain(line[index:], allow_short=False) == 0:
+        return None
+    end = _autolink_end(line, index)
+    if end <= index:
+        return None
+    return index, end
+
+
+def _autolink_spans(line: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    index = 0
+    while index < len(line):
+        found = _www_span(line, index) or _url_span(line, index)
+        if found is None:
+            index += 1
+            continue
+        spans.append(found)
+        index = found[1]
+    return spans
 
 
 def _md_escape(line: str) -> str:
     """Backslash-escape what Markdown would act on, so an evaluator's message stays plain text.
 
-    An http or https address that will auto-link is copied through unchanged. Underscore,
-    ampersand and tilde belong to that address: a backslash in front of them makes the link
-    point somewhere else, and the address no longer shows in full. A labelled link's text, and
-    every other run of text, is still escaped.
+    Only the span cmark-gfm will actually auto-link is copied through. An ``https://`` run
+    whose host is not a real link (``https://*bold*``, ``https://_it_``, ``https://~~x~~``,
+    ``https://&lt;b&gt;``) is escaped with everything else, so emphasis, strike-through and
+    entities stay plain. ``<`` is written ``&lt;`` and ``>`` is written ``&gt;``: a backslash
+    there is swallowed by the autolink and the following tag becomes raw HTML.
     """
     parts: list[str] = []
     cursor = 0
-    for found in _URL.finditer(line):
-        start = found.start()
-        if start and not (line[start - 1].isspace() or line[start - 1] in _AUTOLINK_BEFORE):
-            continue
+    for start, end in _autolink_spans(line):
         parts.append(_md_escape_text(line[cursor:start]))
-        parts.append(found.group(0))
-        cursor = found.end()
+        parts.append(line[start:end])
+        cursor = end
     parts.append(_md_escape_text(line[cursor:]))
     return "".join(parts)
 
 
 def _md_escape_text(text: str) -> str:
-    return re.sub(r"([\\`*_~&\[\]<>|])", r"\\\1", text)
+    pieces: list[str] = []
+    pending: list[str] = []
+
+    def flush() -> None:
+        if pending:
+            pieces.append(re.sub(r"([\\`*_~&\[\]|])", r"\\\1", "".join(pending)))
+            pending.clear()
+
+    for ch in text:
+        if ch == "<":
+            flush()
+            pieces.append("&lt;")
+        elif ch == ">":
+            flush()
+            pieces.append("&gt;")
+        else:
+            pending.append(ch)
+    flush()
+    return "".join(pieces)
 
 
 def place_integrity_lines(report_dir: Path) -> bool:

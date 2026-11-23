@@ -96,7 +96,7 @@ def test_markdown_in_a_refusal_message_is_escaped_in_md_and_left_alone_in_txt(tm
     md, txt = _placed(tmp_path, f"Run Integrity: REFUSED: {hostile}")
     assert md == (
         "Run Integrity: REFUSED: see \\[x\\](http://evil.example) \\`code\\` \\| "
-        "\\<b\\>bold\\</b\\> \\*it\\*"
+        "&lt;b&gt;bold&lt;/b&gt; \\*it\\*"
     )
     assert txt == f"Run Integrity: REFUSED: {hostile}"
 
