@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
     "mujoco==3.17.0",
-    "numpy==2.5.4",
+    "numpy==2.5.5",
     "pyyaml==6.0.3",
     "imageio[ffmpeg]==2.38.2",
     "livingproof-sim-mujoco[torch]",
