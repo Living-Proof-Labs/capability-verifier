@@ -67,7 +67,7 @@ def test_the_end_of_file_fallback_escapes_the_message_in_md_but_not_in_txt(tmp_p
     md = (tmp_path / "report.md").read_text("utf-8").splitlines()[-1]
     txt = (tmp_path / "report.txt").read_text("utf-8").splitlines()[-1]
     assert md == (
-        "Run Integrity: REFUSED: \\[x\\](http://evil.example) \\`c\\` \\| \\<b\\>b\\</b\\> "
+        "Run Integrity: REFUSED: \\[x\\](http://evil.example) \\`c\\` \\| &lt;b&gt;b&lt;/b&gt; "
         "\\*i\\* C:\\\\dir"
     )
     assert txt == hostile

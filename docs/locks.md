@@ -716,9 +716,23 @@ cause (a media refusal, a malformed request, or a tool's own exit 2), and the re
 message itself, so they read differently. The message is capped at 500 characters, ends in a full
 stop before "The run is INCONCLUSIVE", and is backslash-escaped in `report.md` and HTML-escaped in
 `report.html`; `report.txt` shows it as it is. Markdown escaping covers backslash, backtick,
-asterisk, underscore, tilde, ampersand, brackets, angle brackets, and pipe, so emphasis, a
-labelled link, and an HTML entity in a refusal stay plain text. A bare URL is still auto-linked,
-and the address shows in full. Only an artifact named
+asterisk, underscore, tilde, ampersand, brackets, and pipe, so emphasis, a labelled link, and an
+HTML entity in a refusal stay plain text. Angle brackets are written `&lt;` and `&gt;`, not with a
+backslash, so a tag cannot open even when it is placed straight after an address. Only the span
+GitHub's Markdown will actually auto-link is left as written: `http`, `https`, `ftp`, or `www`,
+in any letter case for the scheme. `_`, `&` and `~` stay in that link and in the visible address,
+including a query string and a fragment. Trailing punctuation cmark removes from that link
+(`?!.,:*_~'"`, an unbalanced `)`, a trailing `&name;`) is not left raw when it contains `*`, `_`
+or `~`. The address is then written as an angle autolink, `<https://e.com/a>`, and the trimmed
+mark is backslash-escaped (`\~`, `\*`, `\_`), so the href is the address, the character is the
+ASCII mark, and it cannot strike a word such as PASSED. A `www.` address has no scheme, so it
+is not wrapped; the dot is escaped and any `://` in that escaped text is written `:\/\/`, so
+cmark cannot link it again. Those brackets are the only raw `<` and `>` written for a refusal,
+and only around an address with no whitespace or control character. Inside them, `&` is `&amp;`.
+Whitespace that ends an address is the ASCII set cmark uses (space, tab, line feed, carriage
+return), not a non-breaking space. An `https://` run that is not a real link, such as
+`https://*bold*`, is still escaped. `report.html` HTML-escapes the original line once, so `&` is
+`&amp;` and is not escaped again. Only an artifact named
 `[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>` (or its inner
 `livingproof-run-integrity` directory) counts, not a lookalike name. A
 `no-result.txt` note is the reason for `NOT RUN`, as before. The reporter has no integrity input,

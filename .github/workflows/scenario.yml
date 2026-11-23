@@ -1574,11 +1574,467 @@ jobs:
 
           _VERDICT = re.compile(r"[:;] overall [A-Z][A-Za-z_ ]*\.(?:\s.*)?$")
           _HTML_VERDICT = re.compile(r"<p class=(['\"])stored-status\1>[^<]*</p>")
+          # cmark-gfm extended autolinks. www. only counts at the start of a line, after
+          # cmark_isspace, or after one of these. http/https/ftp are recognised wherever
+          # the scheme is exactly those letters.
+          _AUTOLINK_BEFORE = frozenset("*_~(")
+          _SCHEMES = ("http", "https", "ftp")
+          # cmark_isspace, src/cmark_ctype.c: class 1 is only 0x09 TAB, 0x0A LF, 0x0D CR
+          # and 0x20 space. 0x0B VT and 0x0C FF are class 0. autolink.c uses this for the
+          # byte before "www." and for the end of an extended autolink.
+          _CMARK_SPACE = frozenset("\t\n\r ")
+
+
+          # cmark_utf8proc_is_punctuation, src/utf8.c of cmark-gfm 0.29.0.gfm.13 (the
+          # library vendored by cmarkgfm 2025.10.22). ASCII uses cmark_ispunct. The rest
+          # is that function's explicit list, which is not Unicode general category P.
+          _CMARK_PUNCT_RANGES = (
+              (161, 161),
+              (167, 167),
+              (171, 171),
+              (182, 183),
+              (187, 187),
+              (191, 191),
+              (894, 894),
+              (903, 903),
+              (1370, 1375),
+              (1417, 1418),
+              (1470, 1470),
+              (1472, 1472),
+              (1475, 1475),
+              (1478, 1478),
+              (1523, 1524),
+              (1545, 1546),
+              (1548, 1549),
+              (1563, 1563),
+              (1566, 1567),
+              (1642, 1645),
+              (1748, 1748),
+              (1792, 1805),
+              (2039, 2041),
+              (2096, 2110),
+              (2142, 2142),
+              (2404, 2405),
+              (2416, 2416),
+              (2800, 2800),
+              (3572, 3572),
+              (3663, 3663),
+              (3674, 3675),
+              (3844, 3858),
+              (3860, 3860),
+              (3898, 3901),
+              (3973, 3973),
+              (4048, 4052),
+              (4057, 4058),
+              (4170, 4175),
+              (4347, 4347),
+              (4960, 4968),
+              (5120, 5120),
+              (5741, 5742),
+              (5787, 5788),
+              (5867, 5869),
+              (5941, 5942),
+              (6100, 6102),
+              (6104, 6106),
+              (6144, 6154),
+              (6468, 6469),
+              (6686, 6687),
+              (6816, 6822),
+              (6824, 6829),
+              (7002, 7008),
+              (7164, 7167),
+              (7227, 7231),
+              (7294, 7295),
+              (7360, 7367),
+              (7379, 7379),
+              (8208, 8231),
+              (8240, 8259),
+              (8261, 8273),
+              (8275, 8286),
+              (8317, 8318),
+              (8333, 8334),
+              (8968, 8971),
+              (9001, 9002),
+              (10088, 10101),
+              (10181, 10182),
+              (10214, 10223),
+              (10627, 10648),
+              (10712, 10715),
+              (10748, 10749),
+              (11513, 11516),
+              (11518, 11519),
+              (11632, 11632),
+              (11776, 11822),
+              (11824, 11842),
+              (12289, 12291),
+              (12296, 12305),
+              (12308, 12319),
+              (12336, 12336),
+              (12349, 12349),
+              (12448, 12448),
+              (12539, 12539),
+              (42238, 42239),
+              (42509, 42511),
+              (42611, 42611),
+              (42622, 42622),
+              (42738, 42743),
+              (43124, 43127),
+              (43214, 43215),
+              (43256, 43258),
+              (43310, 43311),
+              (43359, 43359),
+              (43457, 43469),
+              (43486, 43487),
+              (43612, 43615),
+              (43742, 43743),
+              (43760, 43761),
+              (44011, 44011),
+              (64830, 64831),
+              (65040, 65049),
+              (65072, 65106),
+              (65108, 65121),
+              (65123, 65123),
+              (65128, 65128),
+              (65130, 65131),
+              (65281, 65283),
+              (65285, 65290),
+              (65292, 65295),
+              (65306, 65307),
+              (65311, 65312),
+              (65339, 65341),
+              (65343, 65343),
+              (65371, 65371),
+              (65373, 65373),
+              (65375, 65381),
+              (65792, 65794),
+              (66463, 66463),
+              (66512, 66512),
+              (66927, 66927),
+              (67671, 67671),
+              (67871, 67871),
+              (67903, 67903),
+              (68176, 68184),
+              (68223, 68223),
+              (68336, 68342),
+              (68409, 68415),
+              (68505, 68508),
+              (69703, 69709),
+              (69819, 69820),
+              (69822, 69825),
+              (69952, 69955),
+              (70004, 70005),
+              (70085, 70088),
+              (70093, 70093),
+              (70200, 70205),
+              (70854, 70854),
+              (71105, 71113),
+              (71233, 71235),
+              (74864, 74868),
+              (92782, 92783),
+              (92917, 92917),
+              (92983, 92987),
+              (92996, 92996),
+              (113823, 113823),
+          )
+          _CMARK_PUNCT = frozenset(
+              code for start, stop in _CMARK_PUNCT_RANGES for code in range(start, stop + 1)
+          )
+
+
+          def _cmark_utf8_punct(code: int) -> bool:
+              """True when cmark_utf8proc_is_punctuation accepts this code point."""
+              if code < 128:
+                  # cmark_ispunct, src/cmark_ctype.c class 2.
+                  return (
+                      0x21 <= code <= 0x2F
+                      or 0x3A <= code <= 0x40
+                      or 0x5B <= code <= 0x60
+                      or 0x7B <= code <= 0x7E
+                  )
+              return code in _CMARK_PUNCT
+
+
+          def _cmark_utf8_space(ch: str) -> bool:
+              """cmark_utf8proc_is_space, src/utf8.c: Zs plus TAB, LF, FF and CR.
+
+              NBSP (160), U+2000-U+200A (including em space U+2003) and U+3000 are spaces.
+              U+2028 and U+2029 are not. is_valid_hostchar rejects this set.
+              """
+              code = ord(ch)
+              return code in (9, 10, 12, 13, 32, 160, 5760, 8239, 8287, 12288) or 8192 <= code <= 8202
+
+
+          def _is_host_char(ch: str) -> bool:
+              """True when cmark-gfm's is_valid_hostchar would keep this in a host label.
+
+              Space is cmark_utf8proc_is_space. Non-ASCII punctuation is
+              cmark_utf8proc_is_punctuation's list, not Unicode category P.
+              """
+              if _cmark_utf8_space(ch):
+                  return False
+              code = ord(ch)
+              if code < 128:
+                  return ch.isalnum()
+              return not _cmark_utf8_punct(code)
+
+
+          def _check_domain(text: str, *, allow_short: bool) -> int:
+              """0 when cmark-gfm's check_domain rejects the host, and non-zero when it accepts.
+
+              cmark walks UTF-8 bytes and returns a byte length. ``_url_span`` and ``_www_span`` use
+              only the zero test, then scan the rest of the address by code point, so this returns a
+              code-point index solely as that accept/reject flag. A non-ASCII first character makes
+              byte 1 a continuation byte and the C loop stops at once (length 1, or 0 for ``www``).
+              A later non-ASCII character is stopped the same way: its lead byte may be a host
+              character, and the continuation byte never is. A backslash is skipped and the next
+              character is examined, so ``x\\_y`` counts the underscore.
+              """
+              if not text:
+                  return 0
+              size = len(text)
+              i = 1
+              uscore1 = 0
+              uscore2 = 0
+              dots = 0
+              if ord(text[0]) > 127:
+                  # cmark scans bytes: index 1 is a UTF-8 continuation byte, so the loop stops at once.
+                  return 1 if allow_short else 0
+              while i < size - 1:
+                  ch = text[i]
+                  if ch == "\\" and i < size - 2:
+                      # cmark: skip the backslash, then examine the escaped character.
+                      i += 1
+                      ch = text[i]
+                  if ord(ch) > 127:
+                      # The lead byte may be a host character, but the continuation byte never is.
+                      break
+                  if ch == "_":
+                      uscore2 += 1
+                  elif ch == ".":
+                      uscore1 = uscore2
+                      uscore2 = 0
+                      dots += 1
+                  elif ch != "-" and not _is_host_char(ch):
+                      break
+                  i += 1
+              if (uscore1 or uscore2) and dots <= 10:
+                  return 0
+              if allow_short:
+                  return i
+              return i if dots else 0
+
+
+          def _autolink_end(text: str, start: int) -> int:
+              end = start
+              size = len(text)
+              while end < size and text[end] not in _CMARK_SPACE and text[end] != "<":
+                  end += 1
+              return end
+
+
+          def _autolink_delim(text: str) -> int:
+              """Exclusive end of the link cmark-gfm keeps. The rest is trailing punctuation.
+
+              Same rules as cmark's ``autolink_delim``: trim ``?!.,:*_~'"``, drop an unbalanced
+              ``)``, and drop a trailing ``&name;``. Those characters are not part of the link, so
+              leaving ``*``, ``_`` or ``~`` raw lets them emphasise or strike the words that follow.
+              """
+              link_end = len(text)
+              opening = 0
+              closing = 0
+              for index, ch in enumerate(text):
+                  if ch == "<":
+                      link_end = index
+                      break
+                  if ch == "(":
+                      opening += 1
+                  elif ch == ")":
+                      closing += 1
+              while link_end > 0:
+                  ch = text[link_end - 1]
+                  if ch == ")":
+                      if closing <= opening:
+                          return link_end
+                      closing -= 1
+                      link_end -= 1
+                  elif ch in "?!.,:*_~'\"":
+                      link_end -= 1
+                  elif ch == ";":
+                      new_end = link_end - 2
+                      while new_end > 0 and text[new_end].isascii() and text[new_end].isalpha():
+                          new_end -= 1
+                      if new_end < link_end - 2 and text[new_end] == "&":
+                          link_end = new_end
+                      else:
+                          link_end -= 1
+                  else:
+                      return link_end
+              return link_end
+
+
+          _TAIL_MARKS = frozenset("*_~")
+
+
+          def _tail_can_mark(text: str) -> bool:
+              return any(ch in _TAIL_MARKS for ch in text)
+
+
+          def _span_can_be_angle_autolink(span: str) -> bool:
+              """A raw ``<...>`` is safe only for a span that cannot itself open or close a tag."""
+              if not span:
+                  return False
+              for ch in span:
+                  if ch in "<>" or ch.isspace() or ord(ch) < 32 or ord(ch) == 127:
+                      return False
+              return True
+
+
+          def _scheme_address(span: str) -> bool:
+              return span.lower().startswith(("http://", "https://", "ftp://"))
+
+
+          def _escape_trimmed_tail(text: str, *, keep_ampersand: bool) -> str:
+              """Escape a trimmed tail. ``*``, ``_`` and ``~`` become ``\\*``, ``\\_`` and ``\\~``.
+
+              A trailing ``&name;`` is left with a raw ``&`` when the tail is not shielded: ``\\&`` would
+              be swallowed into the href, and cmark then decodes the entity to text. After an angle
+              autolink the backslash is outside the link, so ``&`` is escaped normally.
+              """
+              escaped = _md_escape_text(text)
+              if keep_ampersand:
+                  return escaped.replace("\\&", "&")
+              return escaped
+
+
+          def _shield_address(kept: str, tail: str) -> str:
+              """Keep a trimmed ``*``, ``_`` or ``~`` from emphasising the words after the address.
+
+              A scheme address is wrapped in a CommonMark angle autolink, ``<https://e.com/a>``, and only
+              when the tail needs it. ``www.`` is not a scheme, so it cannot be an angle autolink: the dot
+              is escaped and the rest of the span is escaped, which leaves the characters visible and
+              unlinked. A span that contains whitespace, ``<``, ``>`` or a control character is not
+              wrapped; the scheme's slashes are escaped instead, so no raw bracket is written.
+              """
+              if kept.startswith("www."):
+                  return "www\\." + _md_escape_text(kept[4:] + tail)
+              if _scheme_address(kept) and _span_can_be_angle_autolink(kept):
+                  assert _span_can_be_angle_autolink(kept)
+                  # cmark decodes entities inside <...>, so '&' is written '&amp;' and the
+                  # href and the visible address stay the original characters.
+                  return (
+                      "<"
+                      + kept.replace("&", "&amp;")
+                      + ">"
+                      + _escape_trimmed_tail(tail, keep_ampersand=False)
+                  )
+              if _scheme_address(kept):
+                  scheme = kept.lower().find("://")
+                  return kept[:scheme] + ":\\/\\/" + _md_escape_text(kept[scheme + 3 :] + tail)
+              return _md_escape_text(kept + tail)
+
+
+          def _url_span(line: str, index: int) -> tuple[int, int] | None:
+              if not line.startswith("://", index):
+                  return None
+              scheme = index
+              while scheme > 0 and line[scheme - 1].isascii() and line[scheme - 1].isalpha():
+                  scheme -= 1
+              name = line[scheme:index].lower()
+              if name not in _SCHEMES:
+                  return None
+              host = index + 3
+              if host >= len(line) or not _is_host_char(line[host]):
+                  return None
+              if _check_domain(line[host:], allow_short=True) == 0:
+                  return None
+              end = _autolink_end(line, host)
+              # A CommonMark angle autolink is '<scheme:...>'. Its closing '>' is a delimiter, not part of
+              # the address. Leaving it in the span makes the extended autolink swallow it once '<' is '&lt;'.
+              if scheme and line[scheme - 1] == "<":
+                  close = line.find(">", host, end)
+                  if close != -1:
+                      end = close
+              if end <= scheme:
+                  return None
+              return scheme, end
+
+
+          def _www_span(line: str, index: int) -> tuple[int, int] | None:
+              if not line.startswith("www.", index):
+                  return None
+              if index and line[index - 1] not in _AUTOLINK_BEFORE and line[index - 1] not in _CMARK_SPACE:
+                  return None
+              if _check_domain(line[index:], allow_short=False) == 0:
+                  return None
+              end = _autolink_end(line, index)
+              if end <= index:
+                  return None
+              return index, end
+
+
+          def _autolink_spans(line: str) -> list[tuple[int, int]]:
+              spans: list[tuple[int, int]] = []
+              index = 0
+              while index < len(line):
+                  found = _www_span(line, index) or _url_span(line, index)
+                  if found is None:
+                      index += 1
+                      continue
+                  spans.append(found)
+                  index = found[1]
+              return spans
 
 
           def _md_escape(line: str) -> str:
-              """Backslash-escape what Markdown would act on, so an evaluator's message stays plain text."""
-              return re.sub(r"([\\`*_~&\[\]<>|])", r"\\\1", line)
+              """Backslash-escape what Markdown would act on, so an evaluator's message stays plain text.
+
+              Only the span cmark-gfm will actually auto-link is copied through, after the same
+              trailing-punctuation trim cmark applies. When that trimmed tail contains ``*``, ``_`` or
+              ``~``, a scheme address is written as an angle autolink (``<https://e.com/a>\\~``) so the
+              href stays the address and the mark is a backslash escape, not emphasis. The angle brackets
+              are the only raw ``<`` and ``>`` this function writes. An ``https://`` run whose host is
+              not a real link is escaped with everything else, and a ``<`` in the message is ``&lt;``.
+              """
+              parts: list[str] = []
+              cursor = 0
+              for start, end in _autolink_spans(line):
+                  kept_end = start + _autolink_delim(line[start:end])
+                  kept = line[start:kept_end]
+                  tail = line[kept_end:end]
+                  parts.append(_md_escape_text(line[cursor:start]))
+                  if _tail_can_mark(tail):
+                      parts.append(_shield_address(kept, tail))
+                  else:
+                      parts.append(kept)
+                      parts.append(_escape_trimmed_tail(tail, keep_ampersand=True))
+                  cursor = end
+              parts.append(_md_escape_text(line[cursor:]))
+              return "".join(parts)
+
+
+          def _md_escape_text(text: str) -> str:
+              pieces: list[str] = []
+              pending: list[str] = []
+
+              def flush() -> None:
+                  if pending:
+                      pieces.append(re.sub(r"([\\`*_~&\[\]|])", r"\\\1", "".join(pending)))
+                      pending.clear()
+
+              for ch in text:
+                  if ch == "<":
+                      flush()
+                      pieces.append("&lt;")
+                  elif ch == ">":
+                      flush()
+                      pieces.append("&gt;")
+                  else:
+                      pending.append(ch)
+              flush()
+              # A scheme or www. left in escaped text is still an autolink, and it swallows the
+              # backslash in front of a following mark (autolink.c url_match / www_match).
+              escaped = "".join(pieces)
+              return escaped.replace("://", ":\\/\\/").replace("www.", "www\\.")
 
 
           def place_integrity_lines(report_dir: Path) -> bool:
@@ -1687,6 +2143,7 @@ jobs:
 
           if __name__ == "__main__":
               sys.exit(main())
+
           COLLECT
           python3 /tmp/collect_evaluator_results.py verified/bundle/manifest.json evaluator-results reports
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
