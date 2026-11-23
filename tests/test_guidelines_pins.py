@@ -22,9 +22,16 @@ REPO = "Living-Proof-Labs/collaboration-guidelines"
 TAG = r"v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
 USES = re.compile(rf"^{REPO}/\.github/workflows/(?P<file>[\w.-]+\.ya?ml)@(?P<ref>.+)$")
 PRESET = re.compile(rf"^github>{REPO}:renovate-preset#(?P<ref>.+)$")
-# The workflow_call interface of semantic-release.yml, unchanged from v2.2.0 to v9.2.0.
-SHARED_RELEASE_INPUTS = {"dry-run", "draft-release"}
-SHARED_RELEASE_OUTPUTS = {"draft-created", "published", "version", "git-tag", "release-url"}
+# The stable writer interface of the pinned shared release.
+SHARED_RELEASE_INPUTS = {"dry-run", "draft-release", "expected-version", "expected-commit"}
+SHARED_RELEASE_OUTPUTS = {
+    "draft-created",
+    "published",
+    "version",
+    "git-tag",
+    "commit",
+    "release-url",
+}
 
 
 def workflow():

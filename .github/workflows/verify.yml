@@ -331,7 +331,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
-    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@v9.9.7
+    uses: Living-Proof-Labs/collaboration-guidelines/.github/workflows/semantic-release.yml@v9.9.9
     with:
       draft-release: true
   release-reports:
@@ -757,42 +757,36 @@ jobs:
         env:
           PREVIEW_URL: ${{ steps.preview.outputs.artifact-url }}
         run: echo "[Manual preview and individual test evidence]($PREVIEW_URL) — 14-day retention. Extract all files and serve docs/html over loopback HTTP; see docs/documentation.md." >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        with:
-          path: artifacts/docs/html
+  documentation-release:
+    needs: [release, release-reports]
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.release.result == 'success' && needs.release-reports.result == 'success' &&
+      needs.release.outputs.draft-created == 'true' && needs.release.outputs.commit == github.sha &&
+      needs.release.outputs.version != '' &&
+      needs.release.outputs.git-tag == format('v{0}', needs.release.outputs.version)
+    permissions:
+      contents: read
+    uses: ./.github/workflows/documentation-release.yml
+    with:
+      release_tag: ${{ needs.release.outputs.git-tag }}
+      version: ${{ needs.release.outputs.version }}
+      commit: ${{ needs.release.outputs.commit }}
   documentation-deploy:
-    needs: [documentation, verify, report, report-results]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    needs: [release, documentation-release]
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.documentation-release.outputs.artifact-id != '' &&
+      needs.documentation-release.outputs.digest != ''
     permissions:
       contents: read
       pages: write
       id-token: write
-    concurrency:
-      group: capability-verifier-pages
-      cancel-in-progress: false
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Check current main inside deployment lock
-        env:
-          EXPECTED_SHA: ${{ github.sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          python - <<'PYCODE'
-          import json, os, urllib.request
-          token = os.environ['GITHUB_TOKEN']
-          url = 'https://api.github.com/repos/Living-Proof-Labs/capability-verifier/git/ref/heads/main'
-          request = urllib.request.Request(
-              url,
-              headers={'Authorization': f'Bearer {token}'},
-          )
-          with urllib.request.urlopen(request, timeout=30) as response:
-              current = json.load(response)['object']['sha']
-          if current != os.environ['EXPECTED_SHA']:
-              raise SystemExit('Refusing stale documentation: main advanced')
-          PYCODE
-      - uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
-        id: deployment
+    uses: ./.github/workflows/documentation-deploy.yml
+    with:
+      release_tag: ${{ needs.release.outputs.git-tag }}
+      version: ${{ needs.release.outputs.version }}
+      commit: ${{ needs.release.outputs.commit }}
+      attempt: ${{ needs.documentation-release.outputs.attempt }}
+      artifact_id: ${{ needs.documentation-release.outputs.artifact-id }}
+      digest: ${{ needs.documentation-release.outputs.digest }}

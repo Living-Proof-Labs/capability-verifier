@@ -276,7 +276,11 @@ def test_themes_and_mobile_navigation(browser_page):
 
 
 def test_shared_discovery_and_preserved_bookmarks():
-    commit = json.loads((SITE / "build.json").read_text())["commit"]
+    info = json.loads((SITE / "build.json").read_text())
+    commit = info["commit"]
+    expected_tag = os.environ.get("DOCS_RELEASE_TAG") or None
+    assert info.get("release_tag") == expected_tag
+    label = f"Docs: {expected_tag}" if expected_tag else "Docs: development"
     for name in (
         "index.html",
         "tasks.html",
@@ -293,7 +297,7 @@ def test_shared_discovery_and_preserved_bookmarks():
         assert "https://docs.livingprooflabs.com/" in links
         assert f"https://github.com/Living-Proof-Labs/capability-verifier/tree/{commit}" in links
         assert "https://github.com/Living-Proof-Labs/capability-verifier/issues" in links
-        assert "Docs: development" in content
+        assert label in content
     bookmarks = {
         "index.html": [
             "documentation-preview",
@@ -306,7 +310,13 @@ def test_shared_discovery_and_preserved_bookmarks():
     }
     for name, anchors in bookmarks.items():
         assert set(anchors) <= Links((SITE / name).read_text()).ids
-    assert "development placeholder" in (SITE / "provenance.html").read_text()
+    provenance = (SITE / "provenance.html").read_text()
+    assert "development placeholder" in provenance
+    if expected_tag:
+        assert info["release_version"] == expected_tag[1:]
+        assert info["release_run_id"] == os.environ["DOCS_RELEASE_RUN_ID"]
+        assert info["release_run_attempt"] == os.environ["DOCS_RELEASE_RUN_ATTEMPT"]
+        assert f"/capability-verifier/releases/tag/{expected_tag}" in provenance
     assert "No line coverage is measured" in (SITE / "scenarios.html").read_text()
 
 
