@@ -545,6 +545,73 @@ def _autolink_end(text: str, start: int) -> int:
     return end
 
 
+def _autolink_delim(text: str) -> int:
+    """Exclusive end of the link cmark-gfm keeps. The rest is trailing punctuation.
+
+    Same rules as cmark's ``autolink_delim``: trim ``?!.,:*_~'"``, drop an unbalanced
+    ``)``, and drop a trailing ``&name;``. Those characters are not part of the link, so
+    leaving ``*``, ``_`` or ``~`` raw lets them emphasise or strike the words that follow.
+    """
+    link_end = len(text)
+    opening = 0
+    closing = 0
+    for index, ch in enumerate(text):
+        if ch == "<":
+            link_end = index
+            break
+        if ch == "(":
+            opening += 1
+        elif ch == ")":
+            closing += 1
+    while link_end > 0:
+        ch = text[link_end - 1]
+        if ch == ")":
+            if closing <= opening:
+                return link_end
+            closing -= 1
+            link_end -= 1
+        elif ch in "?!.,:*_~'\"":
+            link_end -= 1
+        elif ch == ";":
+            new_end = link_end - 2
+            while new_end > 0 and text[new_end].isascii() and text[new_end].isalpha():
+                new_end -= 1
+            if new_end < link_end - 2 and text[new_end] == "&":
+                link_end = new_end
+            else:
+                link_end -= 1
+        else:
+            return link_end
+    return link_end
+
+
+# Named or numeric entities, not Markdown delimiters. ``&#126;`` is '~'; HTML has no name for it.
+_TRIMMED_MARK = {"*": "&ast;", "_": "&lowbar;", "~": "&#126;"}
+
+
+def _encode_trimmed(text: str) -> str:
+    """Write a trimmed autolink tail so its ``*``, ``_`` and ``~`` cannot start markup."""
+    pieces: list[str] = []
+    pending: list[str] = []
+
+    def flush() -> None:
+        if pending:
+            # '&' is not a backslash escape here. '\&' would be swallowed into the href, and a
+            # trailing '&name;' is the entity cmark already trims off the link (it decodes to text).
+            pieces.append(_md_escape_text("".join(pending)).replace("\\&", "&"))
+            pending.clear()
+
+    for ch in text:
+        mark = _TRIMMED_MARK.get(ch)
+        if mark is None:
+            pending.append(ch)
+        else:
+            flush()
+            pieces.append(mark)
+    flush()
+    return "".join(pieces)
+
+
 def _url_span(line: str, index: int) -> tuple[int, int] | None:
     if not line.startswith("://", index):
         return None
@@ -600,17 +667,20 @@ def _autolink_spans(line: str) -> list[tuple[int, int]]:
 def _md_escape(line: str) -> str:
     """Backslash-escape what Markdown would act on, so an evaluator's message stays plain text.
 
-    Only the span cmark-gfm will actually auto-link is copied through. An ``https://`` run
-    whose host is not a real link (``https://*bold*``, ``https://_it_``, ``https://~~x~~``,
-    ``https://&lt;b&gt;``) is escaped with everything else, so emphasis, strike-through and
-    entities stay plain. ``<`` is written ``&lt;`` and ``>`` is written ``&gt;``: a backslash
-    there is swallowed by the autolink and the following tag becomes raw HTML.
+    Only the span cmark-gfm will actually auto-link is copied through, after the same
+    trailing-punctuation trim cmark applies. The trimmed ``*``, ``_`` and ``~`` are written
+    as entities so they cannot emphasise or strike the words after the address. An
+    ``https://`` run whose host is not a real link is escaped with everything else. ``<`` is
+    written ``&lt;`` and ``>`` is written ``&gt;``: a backslash there is swallowed by the
+    autolink and the following tag becomes raw HTML.
     """
     parts: list[str] = []
     cursor = 0
     for start, end in _autolink_spans(line):
+        kept = start + _autolink_delim(line[start:end])
         parts.append(_md_escape_text(line[cursor:start]))
-        parts.append(line[start:end])
+        parts.append(line[start:kept])
+        parts.append(_encode_trimmed(line[kept:end]))
         cursor = end
     parts.append(_md_escape_text(line[cursor:]))
     return "".join(parts)

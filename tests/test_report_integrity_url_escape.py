@@ -10,13 +10,15 @@ HTML-escapes the original line once.
 from __future__ import annotations
 
 import html
+import random
+import re
 from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
 from cmarkgfm.cmark import Options, markdown_to_html_with_extensions
 
-from capability_verifier.collect import place_integrity_lines
+from capability_verifier.collect import _md_escape, place_integrity_lines
 
 # Real addresses. Each one has '_', '&', '~', a query string and a fragment.
 URLS = [
@@ -304,6 +306,101 @@ def test_brackets_after_a_non_link_do_not_become_a_labelled_link(tmp_path):
     texts = "".join(rendered.text)
     assert "[click]" in texts
     assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == ["https://evil.example"]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "see https://e.com/~. the robot PASSED https://e.com/.~ ok",
+        "see https://e.com/~. x https://e.com/.~ y",
+        "see https://e.com/_? hidden words https://e.com/?_ end",
+        "https://e.com/_? w https://e.com/?_",
+        "see https://e.com/_,_ x",
+        'https://e.com/?*",*',
+    ],
+)
+def test_trimmed_punctuation_does_not_emphasise_or_strike(message):
+    rendered = _rendered(_md_escape(message))
+    assert not any(tag in {"em", "strong", "del"} for tag, _ in rendered.tags)
+    _assert_no_injected_html(rendered)
+    if "PASSED" in message:
+        assert "PASSED" in "".join(rendered.text)
+        assert "&#126;" in _md_escape(message)
+
+
+def test_a_trimmed_underscore_stays_visible_and_out_of_the_href():
+    rendered = _rendered(_md_escape("see https://e.com/_,_ x"))
+    assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == ["https://e.com/"]
+    assert "_,_" in "".join(rendered.text)
+
+
+def test_an_underscore_in_the_last_two_labels_is_not_a_link():
+    """Kills: no underscore rule, last-label only, and a dot bound of 0.
+
+    ``a*b*c`` stays inside the run, so a scanner that accepts the host lets cmark
+    emphasise ``b``. ``_secret_`` would not: the trim encodes only the final ``_``.
+    """
+    rendered = _rendered(_md_escape("https://a_b.com/a*b*c"))
+    assert not any(tag == "em" for tag, _ in rendered.tags)
+    assert "a*b*c" in "".join(rendered.text)
+
+
+def test_a_domain_with_more_than_ten_dots_still_links_with_an_underscore():
+    host = "a.b.c.d.e.f.g.h.i.j.k.l_m.com"
+    url = f"https://{host}/x_y"
+    rendered = _rendered(_md_escape(url))
+    assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == [url]
+
+
+def test_a_backslash_in_the_domain_does_not_free_the_following_emphasis():
+    rendered = _rendered(_md_escape("https://a\\.b_c.com/a*b*c"))
+    assert not any(tag == "em" for tag, _ in rendered.tags)
+
+
+def test_a_bare_www_dot_is_not_an_autolink_span():
+    """The dot in ``www.`` is the last character, so cmark's strict domain check rejects it.
+
+    Forcing ``allow_short=True`` accepts the span, but the characters need no escaping, so the
+    rendered line does not change. This asserts the span itself.
+    """
+    from capability_verifier.collect import _www_span
+
+    assert _www_span("www.", 0) is None
+
+
+def test_non_ascii_punctuation_cannot_start_a_host():
+    rendered = _rendered(_md_escape("https://。e.com/a*b*c"))
+    assert not any(tag == "em" for tag, _ in rendered.tags)
+
+
+def _main_escape(line: str) -> str:
+    """The escaper on main: backslash every Markdown special, including inside addresses."""
+    return re.sub(r"([\\`*_~&\[\]<>|])", r"\\\1", line)
+
+
+def test_fuzz_trailing_punctuation_adds_no_emphasis_or_html():
+    """Seeded. A few thousand cases stay cheap in CI; Vera's 40k set is the same shape."""
+    rng = random.Random(230)
+    hosts = ("https://e.com/", "https://example.com/a", "http://e.com/q", "www.e.com/")
+    words = ("PASSED", "hidden words", "the robot", "x", "ok", "end")
+    punct = "?!.,:*_~'\"()"
+    ours = main = 0
+    for _ in range(2000):
+        tail = "".join(rng.choice(punct) for _ in range(rng.randint(1, 4)))
+        tail2 = "".join(rng.choice(punct) for _ in range(rng.randint(0, 3)))
+        message = (
+            f"see {rng.choice(hosts)}{tail} {rng.choice(words)} {rng.choice(hosts)}{tail2} end"
+        )
+        for escaped, counter in ((_md_escape(message), "ours"), (_main_escape(message), "main")):
+            parsed = _rendered(escaped)
+            bad = [tag for tag, _ in parsed.tags if tag not in {"p", "a"}]
+            if bad:
+                if counter == "ours":
+                    ours += 1
+                else:
+                    main += 1
+    assert ours == 0
+    assert ours <= main
 
 
 def test_the_inlined_collector_matches_collect_py():

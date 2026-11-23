@@ -721,8 +721,11 @@ HTML entity in a refusal stay plain text. Angle brackets are written `&lt;` and 
 backslash, so a tag cannot open even when it is placed straight after an address. Only the span
 GitHub's Markdown will actually auto-link is left as written: `http`, `https`, `ftp`, or `www`,
 in any letter case for the scheme. `_`, `&` and `~` stay in that link and in the visible address,
-including a query string and a fragment. An `https://` run that is not a real link, such as
-`https://*bold*`, is still escaped. `report.html` HTML-escapes the original line once, so `&` is
+including a query string and a fragment. Trailing punctuation cmark removes from that link
+(`?!.,:*_~'"`, an unbalanced `)`, a trailing `&name;`) is not left raw: `*` is `&ast;`, `_` is
+`&lowbar;` and `~` is `&#126;`, so it cannot emphasise or strike the words that follow, such as
+PASSED. An `https://` run that is not a real link, such as `https://*bold*`, is still escaped.
+`report.html` HTML-escapes the original line once, so `&` is
 `&amp;` and is not escaped again. Only an artifact named
 `[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>` (or its inner
 `livingproof-run-integrity` directory) counts, not a lookalike name. A
