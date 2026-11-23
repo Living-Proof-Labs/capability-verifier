@@ -1574,11 +1574,38 @@ jobs:
 
           _VERDICT = re.compile(r"[:;] overall [A-Z][A-Za-z_ ]*\.(?:\s.*)?$")
           _HTML_VERDICT = re.compile(r"<p class=(['\"])stored-status\1>[^<]*</p>")
+          # http(s) run that stops before markup. '<' ends a GFM autolink and starts HTML; backslash,
+          # backtick, brackets and pipe are markup too. They stay outside the address and are still
+          # escaped. '_' '&' and '~' are part of the address.
+          _URL = re.compile(r"https?://[^\s\\`\[\]<|]+")
+          # GFM recognises an extended autolink at the start of a line, after whitespace, or after one of
+          # these.
+          _AUTOLINK_BEFORE = frozenset("*_~(")
 
 
           def _md_escape(line: str) -> str:
-              """Backslash-escape what Markdown would act on, so an evaluator's message stays plain text."""
-              return re.sub(r"([\\`*_~&\[\]<>|])", r"\\\1", line)
+              """Backslash-escape what Markdown would act on, so an evaluator's message stays plain text.
+
+              An http or https address that will auto-link is copied through unchanged. Underscore,
+              ampersand and tilde belong to that address: a backslash in front of them makes the link
+              point somewhere else, and the address no longer shows in full. A labelled link's text, and
+              every other run of text, is still escaped.
+              """
+              parts: list[str] = []
+              cursor = 0
+              for found in _URL.finditer(line):
+                  start = found.start()
+                  if start and not (line[start - 1].isspace() or line[start - 1] in _AUTOLINK_BEFORE):
+                      continue
+                  parts.append(_md_escape_text(line[cursor:start]))
+                  parts.append(found.group(0))
+                  cursor = found.end()
+              parts.append(_md_escape_text(line[cursor:]))
+              return "".join(parts)
+
+
+          def _md_escape_text(text: str) -> str:
+              return re.sub(r"([\\`*_~&\[\]<>|])", r"\\\1", text)
 
 
           def place_integrity_lines(report_dir: Path) -> bool:
@@ -1687,6 +1714,7 @@ jobs:
 
           if __name__ == "__main__":
               sys.exit(main())
+
           COLLECT
           python3 /tmp/collect_evaluator_results.py verified/bundle/manifest.json evaluator-results reports
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093

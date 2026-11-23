@@ -717,8 +717,10 @@ message itself, so they read differently. The message is capped at 500 character
 stop before "The run is INCONCLUSIVE", and is backslash-escaped in `report.md` and HTML-escaped in
 `report.html`; `report.txt` shows it as it is. Markdown escaping covers backslash, backtick,
 asterisk, underscore, tilde, ampersand, brackets, angle brackets, and pipe, so emphasis, a
-labelled link, and an HTML entity in a refusal stay plain text. A bare URL is still auto-linked,
-and the address shows in full. Only an artifact named
+labelled link, and an HTML entity in a refusal stay plain text. An `http` or `https` address is
+left as written, so a bare URL is still auto-linked and the address shows in full, with `_`, `&`
+and `~` kept in the link target and in the visible address. `report.html` writes that `&` as
+`&amp;`. Only an artifact named
 `[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>` (or its inner
 `livingproof-run-integrity` directory) counts, not a lookalike name. A
 `no-result.txt` note is the reason for `NOT RUN`, as before. The reporter has no integrity input,
