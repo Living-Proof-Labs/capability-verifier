@@ -726,8 +726,11 @@ including a query string and a fragment. Trailing punctuation cmark removes from
 or `~`. The address is then written as an angle autolink, `<https://e.com/a>`, and the trimmed
 mark is backslash-escaped (`\~`, `\*`, `\_`), so the href is the address, the character is the
 ASCII mark, and it cannot strike a word such as PASSED. A `www.` address has no scheme, so it
-is not wrapped; the dot is escaped and the address is not linked. Those brackets are the only
-raw `<` and `>` written for a refusal. An `https://` run that is not a real link, such as
+is not wrapped; the dot is escaped and any `://` in that escaped text is written `:\/\/`, so
+cmark cannot link it again. Those brackets are the only raw `<` and `>` written for a refusal,
+and only around an address with no whitespace or control character. Inside them, `&` is `&amp;`.
+Whitespace that ends an address is the ASCII set cmark uses (space, tab, line feed, carriage
+return), not a non-breaking space. An `https://` run that is not a real link, such as
 `https://*bold*`, is still escaped. `report.html` HTML-escapes the original line once, so `&` is
 `&amp;` and is not escaped again. Only an artifact named
 `[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>` (or its inner

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import html
 import random
-import re
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote
@@ -22,7 +21,9 @@ from cmarkgfm.cmark import Options, markdown_to_html_with_extensions
 from capability_verifier.collect import (
     _autolink_delim,
     _autolink_spans,
+    _escape_trimmed_tail,
     _md_escape,
+    _md_escape_text,
     _scheme_address,
     _span_can_be_angle_autolink,
     _tail_can_mark,
@@ -249,10 +250,15 @@ def test_a_non_http_address_is_still_escaped_in_markdown(tmp_path):
     raw = "Run Integrity: REFUSED: file:///tmp/a_b"
     md, txt, page = _formats(tmp_path, raw)
     assert _md_txt(txt, verdict=True, markdown=False) == raw
-    assert _md_txt(md, verdict=True, markdown=True) == "Run Integrity: REFUSED: file:///tmp/a\\_b"
+    # file:// is not a scheme we link, so :// is broken and cannot be re-autolinked.
+    assert (
+        _md_txt(md, verdict=True, markdown=True) == "Run Integrity: REFUSED: file:\\/\\//tmp/a\\_b"
+    )
     assert _html(page) == html.escape(raw, quote=False)
     assert "\\" not in _html(page)
-    assert [tag for tag, _ in _rendered(_md_txt(md, verdict=True, markdown=True)).tags] == ["p"]
+    rendered = _rendered(_md_txt(md, verdict=True, markdown=True))
+    assert [tag for tag, _ in rendered.tags] == ["p"]
+    assert "".join(rendered.text).strip() == raw
 
 
 def test_a_www_address_after_an_asterisk_still_autolinks(tmp_path):
@@ -378,6 +384,72 @@ def test_a_greater_than_inside_a_marked_address_is_not_angle_wrapped():
     assert not any(tag in {"em", "strong", "del"} for tag, _ in rendered.tags)
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "x\u00a0www.e.com/~~PASSED~~x y",
+        "x\u2003www.e.com/*PASSED*x y",
+        "https://e.com/a\u00a0_b_",
+    ],
+)
+def test_non_ascii_space_does_not_let_a_mark_become_emphasis(message):
+    rendered = _rendered(_md_escape(message))
+    assert "".join(rendered.text).strip() == message
+    assert not any(tag in {"em", "strong", "del", "code"} for tag, _ in rendered.tags)
+
+
+def test_an_embedded_scheme_after_www_is_not_relinked():
+    message = "see www.e.com/a~https://e.com/b*c~ end"
+    escaped = _md_escape(message)
+    assert "https:\\/\\/" in escaped
+    rendered = _rendered(escaped)
+    assert "".join(rendered.text).strip() == message
+    assert not any(tag == "a" for tag, _ in rendered.tags)
+
+
+def test_an_ampersand_inside_an_angle_autolink_stays_in_the_address():
+    message = "https://e.com/a&lt;b~"
+    rendered = _rendered(_md_escape(message))
+    assert [unquote(attrs["href"]) for tag, attrs in rendered.tags if tag == "a"] == [message[:-1]]
+    assert "".join(rendered.text).strip() == message
+
+
+def test_a_control_character_is_not_placed_inside_an_angle_autolink():
+    message = "https://e.com/a\x01b~"
+    escaped = _md_escape(message)
+    assert "<" not in escaped
+    rendered = _rendered(escaped)
+    assert "".join(rendered.text).strip() == message
+    assert not any(tag == "a" for tag, _ in rendered.tags)
+
+
+def test_a_trailing_named_entity_is_trimmed_off_the_link():
+    message = "https://e.com/a&copy;~"
+    rendered = _rendered(_md_escape(message))
+    assert [unquote(attrs["href"]) for tag, attrs in rendered.tags if tag == "a"] == [
+        "https://e.com/a"
+    ]
+    assert "".join(rendered.text).strip() == message
+
+
+def test_a_raw_ampersand_after_an_unshielded_link_decodes_the_entity():
+    rendered = _rendered(_md_escape("https://e.com/&copy;"))
+    assert [unquote(attrs["href"]) for tag, attrs in rendered.tags if tag == "a"] == [
+        "https://e.com/"
+    ]
+    assert "".join(rendered.text).strip() == "https://e.com/\u00a9"
+    assert "\\" not in "".join(rendered.text)
+
+
+def test_an_ampersand_in_a_shielded_tail_stays_literal():
+    message = "https://e.com/a~&copy;"
+    rendered = _rendered(_md_escape(message))
+    assert "".join(rendered.text).strip() == message
+    assert [unquote(attrs["href"]) for tag, attrs in rendered.tags if tag == "a"] == [
+        "https://e.com/a"
+    ]
+
+
 def test_a_www_address_with_a_tilde_is_shown_exactly_and_not_linked():
     message = "www.example.com/a_b~"
     escaped = _md_escape(message)
@@ -460,54 +532,168 @@ def test_non_ascii_punctuation_cannot_start_a_host():
     assert not any(tag == "em" for tag, _ in rendered.tags)
 
 
-def _expected_hrefs(message: str) -> list[str]:
-    hrefs = []
+# cmark_isspace, matching collect.py: tab, LF, CR, space. Not VT, FF or NBSP.
+_CMARK_SPACE_FOR_ORACLE = frozenset("\t\n\r ")
+
+
+def _n1_suffix(kept: str, tail: str, message: str, end: int) -> tuple[str, str, int]:
+    """Href and the visible run after an unshielded address that is directly before ``<``.
+
+    The trimmed punctuation stays in front of ``&lt;``, so it is no longer trailing and
+    cmark keeps it in the href. ``autolink_delim`` then trims a final ``&gt;`` or ``&lt;``
+    and that entity is decoded in the text. An ``&lt;`` left inside the link is shown as
+    the characters ``&lt;``.
+    """
+    stop = end
+    while stop < len(message) and message[stop] not in _CMARK_SPACE_FOR_ORACLE:
+        stop += 1
+    emitted = (
+        kept + _escape_trimmed_tail(tail, keep_ampersand=True) + _md_escape_text(message[end:stop])
+    )
+    link_end = _autolink_delim(emitted)
+    outside = html.unescape(emitted[link_end:])
+    # The visible address is the original kept span plus the original tail; only the
+    # run that starts at '<' is rewritten, with a trimmed entity decoded.
+    tail_out = _escape_trimmed_tail(tail, keep_ampersand=True)
+    rewritten = emitted[len(kept) + len(tail_out) : link_end] + outside
+    return emitted[:link_end], rewritten, stop
+
+
+def _expected_visible_and_hrefs(message: str) -> tuple[str, list[str]]:
+    """Oracle for one line. Two narrow exceptions, both from cmark, not from a skip.
+
+    N1: an unshielded span immediately before ``<`` (see ``_n1_suffix``).
+    N3: a named entity in an unshielded trimmed tail is decoded (``&copy;`` shows ``©``).
+    """
+    hrefs: list[str] = []
+    parts: list[str] = []
+    cursor = 0
     for start, end in _autolink_spans(message):
         kept_end = start + _autolink_delim(message[start:end])
         kept = message[start:kept_end]
         tail = message[kept_end:end]
-        linked = True
-        if _tail_can_mark(tail) and (
-            kept.startswith("www.")
-            or not (_scheme_address(kept) and _span_can_be_angle_autolink(kept))
-        ):
-            linked = False
-        if not linked:
-            continue
-        hrefs.append(("http://" + kept) if kept.startswith("www.") else kept)
-    return hrefs
+        marks = _tail_can_mark(tail)
+        angle = _scheme_address(kept) and _span_can_be_angle_autolink(kept)
+        parts.append(message[cursor:start])
+        parts.append(kept)
+        if marks:
+            parts.append(tail)
+            if not kept.startswith("www.") and angle:
+                hrefs.append(kept)
+        else:
+            decoded = html.unescape(tail)
+            parts.append(decoded)
+            href = ("http://" + kept) if kept.startswith("www.") else kept
+            if end < len(message) and message[end] == "<":
+                extra, shown, stop = _n1_suffix(kept, tail, message, end)
+                href = ("http://" + extra) if kept.startswith("www.") else extra
+                parts.append(shown)
+                cursor = stop
+                hrefs.append(href)
+                continue
+            hrefs.append(href)
+        cursor = end
+    parts.append(message[cursor:])
+    return "".join(parts), hrefs
 
 
-def _main_escape(line: str) -> str:
-    """The escaper on main: backslash every Markdown special, including inside addresses."""
-    return re.sub(r"([\\`*_~&\[\]<>|])", r"\\\1", line)
-
-
-def test_fuzz_trailing_punctuation_adds_no_emphasis_or_html():
-    """Seeded. A few thousand cases stay cheap in CI; Vera's 40k set is the same shape."""
+def _fuzz_messages(count: int) -> list[str]:
+    """Seeded corpus. The fixed exemplars are always first, so a short CI run still
+    covers every class; ``CV_FUZZ_CASES`` adds more of the same mix.
+    """
+    exemplars = [
+        "x\u00a0www.e.com/~~PASSED~~x y",
+        "x\u2003www.e.com/*PASSED*x y",
+        "x\u2028https://e.com/a~ y",
+        "x\u2029https://e.com/a_ y",
+        "x\u3000www.e.com/a*b",
+        "a\thttps://e.com/a_b\nb",
+        "https://a.com/https://b.com",
+        "www.a.comhttps://b",
+        "see www.e.com/a~https://e.com/b*c~ end",
+        "https://e.com/a&lt;b~",
+        "https://e.com/?a=1&amp;b=2~",
+        "https://e.com/&copy;",
+        "https://e.com/&#x3C;script&#x3E;",
+        "https://e.com/a\x01b~",
+        "https://e.com/a\x7fb~",
+        "https://e.com/a\x85b",
+        "https://e.com/a~",
+        "https://e.com/a*",
+        "https://e.com/a_",
+        "https://e.com/a**",
+        "https://e.com/a~~",
+        "see https://e.com/~. the robot PASSED https://e.com/.~ ok",
+        "https://e.com/a_(b)",
+        "https://e.com/a_(b))",
+        "https://e.com/a<b>",
+        "https://e.com/a><b>no</b>",
+        "HTTPS://E.COM/a_b",
+        "ftp://files.example/a_b~",
+        "www.e.com/a_b",
+        "note * _ ~ [ ] ( ) \\ ` ! # https://e.com/a",
+    ]
     rng = random.Random(230)
-    hosts = ("https://e.com/", "https://example.com/a", "http://e.com/q", "www.e.com/")
-    words = ("PASSED", "hidden words", "the robot", "x", "ok", "end")
-    punct = "?!.,:*_~'\"()"
-    ours = main = 0
-    for _ in range(2000):
-        tail = "".join(rng.choice(punct) for _ in range(rng.randint(1, 4)))
-        tail2 = "".join(rng.choice(punct) for _ in range(rng.randint(0, 3)))
-        message = (
-            f"see {rng.choice(hosts)}{tail} {rng.choice(words)} {rng.choice(hosts)}{tail2} end"
+    spaces = [" ", "\t", "\n", "\u00a0", "\u2003", "\u2028", "\u2029", "\u3000"]
+    schemes = ["https://", "http://", "HTTPS://", "ftp://", "www."]
+    hosts = ["e.com", "a.com", "b.com", "files.example", "E.COM"]
+    marks = list("?!.,:*_~'\"()<>")
+    extras = [
+        "&copy;",
+        "&lt;",
+        "&amp;",
+        "&#60;",
+        "&#x3C;",
+        "\x01",
+        "\x7f",
+        "\x85",
+        "`code`",
+        "*b*",
+        "[a](b)",
+    ]
+    words = ["PASSED", "hidden", "robot", "x", "end"]
+    out = list(exemplars)
+    while len(out) < count:
+        space = rng.choice(spaces)
+        left = (
+            rng.choice(schemes)
+            + rng.choice(hosts)
+            + "/"
+            + "".join(rng.choice(marks) for _ in range(rng.randint(0, 3)))
         )
-        escaped = _md_escape(message)
-        parsed = _rendered(escaped)
-        if any(tag not in {"p", "a"} for tag, _ in parsed.tags):
-            ours += 1
-        assert [unquote(attrs["href"]) for tag, attrs in parsed.tags if tag == "a"] == (
-            _expected_hrefs(message)
+        right = rng.choice(schemes) + rng.choice(hosts)
+        out.append(
+            "see"
+            + space
+            + left
+            + rng.choice(extras)
+            + rng.choice(words)
+            + right
+            + rng.choice(marks)
+            + " end"
         )
-        plain = _rendered(_main_escape(message))
-        if any(tag not in {"p", "a"} for tag, _ in plain.tags):
-            main += 1
-    assert ours == 0
-    assert ours <= main
+    return out[:count]
+
+
+def test_fuzz_rendered_text_and_hrefs_match_the_oracle():
+    count = int(__import__("os").environ.get("CV_FUZZ_CASES", "4000"))
+    failures = []
+    for message in _fuzz_messages(count):
+        parsed = _rendered(_md_escape(message))
+        tags = [tag for tag, _ in parsed.tags]
+        if any(tag not in {"p", "a"} for tag in tags):
+            failures.append(("element", message, tags))
+            continue
+        visible = "".join(parsed.text).strip("\n")
+        expected, hrefs = _expected_visible_and_hrefs(message)
+        got = [unquote(attrs["href"]) for tag, attrs in parsed.tags if tag == "a"]
+        if visible != expected:
+            failures.append(("text", message, visible, expected))
+        elif got != hrefs:
+            failures.append(("href", message, got, hrefs))
+        if len(failures) >= 5:
+            break
+    assert not failures, failures
 
 
 def test_the_inlined_collector_matches_collect_py():

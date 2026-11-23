@@ -489,15 +489,30 @@ def _write_integrity_lines(report_dir: Path, bundle: dict) -> None:
 
 _VERDICT = re.compile(r"[:;] overall [A-Z][A-Za-z_ ]*\.(?:\s.*)?$")
 _HTML_VERDICT = re.compile(r"<p class=(['\"])stored-status\1>[^<]*</p>")
-# cmark-gfm extended autolinks. www. only counts at the start of a line, after whitespace, or
-# after one of these. http/https/ftp are recognised wherever the scheme is exactly those letters.
+# cmark-gfm extended autolinks. www. only counts at the start of a line, after
+# cmark_isspace, or after one of these. http/https/ftp are recognised wherever
+# the scheme is exactly those letters.
 _AUTOLINK_BEFORE = frozenset("*_~(")
 _SCHEMES = ("http", "https", "ftp")
+# cmark_isspace, src/cmark_ctype.c: class 1 is only 0x09 TAB, 0x0A LF, 0x0D CR
+# and 0x20 space. 0x0B VT and 0x0C FF are class 0. autolink.c uses this for the
+# byte before "www." and for the end of an extended autolink.
+_CMARK_SPACE = frozenset("\t\n\r ")
+
+
+def _cmark_utf8_space(ch: str) -> bool:
+    """cmark_utf8proc_is_space, src/utf8.c: Zs plus TAB, LF, FF and CR.
+
+    NBSP (160), U+2000-U+200A (including em space U+2003) and U+3000 are spaces.
+    U+2028 and U+2029 are not. is_valid_hostchar rejects this set.
+    """
+    code = ord(ch)
+    return code in (9, 10, 12, 13, 32, 160, 5760, 8239, 8287, 12288) or 8192 <= code <= 8202
 
 
 def _is_host_char(ch: str) -> bool:
     """True when cmark-gfm would treat the character as part of a host label."""
-    if ch.isspace():
+    if _cmark_utf8_space(ch):
         return False
     if ord(ch) < 128:
         return ch.isalnum()
@@ -540,7 +555,7 @@ def _check_domain(text: str, *, allow_short: bool) -> int:
 def _autolink_end(text: str, start: int) -> int:
     end = start
     size = len(text)
-    while end < size and not text[end].isspace() and text[end] != "<":
+    while end < size and text[end] not in _CMARK_SPACE and text[end] != "<":
         end += 1
     return end
 
@@ -632,7 +647,14 @@ def _shield_address(kept: str, tail: str) -> str:
         return "www\\." + _md_escape_text(kept[4:] + tail)
     if _scheme_address(kept) and _span_can_be_angle_autolink(kept):
         assert _span_can_be_angle_autolink(kept)
-        return "<" + kept + ">" + _escape_trimmed_tail(tail, keep_ampersand=False)
+        # cmark decodes entities inside <...>, so '&' is written '&amp;' and the
+        # href and the visible address stay the original characters.
+        return (
+            "<"
+            + kept.replace("&", "&amp;")
+            + ">"
+            + _escape_trimmed_tail(tail, keep_ampersand=False)
+        )
     if _scheme_address(kept):
         scheme = kept.lower().find("://")
         return kept[:scheme] + ":\\/\\/" + _md_escape_text(kept[scheme + 3 :] + tail)
@@ -668,7 +690,7 @@ def _url_span(line: str, index: int) -> tuple[int, int] | None:
 def _www_span(line: str, index: int) -> tuple[int, int] | None:
     if not line.startswith("www.", index):
         return None
-    if index and line[index - 1] not in _AUTOLINK_BEFORE and not line[index - 1].isspace():
+    if index and line[index - 1] not in _AUTOLINK_BEFORE and line[index - 1] not in _CMARK_SPACE:
         return None
     if _check_domain(line[index:], allow_short=False) == 0:
         return None
@@ -737,7 +759,10 @@ def _md_escape_text(text: str) -> str:
         else:
             pending.append(ch)
     flush()
-    return "".join(pieces)
+    # A scheme or www. left in escaped text is still an autolink, and it swallows the
+    # backslash in front of a following mark (autolink.c url_match / www_match).
+    escaped = "".join(pieces)
+    return escaped.replace("://", ":\\/\\/").replace("www.", "www\\.")
 
 
 def place_integrity_lines(report_dir: Path) -> bool:
