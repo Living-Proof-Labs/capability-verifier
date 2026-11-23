@@ -1,0 +1,103 @@
+name: Build exact released verifier documentation
+on:
+  workflow_call:
+    inputs:
+      release_tag: {type: string, required: true}
+      version: {type: string, required: true}
+      commit: {type: string, required: true}
+    outputs:
+      artifact-id:
+        value: ${{ jobs.build.outputs.artifact-id }}
+      digest:
+        value: ${{ jobs.build.outputs.digest }}
+      attempt:
+        value: ${{ jobs.build.outputs.attempt }}
+permissions:
+  contents: read
+jobs:
+  build:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.event.inputs.replay_tag == inputs.release_tag))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      digest: ${{ steps.seal.outputs.digest }}
+      attempt: ${{ steps.seal.outputs.attempt }}
+    env:
+      DOCS_RELEASE_TAG: ${{ inputs.release_tag }}
+      DOCS_RELEASE_RUN_ID: ${{ github.run_id }}
+      DOCS_RELEASE_RUN_ATTEMPT: ${{ github.run_attempt }}
+      LIVINGPROOF_VERIFIER_VERSION: ${{ inputs.version }}
+      EXPECTED_COMMIT: ${{ inputs.commit }}
+      GITHUB_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require the immutable release and exact source tag before building
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$LIVINGPROOF_VERIFIER_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$DOCS_RELEASE_TAG" = "v$LIVINGPROOF_VERIFIER_VERSION"
+          test "$EXPECTED_COMMIT" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse --verify "refs/tags/${DOCS_RELEASE_TAG}^{commit}")" = "$GITHUB_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$DOCS_RELEASE_TAG" |
+            python3 -c '
+          import json, os, sys
+          release = json.load(sys.stdin)
+          if not (
+              release["tag_name"] == os.environ["DOCS_RELEASE_TAG"]
+              and release["draft"] is False
+              and release["prerelease"] is False
+              and release["immutable"] is True
+              and release["published_at"]
+          ):
+              raise SystemExit("Expected the exact immutable published stable release")
+          '
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e
+        with:
+          version: '3.54.0'
+      - run: task verify
+      - run: task docs
+      - run: task test:docs
+      - name: Retain stable build verification evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: released-documentation-evidence-${{ inputs.release_tag }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            artifacts/results.xml
+            artifacts/docs-tests.xml
+            artifacts/test-context.json
+            artifacts/docs/html/build.json
+      - name: Seal the tested stable manual
+        id: seal
+        run: |
+          set -euo pipefail
+          cd artifacts/docs/html
+          test -f index.html
+          test -f build.json
+          test -z "$(find . ! -type d ! -type f -print -quit)"
+          tar --dereference --hard-dereference -cf "$RUNNER_TEMP/artifact.tar" .
+          checksum=$(sha256sum "$RUNNER_TEMP/artifact.tar")
+          echo "digest=${checksum%% *}" >> "$GITHUB_OUTPUT"
+          echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: upload
+        with:
+          name: sealed-documentation-${{ inputs.release_tag }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/artifact.tar
+          retention-days: 14
+          if-no-files-found: error

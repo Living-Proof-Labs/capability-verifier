@@ -1,0 +1,180 @@
+name: Deploy released verifier documentation
+on:
+  workflow_call:
+    inputs:
+      release_tag: {type: string, required: true}
+      version: {type: string, required: true}
+      commit: {type: string, required: true}
+      attempt: {type: string, required: true}
+      artifact_id: {type: string, required: true}
+      digest: {type: string, required: true}
+permissions:
+  contents: read
+jobs:
+  deploy:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.event.inputs.replay_tag != '' &&
+        github.event.inputs.replay_tag == inputs.release_tag))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: capability-verifier-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      VERSION: ${{ inputs.version }}
+      SOURCE: ${{ inputs.commit }}
+      PLAN_ATTEMPT: ${{ inputs.attempt }}
+      ARTIFACT_ID: ${{ inputs.artifact_id }}
+      DIGEST: ${{ inputs.digest }}
+      REPLAY_TAG: ${{ github.event.inputs.replay_tag }}
+    steps:
+      # Keep this privileged job free of repository checkout and execution.
+      - name: Verify same-run release and deployment identity
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PLAN_ATTEMPT" =~ ^[1-9][0-9]{0,5}$ ]]
+          test "$PLAN_ATTEMPT" -le "$GITHUB_RUN_ATTEMPT"
+          if [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' ]]; then
+            test "$PLAN_ATTEMPT" = "$GITHUB_RUN_ATTEMPT"
+            test "$REPLAY_TAG" = "$RELEASE_TAG"
+          fi
+          test "$RELEASE_TAG" = "v$VERSION"
+          test "$SOURCE" = "$GITHUB_SHA"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ inputs.artifact_id }}
+          path: ${{ runner.temp }}/verified-capability-verifier
+          merge-multiple: true
+      - name: Use the exact sealed bytes and validate their build identity
+        id: pages-package
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          archive="$RUNNER_TEMP/verified-capability-verifier/artifact.tar"
+          printf '%s  %s\n' "$DIGEST" "$archive" | sha256sum --check
+          python3 - "$archive" <<'PYTHON'
+          import json
+          import os
+          import re
+          import sys
+          import tarfile
+
+          with tarfile.open(sys.argv[1], mode="r:") as tar:
+              records = [entry for entry in tar if entry.name == "./build.json"]
+              if len(records) != 1 or not records[0].isfile():
+                  raise SystemExit("Expected exactly one regular build.json in the sealed manual")
+              with tar.extractfile(records[0]) as stream:
+                  record = json.load(stream)
+          expected = {
+              "release_version": os.environ["VERSION"], "release_tag": os.environ["RELEASE_TAG"],
+              "commit": os.environ["SOURCE"], "exitstatus": 0,
+              "release_run_id": os.environ["GITHUB_RUN_ID"],
+              "release_run_attempt": os.environ["PLAN_ATTEMPT"],
+          }
+          if any(record.get(key) != value for key, value in expected.items()):
+              raise SystemExit("Sealed manual does not match the released version, source and run")
+          if not re.fullmatch(r"[0-9a-f]{64}", record.get("junit_sha256", "")):
+              raise SystemExit("Sealed manual does not identify its verification report")
+          PYTHON
+          cp "$archive" "$RUNNER_TEMP/artifact.tar"
+          echo "tar-sha256=$DIGEST" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: pages-artifact
+        with:
+          name: github-pages-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/artifact.tar
+          retention-days: 1
+          if-no-files-found: error
+      # Use the same-run Actions artifact client (like deploy-pages), not the REST index.
+      # An exact ID and name must both resolve to the sealed Pages tar before deploying.
+      - name: Require a valid Pages artifact ID
+        shell: bash
+        env:
+          UPLOADED_ID: ${{ steps.pages-artifact.outputs.artifact-id }}
+        run: |
+          [[ "$UPLOADED_ID" =~ ^[1-9][0-9]*$ ]]
+      - name: Read exact Pages artifact by ID
+        id: pages-id-first
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ steps.pages-artifact.outputs.artifact-id }}
+          path: ${{ runner.temp }}/capability-verifier-pages-id-first
+      - name: Allow the ID lookup to settle
+        if: steps.pages-id-first.outcome == 'failure'
+        run: sleep 4
+      - name: Retry read by ID once
+        id: pages-id-retry
+        if: steps.pages-id-first.outcome == 'failure'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ steps.pages-artifact.outputs.artifact-id }}
+          path: ${{ runner.temp }}/capability-verifier-pages-id-retry
+      - name: Read exact Pages artifact by name
+        id: pages-name-first
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: github-pages-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/capability-verifier-pages-name-first
+      - name: Allow the name lookup to settle
+        if: steps.pages-name-first.outcome == 'failure'
+        run: sleep 4
+      - name: Retry read by name once
+        id: pages-name-retry
+        if: steps.pages-name-first.outcome == 'failure'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: github-pages-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/capability-verifier-pages-name-retry
+      - name: Require matching ID and name readback of the exact tar
+        shell: bash
+        env:
+          EXPECTED_TAR: ${{ steps.pages-package.outputs.tar-sha256 }}
+          EXPECTED_NAME: github-pages-${{ github.run_attempt }}
+          ID_READBACK: ${{ steps.pages-id-first.outcome == 'success' && steps.pages-id-first.outputs.download-path || steps.pages-id-retry.outputs.download-path }}
+          NAME_READBACK: ${{ steps.pages-name-first.outcome == 'success' && steps.pages-name-first.outputs.download-path || steps.pages-name-retry.outputs.download-path }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_TAR" =~ ^[0-9a-f]{64}$ ]]
+          test -n "$ID_READBACK"
+          test -n "$NAME_READBACK"
+          for path in "$ID_READBACK/$EXPECTED_NAME" "$NAME_READBACK"; do
+            test -f "$path/artifact.tar"
+            digest=$(sha256sum "$path/artifact.tar")
+            test "${digest%% *}" = "$EXPECTED_TAR"
+          done
+      - name: Check current main inside deployment lock
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PYCODE'
+          import json, os, urllib.request
+          token = os.environ['GITHUB_TOKEN']
+          url = 'https://api.github.com/repos/Living-Proof-Labs/capability-verifier/git/ref/heads/main'
+          request = urllib.request.Request(
+              url,
+              headers={'Authorization': f'Bearer {token}'},
+          )
+          with urllib.request.urlopen(request, timeout=30) as response:
+              current = json.load(response)['object']['sha']
+          if current != os.environ['EXPECTED_SHA']:
+              raise SystemExit('Refusing stale documentation: main advanced')
+          PYCODE
+      - uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
+        id: deployment
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}

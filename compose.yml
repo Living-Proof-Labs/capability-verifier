@@ -15,6 +15,10 @@ services:
       - ./artifacts:/app/artifacts
   documentation:
     extends: verifier
+    environment:
+      DOCS_RELEASE_TAG: ${DOCS_RELEASE_TAG:-}
+      DOCS_RELEASE_RUN_ID: ${DOCS_RELEASE_RUN_ID:-}
+      DOCS_RELEASE_RUN_ATTEMPT: ${DOCS_RELEASE_RUN_ATTEMPT:-}
     build:
       target: documentation
 secrets:
