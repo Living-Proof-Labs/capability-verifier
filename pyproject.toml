@@ -5,7 +5,7 @@ description = "Fixture reference verifier; not robot safety certification"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
 dependencies = [
-    "pyyaml==6.0.3",
+    "pyyaml==6.0.4",
     # Released tags only. robot-capability-specs v2.3.0, livingproof-worlds v1.2.0
     # (worlds.lock.json), livingproof-sim-mujoco v3.2.5, livingproof-evaluator-scenario v1.5.3.
     # sim v3.2.5 requires the parameter package at specs v2.3.0 and evaluator v1.5.3 at
