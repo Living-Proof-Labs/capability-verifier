@@ -509,6 +509,58 @@ def test_a_backslash_in_the_domain_does_not_free_the_following_emphasis():
     assert not any(tag == "em" for tag, _ in rendered.tags)
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "see https://x\\_y.com/*PASSED*x end",
+        "see https://e.co\\_m/~~PASSED~~x end",
+        "see https://a_b.\u00fc.c.d/*PASSED*x end",
+        "see https://a_b.\u4f8b.c.d/~~PASSED~~x end",
+        "see www.a_b.\u00fc.c.d/*PASSED*x end",
+        "see https://a_b.\u00fc.c.d/`code` end",
+    ],
+)
+def test_a_backslash_or_non_ascii_host_is_not_passed_through_raw(message):
+    """cmark counts ``\\_`` and stops at a UTF-8 continuation byte, so these are not links."""
+    rendered = _rendered(_md_escape(message))
+    assert not any(tag in {"em", "strong", "del", "code"} for tag, _ in rendered.tags)
+    assert "".join(rendered.text).strip() == message
+
+
+def test_an_apostrophe_before_a_mark_is_trimmed_from_the_href():
+    message = "https://e.com/a'~"
+    rendered = _rendered(_md_escape(message))
+    assert [unquote(attrs["href"]) for tag, attrs in rendered.tags if tag == "a"] == [
+        "https://e.com/a"
+    ]
+    assert "".join(rendered.text).strip() == message
+
+
+def test_a_trailing_apostrophe_is_trimmed_from_an_unshielded_link():
+    message = "https://e.com/a'"
+    rendered = _rendered(_md_escape(message))
+    assert [unquote(attrs["href"]) for tag, attrs in rendered.tags if tag == "a"] == [
+        "https://e.com/a"
+    ]
+    assert "".join(rendered.text).strip() == message
+
+
+def test_a_unicode_dash_cannot_start_a_host():
+    """U+2014 is in cmark's U+2010–U+2027 punctuation range, not a host character."""
+    message = "https://\u2014e.com/a*b*"
+    rendered = _rendered(_md_escape(message))
+    assert [tag for tag, _ in rendered.tags] == ["p"]
+    assert "".join(rendered.text).strip() == message
+
+
+def test_a_nbsp_cannot_start_a_host():
+    """NBSP is cmark_utf8proc_is_space, so it is not a host character."""
+    message = "https://\u00a0e.com/*PASSED*"
+    rendered = _rendered(_md_escape(message))
+    assert not any(tag in {"em", "strong", "del", "code"} for tag, _ in rendered.tags)
+    assert "".join(rendered.text).strip() == message
+
+
 def test_a_bare_www_dot_is_not_an_autolink_span():
     """The dot in ``www.`` is the last character, so cmark's strict domain check rejects it.
 
@@ -738,31 +790,90 @@ def _oracle_host_char(ch: str) -> bool:
     return not _oracle_punct(code)
 
 
-def _oracle_domain(text: str, *, allow_short: bool) -> int:
-    """check_domain. The first character is skipped. A backslash skips itself and the next character is examined, matching the C for-loop."""
-    size = len(text)
+def _oracle_decode(raw: bytes, index: int) -> int | None:
+    """cmark_utf8proc_iterate. None for a continuation byte or an invalid sequence."""
+    if index >= len(raw):
+        return None
+    first = raw[index]
+    if first < 0x80:
+        return first
+    if first < 0xC2 or first > 0xF4:
+        return None
+    width = 2 if first < 0xE0 else 3 if first < 0xF0 else 4
+    if index + width > len(raw):
+        return None
+    for offset in range(1, width):
+        if raw[index + offset] & 0xC0 != 0x80:
+            return None
+    if width == 2:
+        code = ((first & 0x1F) << 6) | (raw[index + 1] & 0x3F)
+        if code < 0x80:
+            return None
+    elif width == 3:
+        if first == 0xE0 and raw[index + 1] < 0xA0:
+            return None
+        if first == 0xED and raw[index + 1] >= 0xA0:
+            return None
+        code = ((first & 0x0F) << 12) | ((raw[index + 1] & 0x3F) << 6) | (raw[index + 2] & 0x3F)
+        if code < 0x800:
+            return None
+    else:
+        if first == 0xF0 and raw[index + 1] < 0x90:
+            return None
+        if first == 0xF4 and raw[index + 1] >= 0x90:
+            return None
+        code = (
+            ((first & 0x07) << 18)
+            | ((raw[index + 1] & 0x3F) << 12)
+            | ((raw[index + 2] & 0x3F) << 6)
+            | (raw[index + 3] & 0x3F)
+        )
+        if code < 0x10000 or code >= 0x110000:
+            return None
+    return code
+
+
+def _oracle_host_byte(raw: bytes, index: int) -> bool:
+    """is_valid_hostchar at a byte offset. A continuation byte is not a host character."""
+    code = _oracle_decode(raw, index)
+    if code is None:
+        return False
+    if code in (9, 10, 12, 13, 32, 160, 5760, 8239, 8287, 12288) or 8192 <= code <= 8202:
+        return False
+    return not _oracle_punct(code)
+
+
+def _oracle_domain(text: str, *, allow_short: bool) -> int | None:
+    """Code-point index where the tail scan resumes, or None when cmark rejects the host.
+
+    check_domain walks UTF-8 bytes. The returned byte length is mapped back to a code
+    point so callers can slice the Python string. None is rejection (cmark's 0). A 0
+    index is real: the byte length fell inside the first character, and the scan
+    resumes there. A backslash is skipped and the next byte is examined.
+    """
+    raw = text.encode("utf-8")
+    size = len(raw)
     index = 1
     uscore1 = 0
     uscore2 = 0
     dots = 0
     while index < size - 1:
-        if text[index] == "\\" and index < size - 2:
+        if raw[index] == 0x5C and index < size - 2:
             index += 1
-        ch = text[index]
-        if ch == "_":
+        if raw[index] == 0x5F:
             uscore2 += 1
-        elif ch == ".":
+        elif raw[index] == 0x2E:
             uscore1 = uscore2
             uscore2 = 0
             dots += 1
-        elif ch != "-" and not _oracle_host_char(ch):
+        elif raw[index] != 0x2D and not _oracle_host_byte(raw, index):
             break
         index += 1
     if (uscore1 or uscore2) and dots <= 10:
-        return 0
-    if allow_short:
-        return index
-    return index if dots else 0
+        return None
+    if not allow_short and not dots:
+        return None
+    return len(raw[:index].decode("utf-8", errors="ignore"))
 
 
 def _oracle_scan_end(text: str, start: int) -> int:
@@ -821,10 +932,10 @@ def _oracle_url(line: str, colon: int) -> tuple[int, int] | None:
     host = colon + 3
     if host >= len(line) or not _oracle_host_char(line[host]):
         return None
-    domain_len = _oracle_domain(line[host:], allow_short=True)
-    if domain_len == 0:
+    domain_at = _oracle_domain(line[host:], allow_short=True)
+    if domain_at is None:
         return None
-    return scheme, _oracle_scan_end(line, host + domain_len)
+    return scheme, _oracle_scan_end(line, host + domain_at)
 
 
 def _oracle_www(line: str, index: int) -> tuple[int, int] | None:
@@ -833,10 +944,10 @@ def _oracle_www(line: str, index: int) -> tuple[int, int] | None:
         return None
     if index and line[index - 1] not in _ORACLE_BEFORE and line[index - 1] not in _ORACLE_SPACE:
         return None
-    domain_len = _oracle_domain(line[index:], allow_short=False)
-    if domain_len == 0:
+    domain_at = _oracle_domain(line[index:], allow_short=False)
+    if domain_at is None:
         return None
-    return index, _oracle_scan_end(line, index + domain_len)
+    return index, _oracle_scan_end(line, index + domain_at)
 
 
 def _oracle_links(line: str) -> list[tuple[int, int, int]]:
@@ -912,7 +1023,9 @@ def _oracle_expectation(message: str) -> tuple[list[str], bool, bool]:
             if scheme and _oracle_angle_safe(kept):
                 hrefs.append(kept)
             continue
-        hrefs.append(("http://" + kept) if kept.startswith("www.") else kept)
+        # www_match always prefixes http://, including when delim trims the dot
+        # off ``www.?`` and the kept text is ``www`` (href ``http://www``).
+        hrefs.append(("http://" + kept) if message.startswith("www.", start) else kept)
         if scan_end < len(message) and message[scan_end] == "<":
             n1 = True
         if _tail_has_named_entity(tail):
@@ -925,6 +1038,8 @@ def _fuzz_messages(count: int) -> list[str]:
 
     ``<`` is not in the random mark alphabet. A small slice of lines places it
     directly after an address so N1 stays under 5% and the rest get the exact check.
+    ``@`` is absent on purpose: email, ``mailto:`` and ``xmpp:`` autolinks are not
+    modeled, so the corpus never asks the oracle to predict them.
     """
     exemplars = [
         "x\u00a0www.e.com/~~PASSED~~x y",
@@ -972,12 +1087,34 @@ def _fuzz_messages(count: int) -> list[str]:
         "HTTPS://E.COM/a_b",
         "ftp://files.example/a_b~",
         "www.e.com/a_b",
+        "www.?",
         "note * _ ~ [ ] ( ) \\ ` ! # https://e.com/a",
+        "see https://x\\_y.com/*PASSED*x end",
+        "see https://e.co\\_m/~~PASSED~~x end",
+        "see https://a_b.\u00fc.c.d/*PASSED*x end",
+        "see https://a_b.\u4f8b.c.d/~~PASSED~~x end",
+        "see www.a_b.\u00fc.c.d/*PASSED*x end",
+        "see https://a_b.\u00fc.c.d/`code` end",
+        "https://a.b.c.d.e.f.g.h.i.j.k.l_m.com/x_y",
     ]
     rng = random.Random(230)
     spaces = [" ", "\t", "\n", "\u00a0", "\u2003", "\u2028", "\u2029", "\u3000"]
     schemes = ["https://", "http://", "HTTPS://", "ftp://", "www."]
-    hosts = ["e.com", "a.com", "b.com", "files.example", "E.COM"]
+    hosts = [
+        "e.com",
+        "a.com",
+        "b.com",
+        "files.example",
+        "E.COM",
+        "x_y.com",
+        "x\\_y.com",
+        "e\\.com",
+        "\u00fc.com",
+        "\u4f8b.com",
+        "\u00e9_f.com",
+        "a\\*.com",
+        "a.b.c.d.e.f.g.h.i.j.k.l_m.com",
+    ]
     marks = list("?!.,:*_~'\"()")
     extras = [
         "&copy;",
@@ -1075,6 +1212,56 @@ def test_fuzz_rendered_text_and_hrefs_match_the_oracle():
         assert n3_count >= 8, n3_count
         assert 0 < n1_count <= count * 0.05, (n1_count, count)
     assert not failures, (failures, n1_count, n3_count, excluded)
+
+
+def _host_fuzz_messages(count: int) -> list[str]:
+    """Host-focused lines. ``@`` is omitted; email autolinks are not in this set."""
+    rng = random.Random(2330)
+    labels = [
+        "a",
+        "b_c",
+        "x",
+        "ü",
+        "例",
+        "é_f",
+        "\\_",
+        "a\\_b",
+        "e\\.",
+        "d",
+        "com",
+        "c_d",
+        "\\*",
+        "ö",
+    ]
+    schemes = ["https://", "http://", "ftp://", "www."]
+    paths = ["/", "/a", ""]
+    tails = ["*PASSED*x", "~~PASSED~~x", "`code`", "_i_x", " *b* y", ""]
+    messages = []
+    for _ in range(count):
+        host = ".".join(rng.choice(labels) for _ in range(rng.randint(1, 4)))
+        messages.append(
+            "see " + rng.choice(schemes) + host + rng.choice(paths) + rng.choice(tails) + " end"
+        )
+    return messages
+
+
+def test_host_fuzz_has_no_markup_and_keeps_the_text():
+    """Random hosts with underscores, backslashes and non-ASCII labels.
+
+    CI uses ``CV_HOST_FUZZ_CASES`` (default 2000). The local gate is 20000.
+    """
+    count = int(os.environ.get("CV_HOST_FUZZ_CASES", "2000"))
+    failures = []
+    for message in _host_fuzz_messages(count):
+        parsed = _rendered(_md_escape(message))
+        tags = [tag for tag, _ in parsed.tags]
+        if any(tag not in {"p", "a"} for tag in tags):
+            failures.append(("element", message, tags))
+        elif _visible(parsed) != message:
+            failures.append(("text", message, _visible(parsed)))
+        if len(failures) >= 5:
+            break
+    assert not failures, failures
 
 
 def test_the_inlined_collector_matches_collect_py():

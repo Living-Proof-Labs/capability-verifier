@@ -1779,22 +1779,35 @@ jobs:
 
 
           def _check_domain(text: str, *, allow_short: bool) -> int:
-              """Length of the host cmark-gfm's check_domain accepts, or 0 to reject the link.
+              """0 when cmark-gfm's check_domain rejects the host, and non-zero when it accepts.
 
-              The first character is skipped, matching cmark: the caller already required it to be a
-              host character for http(s)/ftp. Underscores in either of the last two labels reject the
-              link, unless the name has more than ten dots (cmark's own bound).
+              cmark walks UTF-8 bytes and returns a byte length. ``_url_span`` and ``_www_span`` use
+              only the zero test, then scan the rest of the address by code point, so this returns a
+              code-point index solely as that accept/reject flag. A non-ASCII first character makes
+              byte 1 a continuation byte and the C loop stops at once (length 1, or 0 for ``www``).
+              A later non-ASCII character is stopped the same way: its lead byte may be a host
+              character, and the continuation byte never is. A backslash is skipped and the next
+              character is examined, so ``x\\_y`` counts the underscore.
               """
+              if not text:
+                  return 0
               size = len(text)
               i = 1
               uscore1 = 0
               uscore2 = 0
               dots = 0
+              if ord(text[0]) > 127:
+                  # cmark scans bytes: index 1 is a UTF-8 continuation byte, so the loop stops at once.
+                  return 1 if allow_short else 0
               while i < size - 1:
                   ch = text[i]
                   if ch == "\\" and i < size - 2:
-                      i += 2
-                      continue
+                      # cmark: skip the backslash, then examine the escaped character.
+                      i += 1
+                      ch = text[i]
+                  if ord(ch) > 127:
+                      # The lead byte may be a host character, but the continuation byte never is.
+                      break
                   if ch == "_":
                       uscore2 += 1
                   elif ch == ".":
