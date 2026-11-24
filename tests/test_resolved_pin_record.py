@@ -210,6 +210,12 @@ def test_the_evidence_lock_records_the_filled_commit(tmp_path):
 def test_a_tag_only_lock_with_all_four_inputs_passes_repin_check(tmp_path):
     robot = tmp_path / "robot"
     body = _lock(verifier_commit=None, verifier_image=False, reporter_image=False, evaluator=None)
+    body["evaluators"] = {
+        "livingproof-evaluator-scenario": {
+            "repository": "Living-Proof-Labs/livingproof-evaluator-scenario",
+            "tag": "v1.5.16",
+        }
+    }
     done, written = _run(robot, body, _pins())
     assert done.returncode == 0, done.stderr
     assert written["releases"]["verifier"]["commit"] == VERIFIER_SHA
@@ -261,6 +267,7 @@ def test_a_supplied_commit_that_differs_from_the_tags_commit_fails(tmp_path):
     assert written["releases"]["verifier"]["commit"] == VERIFIER_SHA
 
 
+@pytest.mark.parametrize("path", ["script", "apply", "stamp"])
 @pytest.mark.parametrize(
     ("env_name", "ref"),
     [
@@ -304,8 +311,41 @@ def test_a_supplied_commit_that_differs_from_the_tags_commit_fails(tmp_path):
         ),
     ],
 )
-def test_another_owner_or_lookalike_name_is_rejected(tmp_path, env_name, ref):
-    robot = tmp_path / "robot"
-    done, _written = _run(robot, _lock(verifier_image=False, reporter_image=False), {env_name: ref})
-    assert done.returncode != 0, ref
-    assert "must be" in done.stderr
+def test_another_owner_or_lookalike_name_is_rejected(tmp_path, path, env_name, ref):
+    """The shell script and the Python apply/stamp path share one owner pattern."""
+    lock = _lock(verifier_image=False, reporter_image=False)
+    if path == "script":
+        done, _written = _run(tmp_path / "robot", lock, {env_name: ref})
+        assert done.returncode != 0, ref
+        assert "must be" in done.stderr
+        return
+    if path == "apply":
+        with pytest.raises(SystemExit, match="must be"):
+            apply_resolved_pins(lock, {env_name: ref})
+        return
+    key = "VERIFIER_IMAGE" if env_name.endswith("VERIFIER_IMAGE") else "REPORTER_IMAGE"
+    with pytest.raises(SystemExit, match="must be"):
+        record_resolved_pins(lock, {key: ref, f"{key}_SOURCE": "input"})
+
+
+@pytest.mark.parametrize("path", ["script", "apply"])
+@pytest.mark.parametrize(
+    ("env_name", "ref"),
+    [
+        ("RESOLVED_VERIFIER_COMMIT", OTHER_SHA),
+        ("RESOLVED_VERIFIER_IMAGE", VERIFIER_IMAGE),
+    ],
+)
+def test_a_verifier_input_fails_when_the_lock_has_no_tag(tmp_path, path, env_name, ref):
+    lock = _lock(verifier_commit=None, verifier_image=False)
+    del lock["releases"]["verifier"]["tag"]
+    if path == "script":
+        done, written = _run(tmp_path / "robot", lock, {env_name: ref})
+        assert done.returncode != 0
+        assert "verifier-" in done.stderr
+        assert "lock has no tag" in done.stderr
+        assert "<missing>" not in done.stderr
+        assert "commit" not in written["releases"]["verifier"]
+        return
+    with pytest.raises(SystemExit, match="lock has no tag"):
+        apply_resolved_pins(lock, {env_name: ref})

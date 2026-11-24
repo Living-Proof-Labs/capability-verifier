@@ -18,12 +18,15 @@ from pathlib import Path
 
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-VERIFIER_IMAGE = re.compile(
+# apply_resolved_pins.sh loads these two strings. Do not copy them into the shell.
+VERIFIER_IMAGE_PATTERN = (
     rf"^ghcr\.io/living-proof-labs/capability-verifier-hallway:{SEMVER}@sha256:[0-9a-f]{{64}}$"
 )
-REPORTER_IMAGE = re.compile(
+REPORTER_IMAGE_PATTERN = (
     rf"^ghcr\.io/living-proof-labs/livingproof-capability-report:{SEMVER}@sha256:[0-9a-f]{{64}}$"
 )
+VERIFIER_IMAGE = re.compile(VERIFIER_IMAGE_PATTERN)
+REPORTER_IMAGE = re.compile(REPORTER_IMAGE_PATTERN)
 
 INPUTS = {
     "verifier-commit": "RESOLVED_VERIFIER_COMMIT",
@@ -72,11 +75,17 @@ def _evaluator(lock: dict) -> dict:
     return entry
 
 
+def _require_tag(label: str, tag: object) -> str:
+    if not _present(tag):
+        raise PinError(f"{label}: lock has no tag")
+    return str(tag)
+
+
 def _check_commit(label: str, given: str, recorded: object, tag: object) -> None:
     if not COMMIT.fullmatch(given):
         raise PinError(f"{label} must be a 40-character lowercase hexadecimal SHA (got {given!r})")
+    shown = _require_tag(label, tag)
     if _present(recorded) and recorded != given:
-        shown = tag if _present(tag) else "<missing>"
         raise PinError(f"{label} {given} does not match the commit for tag {shown} ({recorded})")
 
 
@@ -94,12 +103,9 @@ def _check_image(
         )
         raise PinError(f"{label} must be {requirement} (got {given!r})")
     name, semver, digest = _split_image(given)
-    tag = entry.get("tag")
+    tag = _require_tag(label, entry.get("tag"))
     if semver != _tag_semver(tag):
-        shown = tag if _present(tag) else "<missing>"
-        raise PinError(
-            f"{label} semver {semver} does not match releases.{release_name}.tag {shown}"
-        )
+        raise PinError(f"{label} semver {semver} does not match releases.{release_name}.tag {tag}")
     recorded_name = entry.get("image")
     recorded_digest = entry.get("digest")
     if _present(recorded_name) and recorded_name != name:
@@ -170,13 +176,17 @@ def record_resolved_pins(lock: dict, environ: dict[str, str] | None = None) -> d
     if source("VERIFIER_COMMIT") == "input" and value("VERIFIER_COMMIT"):
         _release(result, "verifier")["commit"] = value("VERIFIER_COMMIT")
     if source("VERIFIER_IMAGE") == "input" and value("VERIFIER_IMAGE"):
-        name, _semver, digest = _split_image(value("VERIFIER_IMAGE"))
         entry = _release(result, "verifier")
+        name, _semver, digest = _check_image(
+            "verifier-image", value("VERIFIER_IMAGE"), VERIFIER_IMAGE, "verifier", entry
+        )
         entry["image"] = name
         entry["digest"] = digest
     if source("REPORTER_IMAGE") == "input" and value("REPORTER_IMAGE"):
-        name, _semver, digest = _split_image(value("REPORTER_IMAGE"))
         entry = _release(result, "reporter")
+        name, _semver, digest = _check_image(
+            "reporter-image", value("REPORTER_IMAGE"), REPORTER_IMAGE, "reporter", entry
+        )
         entry["image"] = name
         entry["digest"] = digest
     if source("EVALUATOR_COMMIT") == "input" and value("EVALUATOR_COMMIT"):

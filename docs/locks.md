@@ -146,7 +146,8 @@ leading `v` removed. `verifier-image semver 2.11.5 does not match releases.verif
 and the same sentence for `reporter-image` and `releases.reporter.tag`. A
 supplied commit has to be the commit already recorded for that tag:
 `verifier-commit <input> does not match the commit for tag <tag> (<lock commit>)`.
-The same sentence is used for `evaluator-commit`. The media and bundle gate
+The same sentence is used for `evaluator-commit`. If that release has no tag,
+the input fails with `lock has no tag` before either comparison. The media and bundle gate
 still reads `releases.verifier.tag` and `releases.reporter.tag` from the lock
 file.
 

@@ -20,9 +20,6 @@ reporter_image_raw=$(jq -r '.releases.reporter.image + ":" + (.releases.reporter
 evaluator_commit_raw=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].commit // empty' "$pin")
 
 commit_pattern='^[0-9a-f]{40}$'
-semver='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
-verifier_image_pattern="^ghcr\\.io/living-proof-labs/capability-verifier-hallway:${semver}@sha256:[0-9a-f]{64}$"
-reporter_image_pattern="^ghcr\\.io/living-proof-labs/livingproof-capability-report:${semver}@sha256:[0-9a-f]{64}$"
 
 # tag-commit: a supplied commit must be the commit recorded for that tag.
 # image-semver: a supplied image tag must be the lock tag without one leading v.
@@ -33,6 +30,22 @@ fail() {
   printf '%s\n' "$1" >&2
   exit 1
 }
+
+# The image patterns live in capability_verifier.resolved_pins. This script does not copy them.
+script_dir=$(cd "$(dirname "$0")" && pwd)
+src_dir=$(cd "$script_dir/../../src" && pwd)
+image_patterns=$(
+  PYTHONPATH="$src_dir${PYTHONPATH:+:$PYTHONPATH}" python3 -c '
+from capability_verifier.resolved_pins import VERIFIER_IMAGE, REPORTER_IMAGE
+print(VERIFIER_IMAGE.pattern)
+print(REPORTER_IMAGE.pattern)
+'
+)
+verifier_image_pattern=$(printf '%s\n' "$image_patterns" | sed -n '1p')
+reporter_image_pattern=$(printf '%s\n' "$image_patterns" | sed -n '2p')
+if [ -z "$verifier_image_pattern" ] || [ -z "$reporter_image_pattern" ]; then
+  fail "could not load the image patterns from capability_verifier.resolved_pins"
+fi
 
 field() {
   jq -r "$1" "$2"
@@ -63,6 +76,9 @@ resolve_commit() {
   if [[ ! "$given" =~ $commit_pattern ]]; then
     fail "$label must be a 40-character lowercase hexadecimal SHA (got $(printf '%q' "$given"))"
   fi
+  if [ -z "$tag" ]; then
+    fail "$label: lock has no tag"
+  fi
   if [ -n "$recorded" ] && [ "$recorded" != "$given" ]; then
     fail "$label $given does not match the commit for tag ${tag:-<missing>} ($recorded)"
   fi
@@ -83,6 +99,9 @@ resolve_image() {
   fi
   parse_image "$given"
   tag=$(field "$tag_expr" "$file")
+  if [ -z "$tag" ]; then
+    fail "$label: lock has no tag"
+  fi
   want=$(semver_of_tag "$tag")
   if [ "$parsed_semver" != "$want" ]; then
     if [ "$label" = "verifier-image" ]; then

@@ -394,6 +394,7 @@ def test_checker_messages_are_documented():
         "the verification lock is stale": ROOT / ".github/scripts/apply_resolved_pins.sh",
         "a 40-character lowercase hexadecimal SHA": ROOT / ".github/scripts/apply_resolved_pins.sh",
         "does not match the commit for tag": ROOT / ".github/scripts/apply_resolved_pins.sh",
+        "lock has no tag": ROOT / ".github/scripts/apply_resolved_pins.sh",
         "does not match releases.verifier.tag": ROOT / ".github/scripts/apply_resolved_pins.sh",
         "ghcr.io/living-proof-labs/capability-verifier-hallway:<semver>@sha256:<64 hex>": (
             ROOT / ".github/scripts/apply_resolved_pins.sh"

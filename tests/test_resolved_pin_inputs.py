@@ -88,7 +88,7 @@ def _document(
             "livingproof-evaluator-scenario": {
                 "repository": "Living-Proof-Labs/livingproof-evaluator-scenario",
                 "tag": "v1.5.16",
-                "commit": evaluator,
+                **({"commit": evaluator} if evaluator else {}),
             }
         }
     return body
@@ -281,7 +281,7 @@ def test_inputs_fill_absent_lock_fields(tmp_path):
             verifier_commit=None,
             include_verifier_image=False,
             reporter_image=None,
-            evaluator=None,
+            evaluator="",
         ),
     )
     done, outputs = _run(
