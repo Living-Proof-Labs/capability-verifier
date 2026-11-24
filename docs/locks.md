@@ -171,7 +171,7 @@ messages are:
 verifier-commit must be a 40-character lowercase hexadecimal SHA (got <value>)
 evaluator-commit must be a 40-character lowercase hexadecimal SHA (got <value>)
 verifier-image must be ghcr.io/living-proof-labs/capability-verifier-hallway:<semver>@sha256:<64 hex> (got <value>)
-reporter-image must be ghcr.io/living-proof-labs/livingproof-capability-report:<semver>@sha256:<64 hex> (got <value>)
+reporter-image must be ghcr.io/living-proof-labs/livingproof-capability-report image, tag <semver>, digest sha256:<64 hex> (got <value>)
 ```
 
 `got` prints the rejected value with shell quoting. The plan job records the

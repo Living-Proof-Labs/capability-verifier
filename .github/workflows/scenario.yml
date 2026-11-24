@@ -85,7 +85,7 @@ on:
       reporter-image:
         description: >-
           Optional reporter image ref resolved from the release tag:
-          ghcr.io/living-proof-labs/livingproof-capability-report:<semver>@sha256:<64 hex>.
+          ghcr.io/living-proof-labs/livingproof-capability-report image, tag <semver>, digest sha256:<64 hex>.
           Empty keeps the lock. When the lock ref is present and different, the plan fails.
         type: string
         default: ''
@@ -317,7 +317,7 @@ jobs:
           verifier_image_source=$pin_source
           resolve_pin "$reporter_image" "${RESOLVED_REPORTER_IMAGE:-}" "$reporter_image_pattern" \
             "reporter-image" "releases.reporter image ref" \
-            "ghcr.io/living-proof-labs/livingproof-capability-report:<semver>@sha256:<64 hex>"
+            "ghcr.io/living-proof-labs/livingproof-capability-report image, tag <semver>, digest sha256:<64 hex>"
           reporter_image=$pin_value
           reporter_image_source=$pin_source
           resolve_pin "$evaluator_commit" "${RESOLVED_EVALUATOR_COMMIT:-}" "$commit_pattern" \

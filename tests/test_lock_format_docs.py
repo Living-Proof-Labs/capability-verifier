@@ -396,7 +396,7 @@ def test_checker_messages_are_documented():
         "ghcr.io/living-proof-labs/capability-verifier-hallway:<semver>@sha256:<64 hex>": (
             ROOT / ".github/workflows/scenario.yml"
         ),
-        "ghcr.io/living-proof-labs/livingproof-capability-report:<semver>@sha256:<64 hex>": (
+        "ghcr.io/living-proof-labs/livingproof-capability-report image, tag <semver>, digest sha256:<64 hex>": (
             ROOT / ".github/workflows/scenario.yml"
         ),
         "verification-lock must be a relative path inside the caller repository": (
