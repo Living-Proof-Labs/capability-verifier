@@ -70,6 +70,13 @@ def _run_refs(robot: Path, source: str, bindir: Path):
     env["ONLY"] = ""
     env["EVIDENCE_SOURCE"] = source
     env.pop("PYTHONPATH", None)
+    for name in (
+        "RESOLVED_VERIFIER_COMMIT",
+        "RESOLVED_VERIFIER_IMAGE",
+        "RESOLVED_REPORTER_IMAGE",
+        "RESOLVED_EVALUATOR_COMMIT",
+    ):
+        env.pop(name, None)
     return subprocess.run(
         [bash, "-eo", "pipefail", "-c", _step("Refs from verification.lock.json")],
         check=False,

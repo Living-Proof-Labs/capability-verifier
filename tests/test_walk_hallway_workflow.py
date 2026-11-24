@@ -68,7 +68,8 @@ def test_every_ref_comes_from_the_robot_lock():
     assert "needs.plan.outputs.verifier-commit" in STEPS
     assert "LIVINGPROOF_VERIFIER_VERSION: ${{ needs.plan.outputs.verifier-version }}" in STEPS
     assert "livingproof-capability-report:1." not in STEPS
-    assert '"@" + .releases.reporter.digest' in STEPS
+    pins = (Path(__file__).parents[1] / ".github/scripts/apply_resolved_pins.sh").read_text()
+    assert '"@" + .releases.reporter.digest' in pins
 
 
 def test_current_pins_keep_the_robot_lock_and_a_caller_lock_overrides_it():
@@ -201,20 +202,22 @@ def _plan_outputs(robot):
     import json
 
     script = _step("Refs from verification.lock.json")
-    assert "jq -r '.releases.verifier.commit' verification.lock.json" in script
+    pins = (Path(__file__).parents[1] / ".github/scripts/apply_resolved_pins.sh").read_text()
+    assert "jq -r '.releases.verifier.commit' " in pins
     assert "jq -r '.releases.verifier.repository' verification.lock.json" in script
     assert (
         'jq -r \'.releases.verifier | if .image then .image + ":" + '
-        '(.tag | ltrimstr("v")) + "@" + .digest else "" end\' verification.lock.json'
-    ) in script
+        '(.tag | ltrimstr("v")) + "@" + .digest else "" end\' '
+    ) in pins
     assert "pin=verification.lock.json" in script
     assert 'if [ "${EVIDENCE_SOURCE:-}" != "caller" ]; then' in script
     assert "committed in the robot repository" in script
     assert "pin=caller-verification.lock.json" in script
-    for field in ("repository", "commit", "tag"):
+    for field in ("repository", "tag"):
         assert (
             f'jq -r \'(.evaluators // {{}})["livingproof-evaluator-scenario"].{field} // empty\' "$pin"'
         ) in script
+    assert '(.evaluators // {})["livingproof-evaluator-scenario"].commit // empty' in pins
     evidence = json.loads((robot / "verification.lock.json").read_text())
     pin_path = robot / "caller-verification.lock.json"
     pin = json.loads(pin_path.read_text()) if pin_path.is_file() else evidence
@@ -828,8 +831,11 @@ def test_capability_installs_pinned_packaging_before_the_gate():
 
 
 def test_evidence_verify_and_media_run_in_the_locked_hallway_image():
-    assert ".releases.verifier | if .image then .image" in STEPS
-    assert "ghcr.io/living-proof-labs/capability-verifier-hallway" not in STEPS  # lock only
+    pins = (Path(__file__).parents[1] / ".github/scripts/apply_resolved_pins.sh").read_text()
+    assert ".releases.verifier | if .image then .image" in pins
+    # Jobs take the container image from the plan output. The registry name is
+    # checked only when a caller passes the resolved verifier-image input.
+    assert "image: ghcr.io/" not in STEPS
     for job in ("evidence", "verify", "scenario-evaluator", "scenario-media", "media"):
         body = WORKFLOW.split(f"\n  {job}:\n", 1)[1].split("\n  report:\n", 1)[0]
         head = body.split("    steps:\n", 1)[0]
@@ -1320,10 +1326,25 @@ elif "].repository" in filt:
     emit(evaluators.get("repository", ""))
 elif "].tag" in filt:
     emit(evaluators.get("tag", ""))
+elif "// empty" in filt and "verifier.image" in filt:
+    emit("" if verifier.get("image") is None else verifier["image"])
+elif "// empty" in filt and "verifier.digest" in filt:
+    emit("" if verifier.get("digest") is None else verifier["digest"])
+elif "// empty" in filt and "verifier.tag" in filt:
+    emit("" if verifier.get("tag") is None else verifier["tag"])
+elif "// empty" in filt and "verifier.commit" in filt:
+    emit("" if verifier.get("commit") is None else verifier["commit"])
+elif "// empty" in filt and "reporter.image" in filt:
+    emit("" if reporter.get("image") is None else reporter["image"])
+elif "// empty" in filt and "reporter.digest" in filt:
+    emit("" if reporter.get("digest") is None else reporter["digest"])
+elif "// empty" in filt and "reporter.tag" in filt:
+    emit("" if reporter.get("tag") is None else reporter["tag"])
 elif "verifier.repository" in filt:
     emit(verifier.get("repository", ""))
 elif "verifier.commit" in filt:
-    emit(verifier.get("commit", ""))
+    # jq -r prints the word null for a missing or JSON null commit.
+    emit("null" if verifier.get("commit") is None else verifier["commit"])
 elif "verifier.tag" in filt:
     emit(str(verifier.get("tag", "")).removeprefix("v"))
 elif "if .image" in filt:
@@ -1333,8 +1354,14 @@ elif "if .image" in filt:
     else:
         emit("")
 elif "reporter" in filt:
-    tag = str(reporter.get("tag", "")).removeprefix("v")
-    emit(f"{reporter['image']}:{tag}@{reporter['digest']}")
+    # jq joins null image, tag and digest as :@. A present tag loses one leading v.
+    image = reporter.get("image")
+    tag = reporter.get("tag")
+    digest = reporter.get("digest")
+    tag_text = "" if tag is None else str(tag).removeprefix("v")
+    emit(
+        f"{'' if image is None else image}:{tag_text}@{'' if digest is None else digest}"
+    )
 elif ".scenario" in filt:
     emit(doc.get("scenario") or "")
 elif ".world.id" in filt:
@@ -1358,6 +1385,16 @@ def _run_refs(robot: Path, source: str):
     env["ONLY"] = ""
     env["EVIDENCE_SOURCE"] = source
     env.pop("PYTHONPATH", None)
+    env["RESOLVED_PINS_SCRIPT"] = str(
+        Path(__file__).parents[1] / ".github/scripts/apply_resolved_pins.sh"
+    )
+    for name in (
+        "RESOLVED_VERIFIER_COMMIT",
+        "RESOLVED_VERIFIER_IMAGE",
+        "RESOLVED_REPORTER_IMAGE",
+        "RESOLVED_EVALUATOR_COMMIT",
+    ):
+        env.pop(name, None)
     done = subprocess.run(
         ["bash", "-eo", "pipefail", "-c", _step("Refs from verification.lock.json")],
         check=False,

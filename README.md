@@ -500,6 +500,27 @@ call this workflow themselves still rely on. Every field, the `lock --check` fai
 the evaluator tag and the refusal of a caller lock committed in the robot repository
 are in [Verification locks](docs/locks.md).
 
+Four optional inputs carry a commit or image ref the caller already resolved from
+a release tag: `verifier-commit`, `verifier-image`, `reporter-image` and
+`evaluator-commit`. Leave one empty and that lock field stays the source, which
+is what existing callers do. Set one and the plan uses it for
+`releases.verifier.commit`, the verifier `image:tag@digest`, the reporter
+`image:tag@digest`, or `evaluators.livingproof-evaluator-scenario.commit`.
+A commit is 40 lowercase hexadecimal characters. A verifier image ref is
+`ghcr.io/living-proof-labs/capability-verifier-hallway:<semver>@sha256:<64 hex>`.
+A reporter image ref is
+`ghcr.io/living-proof-labs/livingproof-capability-report:<semver>@sha256:<64 hex>`.
+`<semver>` is `MAJOR.MINOR.PATCH` with no leading zeros, and it has to equal
+the lock tag with one leading `v` removed. A supplied commit has to be the
+commit already recorded for that tag. An empty commit, image or digest is
+absent and the input fills it; the plan writes that value into the lock before
+`repin --check`, and the evidence lock records it. When the lock already holds
+a different value, the plan fails and names both values, because the lock is
+stale. The plan job records `verifier-commit-source`, `verifier-image-source`,
+`reporter-image-source` and `evaluator-commit-source` as `input` or `lock`.
+The spelling rules and the failure text are in
+[Verification locks](docs/locks.md#resolved-pins).
+
 The robot repository provides the lock, `pins.json`, `tests/` and a `pyproject.toml` with
 the runner source and `[tool.livingproof] adapter = "<module>:ROBOT"`. The workflow runs
 lint, profile validation and the robot's tests (`check`, disable with `check: false`) and

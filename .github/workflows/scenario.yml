@@ -19,6 +19,10 @@
 # and the sha256 of the robot file it replaced, or that the robot commit has no lock. When the
 # input is empty and the robot commit has verification.lock.json, that file stays the only
 # source (the v1.18.0 path). Nothing is pinned in this file.
+# Optional inputs verifier-commit, verifier-image, reporter-image and evaluator-commit
+# supply a commit or image ref the caller resolved from a release tag. Empty leaves
+# the lock field unchanged. A set input replaces that field after a strict check.
+# If the lock field is present and different, the plan fails: the lock is stale.
 # A capability FAIL is the result, not a CI failure. Evidence exit 4 means
 # livingproof-sim-mujoco wrote the manifest and identical trials disagreed. That step
 # continues only when the manifest records a test-system reproducibility finding.
@@ -62,6 +66,34 @@ on:
           at this lock, and records the replaced robot lock's sha256. Empty
           leaves a robot verification.lock.json as the only source.
           PENDING_RELEASE in a caller lock still fails.
+        type: string
+        default: ''
+      verifier-commit:
+        description: >-
+          Optional releases.verifier.commit resolved from the release tag
+          (40 lowercase hexadecimal characters). Empty keeps the lock. When the
+          lock commit is present and different, the plan fails.
+        type: string
+        default: ''
+      verifier-image:
+        description: >-
+          Optional verifier image ref resolved from the release tag:
+          ghcr.io/living-proof-labs/capability-verifier-hallway:<semver>@sha256:<64 hex>.
+          Empty keeps the lock. When the lock ref is present and different, the plan fails.
+        type: string
+        default: ''
+      reporter-image:
+        description: >-
+          Optional reporter image ref resolved from the release tag:
+          ghcr.io/living-proof-labs/livingproof-capability-report image, tag <semver>, digest sha256:<64 hex>.
+          Empty keeps the lock. When the lock ref is present and different, the plan fails.
+        type: string
+        default: ''
+      evaluator-commit:
+        description: >-
+          Optional evaluators.livingproof-evaluator-scenario.commit resolved from
+          the release tag (40 lowercase hexadecimal characters). Empty keeps the
+          lock. When the lock commit is present and different, the plan fails.
         type: string
         default: ''
       artifact-prefix:
@@ -152,6 +184,10 @@ jobs:
       evaluator-repository: ${{ steps.lock.outputs.evaluator-repository }}
       evaluator-commit: ${{ steps.lock.outputs.evaluator-commit }}
       evaluator-tag: ${{ steps.lock.outputs.evaluator-tag }}
+      verifier-commit-source: ${{ steps.lock.outputs.verifier-commit-source }}
+      verifier-image-source: ${{ steps.lock.outputs.verifier-image-source }}
+      reporter-image-source: ${{ steps.lock.outputs.reporter-image-source }}
+      evaluator-commit-source: ${{ steps.lock.outputs.evaluator-commit-source }}
       # Tag-only pin for livingproof-evaluator-run (no commit).
       run-integrity-repository: ${{ steps.lock.outputs.run-integrity-repository }}
       run-integrity-tag: ${{ steps.lock.outputs.run-integrity-tag }}
@@ -200,12 +236,37 @@ jobs:
           # Keep workflow-src: the evaluator pin check below imports this
           # workflow's code, not the locked verifier, which may be older.
           rm -rf caller
+      - id: resolved-pin-source
+        env:
+          # actionlint's job type omits workflow_repository and workflow_sha.
+          JOB_JSON: ${{ toJson(job) }}
+        run: |
+          set -euo pipefail
+          repository="$(jq -r .workflow_repository <<<"$JOB_JSON")"
+          sha="$(jq -r .workflow_sha <<<"$JOB_JSON")"
+          test -n "$repository"
+          test "$repository" != null
+          test -n "$sha"
+          test "$sha" != null
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Resolved pin script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ steps.resolved-pin-source.outputs.repository }}
+          ref: ${{ steps.resolved-pin-source.outputs.sha }}
+          path: resolved-pin-src
+          persist-credentials: false
       - name: Refs from verification.lock.json
         id: lock
         working-directory: robot
         env:
           ONLY: ${{ inputs.configurations }}
           EVIDENCE_SOURCE: ${{ steps.evidence-inputs.outputs.source || steps.robot-lock.outputs.source }}
+          RESOLVED_VERIFIER_COMMIT: ${{ inputs.verifier-commit }}
+          RESOLVED_VERIFIER_IMAGE: ${{ inputs.verifier-image }}
+          RESOLVED_REPORTER_IMAGE: ${{ inputs.reporter-image }}
+          RESOLVED_EVALUATOR_COMMIT: ${{ inputs.evaluator-commit }}
         run: |
           # Evaluator pins live on the selected lock. The caller copy keeps the 0.2.0
           # evaluators field. A caller-verification.lock.json committed in the robot
@@ -228,16 +289,59 @@ jobs:
           fi
           echo "scenario: $(jq -r '.scenario // empty' verification.lock.json)"
           echo "world: $(jq -r '.world.id // empty' verification.lock.json)"
+          # Resolved pins are decided by apply_resolved_pins.sh (real jq). Empty inputs
+          # keep the lock. A set input fills an empty field and is written into the lock
+          # before capability and repin. A commit that is not the tag's commit, or an
+          # image semver that is not the lock tag, fails here.
+          apply=${RESOLVED_PINS_SCRIPT:-}
+          if [ -z "$apply" ] && [ -n "${GITHUB_WORKSPACE:-}" ]; then
+            apply=$GITHUB_WORKSPACE/resolved-pin-src/.github/scripts/apply_resolved_pins.sh
+          fi
+          if [ -z "$apply" ] || [ ! -f "$apply" ]; then
+            echo "apply_resolved_pins.sh is not available" >&2
+            exit 1
+          fi
+          resolved_out=$(mktemp)
+          RESOLVED_PIN_FILE=$pin bash "$apply" > "$resolved_out"
+          verifier_commit=
+          verifier_image=
+          reporter_image=
+          evaluator_commit=
+          verifier_commit_source=
+          verifier_image_source=
+          reporter_image_source=
+          evaluator_commit_source=
+          while IFS= read -r line; do
+            case $line in
+              verifier-commit=*) verifier_commit=${line#verifier-commit=} ;;
+              verifier-image=*) verifier_image=${line#verifier-image=} ;;
+              reporter-image=*) reporter_image=${line#reporter-image=} ;;
+              evaluator-commit=*) evaluator_commit=${line#evaluator-commit=} ;;
+              verifier-commit-source=*) verifier_commit_source=${line#verifier-commit-source=} ;;
+              verifier-image-source=*) verifier_image_source=${line#verifier-image-source=} ;;
+              reporter-image-source=*) reporter_image_source=${line#reporter-image-source=} ;;
+              evaluator-commit-source=*) evaluator_commit_source=${line#evaluator-commit-source=} ;;
+            esac
+          done < "$resolved_out"
+          rm -f "$resolved_out"
+          echo "pin source verifier-commit=$verifier_commit_source"
+          echo "pin source verifier-image=$verifier_image_source"
+          echo "pin source reporter-image=$reporter_image_source"
+          echo "pin source evaluator-commit=$evaluator_commit_source"
           {
             echo "configurations=$configurations"
             echo "verifier-repository=$(jq -r '.releases.verifier.repository' verification.lock.json)"
-            echo "verifier-commit=$(jq -r '.releases.verifier.commit' verification.lock.json)"
+            echo "verifier-commit=$verifier_commit"
             echo "verifier-version=$(jq -r '.releases.verifier.tag | ltrimstr("v")' verification.lock.json)"
-            echo "verifier-image=$(jq -r '.releases.verifier | if .image then .image + ":" + (.tag | ltrimstr("v")) + "@" + .digest else "" end' verification.lock.json)"
-            echo "reporter-image=$(jq -r '.releases.reporter.image + ":" + (.releases.reporter.tag | ltrimstr("v")) + "@" + .releases.reporter.digest' verification.lock.json)"
+            echo "verifier-image=$verifier_image"
+            echo "reporter-image=$reporter_image"
             echo "evaluator-repository=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].repository // empty' "$pin")"
-            echo "evaluator-commit=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].commit // empty' "$pin")"
+            echo "evaluator-commit=$evaluator_commit"
             echo "evaluator-tag=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].tag // empty' "$pin")"
+            echo "verifier-commit-source=$verifier_commit_source"
+            echo "verifier-image-source=$verifier_image_source"
+            echo "reporter-image-source=$reporter_image_source"
+            echo "evaluator-commit-source=$evaluator_commit_source"
             # Tag-only pin. Default livingproof-evaluator-run v1.5.0 so
             # the run-integrity job runs when the lock omits the pin.
             repo=$(jq -r '(.evaluators // {})["livingproof-evaluator-run"].repository // empty' "$pin")
@@ -380,6 +484,39 @@ jobs:
         run: |
           sh workflow-src/.github/scripts/write_evidence_inputs.sh . caller "$VERIFICATION_LOCK" workflow-src >> "$GITHUB_OUTPUT"
           rm -rf caller workflow-src
+      - id: resolved-pin-source
+        env:
+          # actionlint's job type omits workflow_repository and workflow_sha.
+          JOB_JSON: ${{ toJson(job) }}
+        run: |
+          set -euo pipefail
+          repository="$(jq -r .workflow_repository <<<"$JOB_JSON")"
+          sha="$(jq -r .workflow_sha <<<"$JOB_JSON")"
+          test -n "$repository"
+          test "$repository" != null
+          test -n "$sha"
+          test "$sha" != null
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Resolved pin script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ steps.resolved-pin-source.outputs.repository }}
+          ref: ${{ steps.resolved-pin-source.outputs.sha }}
+          path: resolved-pin-src
+          persist-credentials: false
+      - name: Record resolved pins in the evidence lock
+        env:
+          PYTHONPATH: ${{ github.workspace }}/resolved-pin-src/src
+          VERIFIER_COMMIT: ${{ needs.plan.outputs.verifier-commit }}
+          VERIFIER_COMMIT_SOURCE: ${{ needs.plan.outputs.verifier-commit-source }}
+          VERIFIER_IMAGE: ${{ needs.plan.outputs.verifier-image }}
+          VERIFIER_IMAGE_SOURCE: ${{ needs.plan.outputs.verifier-image-source }}
+          REPORTER_IMAGE: ${{ needs.plan.outputs.reporter-image }}
+          REPORTER_IMAGE_SOURCE: ${{ needs.plan.outputs.reporter-image-source }}
+          EVALUATOR_COMMIT: ${{ needs.plan.outputs.evaluator-commit }}
+          EVALUATOR_COMMIT_SOURCE: ${{ needs.plan.outputs.evaluator-commit-source }}
+        run: python3 -m capability_verifier.resolved_pins --record verification.lock.json
       - name: Workflow source for the verifier image record
         # The recording script comes from the commit of this workflow, not from the image
         # under test, so an older locked image cannot lack it or change it.
@@ -891,6 +1028,39 @@ jobs:
         run: |
           sh workflow-src/.github/scripts/write_evidence_inputs.sh . caller "$VERIFICATION_LOCK" workflow-src >> "$GITHUB_OUTPUT"
           rm -rf caller workflow-src
+      - id: resolved-pin-source
+        env:
+          # actionlint's job type omits workflow_repository and workflow_sha.
+          JOB_JSON: ${{ toJson(job) }}
+        run: |
+          set -euo pipefail
+          repository="$(jq -r .workflow_repository <<<"$JOB_JSON")"
+          sha="$(jq -r .workflow_sha <<<"$JOB_JSON")"
+          test -n "$repository"
+          test "$repository" != null
+          test -n "$sha"
+          test "$sha" != null
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Resolved pin script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ steps.resolved-pin-source.outputs.repository }}
+          ref: ${{ steps.resolved-pin-source.outputs.sha }}
+          path: resolved-pin-src
+          persist-credentials: false
+      - name: Record resolved pins in the evidence lock
+        env:
+          PYTHONPATH: ${{ github.workspace }}/resolved-pin-src/src
+          VERIFIER_COMMIT: ${{ needs.plan.outputs.verifier-commit }}
+          VERIFIER_COMMIT_SOURCE: ${{ needs.plan.outputs.verifier-commit-source }}
+          VERIFIER_IMAGE: ${{ needs.plan.outputs.verifier-image }}
+          VERIFIER_IMAGE_SOURCE: ${{ needs.plan.outputs.verifier-image-source }}
+          REPORTER_IMAGE: ${{ needs.plan.outputs.reporter-image }}
+          REPORTER_IMAGE_SOURCE: ${{ needs.plan.outputs.reporter-image-source }}
+          EVALUATOR_COMMIT: ${{ needs.plan.outputs.evaluator-commit }}
+          EVALUATOR_COMMIT_SOURCE: ${{ needs.plan.outputs.evaluator-commit-source }}
+        run: python3 -m capability_verifier.resolved_pins --record verification.lock.json
       - if: needs.plan.outputs.verifier-image == ''
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
       - if: needs.plan.outputs.verifier-image == ''

@@ -808,13 +808,22 @@ def prepare_evidence_inputs(
             "the robot commit has no verification.lock.json; pass a "
             "livingproof-verification-lock/0.2.0 as verification-lock"
         )
+    from capability_verifier.resolved_pins import apply_resolved_pins
+
+    applied = apply_resolved_pins(lock)
     digest = sha256(robot_lock.read_bytes()) if robot_lock.is_file() else None
-    evidence_lock.write_evidence_document(lock, robot_lock)
+    evidence_lock.write_evidence_document(applied, robot_lock)
     if digest is not None:
         evidence_lock.note_overridden_robot_lock(robot_lock, digest)
     for line in evidence_lock.evidence_source_lines(digest):
         print(line, file=sys.stderr)
-    (robot / evidence_lock.CALLER_LOCK_NAME).write_bytes(caller_lock.read_bytes())
+    caller_dest = robot / evidence_lock.CALLER_LOCK_NAME
+    if applied.get("releases") != lock.get("releases") or applied.get("evaluators") != lock.get(
+        "evaluators"
+    ):
+        caller_dest.write_text(json.dumps(applied, indent=2) + "\n")
+    else:
+        caller_dest.write_bytes(caller_lock.read_bytes())
     work_dir = work if work is not None else Path(tempfile.mkdtemp(prefix="source-files-"))
     evidence_lock.place_source_files(lock, robot, work_dir)
     return {"EVIDENCE_SOURCE": "caller"}
@@ -828,7 +837,11 @@ def tally(verification: Path) -> dict:
 def run(definition: Path, out: Path, *, reporter: str = "docker") -> dict:
     out = out.resolve()
     work = out / ".work"
-    lock = check(definition, work)
+    from capability_verifier.resolved_pins import apply_resolved_pins
+
+    # Replay reads releases.verifier.commit from the lock. Apply supplied pins
+    # first so the checkout and the evidence document use the filled commit.
+    lock = apply_resolved_pins(check(definition, work))
     v = lock["releases"]["verifier"]
     robot, verifier = work / "robot", work / "verifier"
     checkout(v["repository"], v["commit"], verifier)
@@ -840,7 +853,12 @@ def run(definition: Path, out: Path, *, reporter: str = "docker") -> dict:
     sh(
         step(wf, "Refs from verification.lock.json"),
         robot,
-        {**gh, "ONLY": only, **evidence_env},
+        {
+            **gh,
+            "ONLY": only,
+            **evidence_env,
+            "RESOLVED_PINS_SCRIPT": str(verifier / ".github/scripts/apply_resolved_pins.sh"),
+        },
         work / "r.out",
     )
     sh(step(wf, "Every ref is a released tag"), work, {**gh, **evidence_env})
