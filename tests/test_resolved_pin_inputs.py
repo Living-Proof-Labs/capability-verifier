@@ -27,9 +27,7 @@ SHA_REQUIREMENT = "a 40-character lowercase hexadecimal SHA"
 VERIFIER_IMAGE_REQUIREMENT = (
     "ghcr.io/living-proof-labs/capability-verifier-hallway:<semver>@sha256:<64 hex>"
 )
-REPORTER_IMAGE_REQUIREMENT = (
-    "ghcr.io/living-proof-labs/livingproof-capability-report image, tag <semver>, digest sha256:<64 hex>"
-)
+REPORTER_IMAGE_REQUIREMENT = "ghcr.io/living-proof-labs/livingproof-capability-report image, tag <semver>, digest sha256:<64 hex>"
 PIN_ENV = (
     "RESOLVED_VERIFIER_COMMIT",
     "RESOLVED_VERIFIER_IMAGE",
