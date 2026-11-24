@@ -648,11 +648,30 @@ def _step(name):
     return "\n".join(lines) + "\n"
 
 
+# scenario.yml keeps this path. Tests that execute the step rewrite it.
+_SHARED_COLLECTOR = "/tmp/collect_evaluator_results.py"
+
+
+def _isolated_collector(script: str, directory: Path) -> str:
+    """Point the inlined collector at a file under ``directory``.
+
+    The workflow step keeps ``/tmp/collect_evaluator_results.py``. Two checkouts
+    running that step share the file and one can truncate it while the other
+    runs it. The heredoc is ``collect.py`` and does not contain this path, so
+    only the ``cat`` and ``python3`` lines change.
+    """
+    if _SHARED_COLLECTOR not in script:
+        return script
+    destination = (Path(directory) / "collect_evaluator_results.py").as_posix()
+    return script.replace(_SHARED_COLLECTOR, "'" + destination + "'")
+
+
 def _run(tmp_path, script, tool, bundle_version):
     """Run a workflow step with ``tool`` replaced by a stub that logs its arguments."""
     import os
     import subprocess
 
+    script = _isolated_collector(script, tmp_path)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     stub = bin_dir / tool
@@ -769,11 +788,20 @@ def test_collect_then_render_keeps_thresholds_in_an_existing_reports_directory(t
     (results / "playground-seed-01.json").write_text(json.dumps(document) + "\n")
     (results / "thresholds.json").write_bytes(cited)
 
+    shared = Path("/tmp/collect_evaluator_results.py")
+    before = shared.read_bytes() if shared.exists() else None
     subprocess.run(
-        ["bash", "-e", "-c", _step("Append each evaluator's result documents")],
+        [
+            "bash",
+            "-e",
+            "-c",
+            _isolated_collector(_step("Append each evaluator's result documents"), work),
+        ],
         cwd=work,
         check=True,
     )
+    assert (work / "collect_evaluator_results.py").is_file()
+    assert (shared.read_bytes() if shared.exists() else None) == before
     assert (work / "reports" / "thresholds.json").read_bytes() == cited
 
     _run(work, _step("Validate, then render"), "livingproof-capability-report", "1.1.0")
@@ -781,6 +809,30 @@ def test_collect_then_render_keeps_thresholds_in_an_existing_reports_directory(t
     assert (work / "reports" / "report.json").is_file()
     sums = (work / "reports" / "SHA256SUMS").read_text()
     assert f"{digest}  thresholds.json" in sums
+
+
+def test_executed_collector_steps_use_a_private_path_and_keep_the_heredoc(tmp_path):
+    """The workflow path stays ``/tmp``. A test that runs the step rewrites it.
+
+    The heredoc body stays byte-identical to ``collect.py``.
+    """
+    source = (Path(__file__).parents[1] / "src/capability_verifier/collect.py").read_text(
+        encoding="utf-8"
+    )
+    destination = (tmp_path / "collect_evaluator_results.py").as_posix()
+    append = _step("Append each evaluator's result documents")
+    render = _step("Validate, then render")
+    assert append.count(_SHARED_COLLECTOR) == 2
+    assert render.count(_SHARED_COLLECTOR) == 1
+    rewritten = _isolated_collector(append, tmp_path)
+    assert _SHARED_COLLECTOR not in rewritten
+    assert f"'{destination}'" in rewritten
+    start = rewritten.index("<<'COLLECT'\n") + len("<<'COLLECT'\n")
+    end = rewritten.index("\nCOLLECT\n", start)
+    assert "\n".join(rewritten[start:end].splitlines()) + "\n" == source
+    rendered = _isolated_collector(render, tmp_path)
+    assert _SHARED_COLLECTOR not in rendered
+    assert f"python3 '{destination}' --place-integrity reports" in rendered
 
 
 def test_pre_and_dev_releases_fail_closed_and_never_count_as_the_release(tmp_path):
@@ -980,7 +1032,10 @@ def test_rendered_html_shows_each_trial_duration(tmp_path, monkeypatch):
     env = dict(os.environ)
     env["PATH"] = f"{_reporter_3_6_0(tmp_path)}{os.pathsep}{env['PATH']}"
     subprocess.run(
-        ["bash", "-e", "-c", _step("Validate, then render")], cwd=job, env=env, check=True
+        ["bash", "-e", "-c", _isolated_collector(_step("Validate, then render"), job)],
+        cwd=job,
+        env=env,
+        check=True,
     )
     html = (job / "reports" / "report.html").read_text()
     cells = re.findall(r"<td data-label='Duration'><span class='cell-value'>([^<]*)</span>", html)

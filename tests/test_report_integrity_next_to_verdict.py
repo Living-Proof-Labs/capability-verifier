@@ -17,7 +17,7 @@ import subprocess
 import pytest
 from test_collect_integrity import _integrity
 from test_report_integrity_not_run_render import _job
-from test_walk_hallway_workflow import _reporter_3_6_0, _step
+from test_walk_hallway_workflow import _isolated_collector, _reporter_3_6_0, _step
 
 REPORTS = ("report.md", "report.txt", "report.html")
 REFUSAL = "livingproof-evaluator-run: media is refused: media.json has no trials; no result written"
@@ -52,7 +52,12 @@ def _reports(tmp_path, monkeypatch, state):
     env["RUN_INTEGRITY_RESULT"] = result
     env["EVALUATOR_RESULTS_PATTERN"] = "evaluator-results-*-playground"
     for name in ("Append each evaluator's result documents", "Validate, then render"):
-        subprocess.run(["bash", "-e", "-c", _step(name)], cwd=job, env=env, check=True)
+        subprocess.run(
+            ["bash", "-e", "-c", _isolated_collector(_step(name), job)],
+            cwd=job,
+            env=env,
+            check=True,
+        )
     texts = [(job / "reports" / n).read_text(encoding="utf-8") for n in REPORTS]
     return (*texts, job)
 
@@ -111,7 +116,12 @@ def test_without_the_job_result_or_a_document_the_reports_have_no_integrity_line
     env["EVALUATOR_RESULTS_PATTERN"] = "evaluator-results-*-playground"
     env.pop("RUN_INTEGRITY_RESULT", None)
     for name in ("Append each evaluator's result documents", "Validate, then render"):
-        subprocess.run(["bash", "-e", "-c", _step(name)], cwd=job, env=env, check=True)
+        subprocess.run(
+            ["bash", "-e", "-c", _isolated_collector(_step(name), job)],
+            cwd=job,
+            env=env,
+            check=True,
+        )
     reports = job / "reports"
     assert "Run Integrity" not in (reports / "report.md").read_text(encoding="utf-8")
     assert "Run Integrity" not in (reports / "report.txt").read_text(encoding="utf-8")

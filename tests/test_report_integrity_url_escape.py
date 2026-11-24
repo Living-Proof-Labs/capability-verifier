@@ -504,6 +504,36 @@ def test_a_domain_with_more_than_ten_dots_still_links_with_an_underscore():
     assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == [url]
 
 
+def test_an_underscore_in_the_last_two_labels_links_only_past_ten_dots():
+    """Kills moving ``dots <= 10`` to ``dots <= 11`` or to ``dots <= 9``.
+
+    The underscore is in the second-to-last label. Ten dots is not a link.
+    Eleven dots is. A twelve-dot host stays linked under both of those edits.
+
+    cmark itself still refuses a raw ten-dot host, so the rendered HTML does not
+    change when the bound drops to 9. The span check is the rejection.
+    """
+    from capability_verifier.collect import _url_span
+
+    rejected_host = "a.b.c.d.e.f.g.h.i.j_k.com"
+    accepted_host = "a.b.c.d.e.f.g.h.i.j.k_l.com"
+    assert rejected_host.count(".") == 10
+    assert accepted_host.count(".") == 11
+    assert "_" in rejected_host.split(".")[-2]
+    assert "_" in accepted_host.split(".")[-2]
+
+    rejected = f"https://{rejected_host}/x"
+    assert _url_span(rejected, rejected.index("://")) is None
+    rendered = _rendered(_md_escape(rejected))
+    assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == []
+    assert "".join(rendered.text).strip() == rejected
+
+    accepted = f"https://{accepted_host}/x"
+    assert _url_span(accepted, accepted.index("://")) is not None
+    rendered = _rendered(_md_escape(accepted))
+    assert [attrs["href"] for tag, attrs in rendered.tags if tag == "a"] == [accepted]
+
+
 def test_a_backslash_in_the_domain_does_not_free_the_following_emphasis():
     rendered = _rendered(_md_escape("https://a\\.b_c.com/a*b*c"))
     assert not any(tag == "em" for tag, _ in rendered.tags)
@@ -556,6 +586,19 @@ def test_a_unicode_dash_cannot_start_a_host():
 def test_a_nbsp_cannot_start_a_host():
     """NBSP is cmark_utf8proc_is_space, so it is not a host character."""
     message = "https://\u00a0e.com/*PASSED*"
+    rendered = _rendered(_md_escape(message))
+    assert not any(tag in {"em", "strong", "del", "code"} for tag, _ in rendered.tags)
+    assert "".join(rendered.text).strip() == message
+
+
+def test_a_nbsp_host_with_an_untrimmed_mark_stays_plain():
+    """NBSP cannot open a host, including when the mark is not a trimmed tail.
+
+    ``*PASSED*`` is followed by ``x``, so autolink trim does not eat the star.
+    ``https://\\u00a0e.com/*PASSED*`` still passes if 160 leaves ``_cmark_utf8_space``:
+    the trailing star is trimmed and the line takes the angle-autolink path.
+    """
+    message = "see https://\u00a0*PASSED*x end"
     rendered = _rendered(_md_escape(message))
     assert not any(tag in {"em", "strong", "del", "code"} for tag, _ in rendered.tags)
     assert "".join(rendered.text).strip() == message
