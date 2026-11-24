@@ -7,6 +7,8 @@ stub. Each one is a probe that failed when the fill stopped at the plan outputs.
 
 import json
 import os
+import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -349,3 +351,98 @@ def test_a_verifier_input_fails_when_the_lock_has_no_tag(tmp_path, path, env_nam
         return
     with pytest.raises(SystemExit, match="lock has no tag"):
         apply_resolved_pins(lock, {env_name: ref})
+
+
+def _isolated_script(tmp_path: Path) -> tuple[Path, Path]:
+    root = tmp_path / "tree"
+    script = root / ".github" / "scripts" / "apply_resolved_pins.sh"
+    script.parent.mkdir(parents=True)
+    shutil.copy(SCRIPT, script)
+    package = root / "src" / "capability_verifier"
+    package.mkdir(parents=True)
+    shutil.copy(ROOT / "src/capability_verifier/__init__.py", package / "__init__.py")
+    shutil.copy(ROOT / "src/capability_verifier/resolved_pins.py", package / "resolved_pins.py")
+    return script, package / "resolved_pins.py"
+
+
+def _run_image(tmp_path: Path, script: Path):
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    (robot / "verification.lock.json").write_text(json.dumps(_lock(verifier_image=False)))
+    env = os.environ.copy()
+    for name in (
+        "RESOLVED_VERIFIER_COMMIT",
+        "RESOLVED_VERIFIER_IMAGE",
+        "RESOLVED_REPORTER_IMAGE",
+        "RESOLVED_EVALUATOR_COMMIT",
+        "PYTHONPATH",
+    ):
+        env.pop(name, None)
+    env["RESOLVED_VERIFIER_IMAGE"] = VERIFIER_IMAGE
+    env["EVIDENCE_SOURCE"] = "robot"
+    return subprocess.run(
+        ["bash", str(script)],
+        check=False,
+        cwd=robot,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_a_failed_pattern_load_is_refused(tmp_path):
+    script, module = _isolated_script(tmp_path)
+    module.unlink()
+    done = _run_image(tmp_path, script)
+    assert done.returncode != 0
+    assert done.stdout == ""
+    assert "could not load the image patterns from capability_verifier.resolved_pins" in done.stderr
+
+
+def test_empty_image_patterns_are_refused(tmp_path):
+    script, module = _isolated_script(tmp_path)
+    text = module.read_text()
+    text = re.sub(
+        r"VERIFIER_IMAGE_PATTERN = \([^)]*\)",
+        'VERIFIER_IMAGE_PATTERN = ""',
+        text,
+        count=1,
+    )
+    text = re.sub(
+        r"REPORTER_IMAGE_PATTERN = \([^)]*\)",
+        'REPORTER_IMAGE_PATTERN = ""',
+        text,
+        count=1,
+    )
+    module.write_text(text)
+    done = _run_image(tmp_path, script)
+    assert done.returncode != 0
+    assert done.stdout == ""
+    assert "could not load the image patterns from capability_verifier.resolved_pins" in done.stderr
+
+
+def test_an_evaluator_less_lock_uses_the_default_tag(tmp_path):
+    """A missing scenario-evaluator tag is v1.5.0, then the commit is compared."""
+    lock = _lock(evaluator=None)
+    assert "evaluators" not in lock
+    done, written = _run(tmp_path / "script", lock, {"RESOLVED_EVALUATOR_COMMIT": EVAL_SHA})
+    assert done.returncode == 0, done.stderr
+    recorded = written["evaluators"]["livingproof-evaluator-scenario"]
+    assert recorded["tag"] == "v1.5.0"
+    assert recorded["repository"] == "Living-Proof-Labs/livingproof-evaluator-scenario"
+    assert recorded["commit"] == EVAL_SHA
+    applied = apply_resolved_pins(lock, {"RESOLVED_EVALUATOR_COMMIT": EVAL_SHA})
+    assert applied["evaluators"]["livingproof-evaluator-scenario"] == recorded
+    mismatched = _lock(evaluator=None)
+    mismatched["evaluators"] = {
+        "livingproof-evaluator-scenario": {"commit": OTHER_SHA},
+    }
+    refused, unchanged = _run(
+        tmp_path / "mismatch", mismatched, {"RESOLVED_EVALUATOR_COMMIT": EVAL_SHA}
+    )
+    assert refused.returncode != 0
+    assert (
+        f"evaluator-commit {EVAL_SHA} does not match the commit for tag v1.5.0 ({OTHER_SHA})"
+        in refused.stderr
+    )
+    assert unchanged["evaluators"]["livingproof-evaluator-scenario"]["commit"] == OTHER_SHA

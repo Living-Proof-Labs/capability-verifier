@@ -81,12 +81,25 @@ def _require_tag(label: str, tag: object) -> str:
     return str(tag)
 
 
-def _check_commit(label: str, given: str, recorded: object, tag: object) -> None:
+# scenario.yml and verification-reports-action use this when the run-integrity
+# pin is omitted. An omitted scenario-evaluator tag uses the same tag, then the
+# supplied commit is compared with the commit recorded for it.
+DEFAULT_EVALUATOR_TAG = "v1.5.0"
+DEFAULT_EVALUATOR_REPOSITORY = "Living-Proof-Labs/livingproof-evaluator-scenario"
+
+
+def _check_commit(
+    label: str, given: str, recorded: object, tag: object, *, default_tag: str | None = None
+) -> str:
     if not COMMIT.fullmatch(given):
         raise PinError(f"{label} must be a 40-character lowercase hexadecimal SHA (got {given!r})")
-    shown = _require_tag(label, tag)
+    if not _present(tag):
+        if default_tag is None:
+            raise PinError(f"{label}: lock has no tag")
+        tag = default_tag
     if _present(recorded) and recorded != given:
-        raise PinError(f"{label} {given} does not match the commit for tag {shown} ({recorded})")
+        raise PinError(f"{label} {given} does not match the commit for tag {tag} ({recorded})")
+    return str(tag)
 
 
 def _check_image(
@@ -153,7 +166,17 @@ def apply_resolved_pins(lock: dict, environ: dict[str, str] | None = None) -> di
         entry["digest"] = digest
     if evaluator_commit:
         entry = _evaluator(result)
-        _check_commit("evaluator-commit", evaluator_commit, entry.get("commit"), entry.get("tag"))
+        tag = _check_commit(
+            "evaluator-commit",
+            evaluator_commit,
+            entry.get("commit"),
+            entry.get("tag"),
+            default_tag=DEFAULT_EVALUATOR_TAG,
+        )
+        if not _present(entry.get("tag")):
+            entry["tag"] = tag
+        if not _present(entry.get("repository")):
+            entry["repository"] = DEFAULT_EVALUATOR_REPOSITORY
         entry["commit"] = evaluator_commit
     return result
 

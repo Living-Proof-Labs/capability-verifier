@@ -32,19 +32,23 @@ fail() {
 }
 
 # The image patterns live in capability_verifier.resolved_pins. This script does not copy them.
+# A failed load or an empty pattern is a hard stop: an empty regex matches every ref.
 script_dir=$(cd "$(dirname "$0")" && pwd)
 src_dir=$(cd "$script_dir/../../src" && pwd)
-image_patterns=$(
+load_error="could not load the image patterns from capability_verifier.resolved_pins"
+if ! image_patterns=$(
   PYTHONPATH="$src_dir${PYTHONPATH:+:$PYTHONPATH}" python3 -c '
 from capability_verifier.resolved_pins import VERIFIER_IMAGE, REPORTER_IMAGE
 print(VERIFIER_IMAGE.pattern)
 print(REPORTER_IMAGE.pattern)
 '
-)
+); then
+  fail "$load_error"
+fi
 verifier_image_pattern=$(printf '%s\n' "$image_patterns" | sed -n '1p')
 reporter_image_pattern=$(printf '%s\n' "$image_patterns" | sed -n '2p')
 if [ -z "$verifier_image_pattern" ] || [ -z "$reporter_image_pattern" ]; then
-  fail "could not load the image patterns from capability_verifier.resolved_pins"
+  fail "$load_error"
 fi
 
 field() {
@@ -77,7 +81,14 @@ resolve_commit() {
     fail "$label must be a 40-character lowercase hexadecimal SHA (got $(printf '%q' "$given"))"
   fi
   if [ -z "$tag" ]; then
-    fail "$label: lock has no tag"
+    if [ "$label" = "evaluator-commit" ]; then
+      # Same default scenario.yml uses when the run-integrity pin is omitted,
+      # and that verification-reports-action applies for that pin.
+      tag=v1.5.0
+      evaluator_tag_filled=v1.5.0
+    else
+      fail "$label: lock has no tag"
+    fi
   fi
   if [ -n "$recorded" ] && [ "$recorded" != "$given" ]; then
     fail "$label $given does not match the commit for tag ${tag:-<missing>} ($recorded)"
@@ -195,7 +206,14 @@ if [ "$evaluator_commit_source" = "input" ]; then
     .evaluators = (.evaluators // {})
     | .evaluators["livingproof-evaluator-scenario"] = (.evaluators["livingproof-evaluator-scenario"] // {})
     | .evaluators["livingproof-evaluator-scenario"].commit = $c
-  ' --arg c "$evaluator_commit"
+    | if (.evaluators["livingproof-evaluator-scenario"].tag // "") == "" then
+        .evaluators["livingproof-evaluator-scenario"].tag = $tag
+      else . end
+    | if (.evaluators["livingproof-evaluator-scenario"].repository // "") == "" then
+        .evaluators["livingproof-evaluator-scenario"].repository = $repo
+      else . end
+  ' --arg c "$evaluator_commit" --arg tag "${evaluator_tag_filled:-}" \
+    --arg repo "Living-Proof-Labs/livingproof-evaluator-scenario"
 fi
 
 printf 'verifier-commit=%s\n' "$verifier_commit"
