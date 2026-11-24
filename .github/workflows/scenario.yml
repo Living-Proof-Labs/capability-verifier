@@ -19,6 +19,10 @@
 # and the sha256 of the robot file it replaced, or that the robot commit has no lock. When the
 # input is empty and the robot commit has verification.lock.json, that file stays the only
 # source (the v1.18.0 path). Nothing is pinned in this file.
+# Optional inputs verifier-commit, verifier-image, reporter-image and evaluator-commit
+# supply a commit or image ref the caller resolved from a release tag. Empty leaves
+# the lock field unchanged. A set input replaces that field after a strict check.
+# If the lock field is present and different, the plan fails: the lock is stale.
 # A capability FAIL is the result, not a CI failure. Evidence exit 4 means
 # livingproof-sim-mujoco wrote the manifest and identical trials disagreed. That step
 # continues only when the manifest records a test-system reproducibility finding.
@@ -62,6 +66,34 @@ on:
           at this lock, and records the replaced robot lock's sha256. Empty
           leaves a robot verification.lock.json as the only source.
           PENDING_RELEASE in a caller lock still fails.
+        type: string
+        default: ''
+      verifier-commit:
+        description: >-
+          Optional releases.verifier.commit resolved from the release tag
+          (40 lowercase hexadecimal characters). Empty keeps the lock. When the
+          lock commit is present and different, the plan fails.
+        type: string
+        default: ''
+      verifier-image:
+        description: >-
+          Optional verifier image ref resolved from the release tag:
+          ghcr.io/living-proof-labs/capability-verifier-hallway:<semver>@sha256:<64 hex>.
+          Empty keeps the lock. When the lock ref is present and different, the plan fails.
+        type: string
+        default: ''
+      reporter-image:
+        description: >-
+          Optional reporter image ref resolved from the release tag:
+          ghcr.io/living-proof-labs/livingproof-capability-report:<semver>@sha256:<64 hex>.
+          Empty keeps the lock. When the lock ref is present and different, the plan fails.
+        type: string
+        default: ''
+      evaluator-commit:
+        description: >-
+          Optional evaluators.livingproof-evaluator-scenario.commit resolved from
+          the release tag (40 lowercase hexadecimal characters). Empty keeps the
+          lock. When the lock commit is present and different, the plan fails.
         type: string
         default: ''
       artifact-prefix:
@@ -152,6 +184,10 @@ jobs:
       evaluator-repository: ${{ steps.lock.outputs.evaluator-repository }}
       evaluator-commit: ${{ steps.lock.outputs.evaluator-commit }}
       evaluator-tag: ${{ steps.lock.outputs.evaluator-tag }}
+      verifier-commit-source: ${{ steps.lock.outputs.verifier-commit-source }}
+      verifier-image-source: ${{ steps.lock.outputs.verifier-image-source }}
+      reporter-image-source: ${{ steps.lock.outputs.reporter-image-source }}
+      evaluator-commit-source: ${{ steps.lock.outputs.evaluator-commit-source }}
       # Tag-only pin for livingproof-evaluator-run (no commit).
       run-integrity-repository: ${{ steps.lock.outputs.run-integrity-repository }}
       run-integrity-tag: ${{ steps.lock.outputs.run-integrity-tag }}
@@ -206,6 +242,10 @@ jobs:
         env:
           ONLY: ${{ inputs.configurations }}
           EVIDENCE_SOURCE: ${{ steps.evidence-inputs.outputs.source || steps.robot-lock.outputs.source }}
+          RESOLVED_VERIFIER_COMMIT: ${{ inputs.verifier-commit }}
+          RESOLVED_VERIFIER_IMAGE: ${{ inputs.verifier-image }}
+          RESOLVED_REPORTER_IMAGE: ${{ inputs.reporter-image }}
+          RESOLVED_EVALUATOR_COMMIT: ${{ inputs.evaluator-commit }}
         run: |
           # Evaluator pins live on the selected lock. The caller copy keeps the 0.2.0
           # evaluators field. A caller-verification.lock.json committed in the robot
@@ -228,16 +268,81 @@ jobs:
           fi
           echo "scenario: $(jq -r '.scenario // empty' verification.lock.json)"
           echo "world: $(jq -r '.world.id // empty' verification.lock.json)"
+          # Resolved pins. Empty keeps the lock value. jq -r prints null for a missing
+          # commit and :@ when the reporter image, tag and digest are all missing. Those
+          # are absent, so a set input may fill them. Any other difference is a stale lock.
+          verifier_commit=$(jq -r '.releases.verifier.commit' verification.lock.json)
+          verifier_image=$(jq -r '.releases.verifier | if .image then .image + ":" + (.tag | ltrimstr("v")) + "@" + .digest else "" end' verification.lock.json)
+          reporter_image=$(jq -r '.releases.reporter.image + ":" + (.releases.reporter.tag | ltrimstr("v")) + "@" + .releases.reporter.digest' verification.lock.json)
+          evaluator_commit=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].commit // empty' "$pin")
+          commit_pattern='^[0-9a-f]{40}$'
+          semver='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+          verifier_image_pattern="^ghcr\\.io/living-proof-labs/capability-verifier-hallway:${semver}@sha256:[0-9a-f]{64}$"
+          reporter_image_pattern="^ghcr\\.io/living-proof-labs/livingproof-capability-report:${semver}@sha256:[0-9a-f]{64}$"
+          pin_value=
+          pin_source=
+          resolve_pin() {
+            local locked="$1"
+            local given="$2"
+            local pattern="$3"
+            local label="$4"
+            local field="$5"
+            local requirement="$6"
+            if [ -z "$given" ]; then
+              pin_value=$locked
+              pin_source=lock
+              return 0
+            fi
+            if [[ ! "$given" =~ $pattern ]]; then
+              printf '%s must be %s (got %q)\n' "$label" "$requirement" "$given" >&2
+              exit 1
+            fi
+            if [ -n "$locked" ] && [ "$locked" != "null" ] && [ "$locked" != ":@" ] && [ "$locked" != "$given" ]; then
+              printf '%s %s does not match %s (%q); the verification lock is stale\n' \
+                "$label" "$given" "$field" "$locked" >&2
+              exit 1
+            fi
+            pin_value=$given
+            pin_source=input
+          }
+          resolve_pin "$verifier_commit" "${RESOLVED_VERIFIER_COMMIT:-}" "$commit_pattern" \
+            "verifier-commit" "releases.verifier.commit" \
+            "a 40-character lowercase hexadecimal SHA"
+          verifier_commit=$pin_value
+          verifier_commit_source=$pin_source
+          resolve_pin "$verifier_image" "${RESOLVED_VERIFIER_IMAGE:-}" "$verifier_image_pattern" \
+            "verifier-image" "releases.verifier image ref" \
+            "ghcr.io/living-proof-labs/capability-verifier-hallway:<semver>@sha256:<64 hex>"
+          verifier_image=$pin_value
+          verifier_image_source=$pin_source
+          resolve_pin "$reporter_image" "${RESOLVED_REPORTER_IMAGE:-}" "$reporter_image_pattern" \
+            "reporter-image" "releases.reporter image ref" \
+            "ghcr.io/living-proof-labs/livingproof-capability-report:<semver>@sha256:<64 hex>"
+          reporter_image=$pin_value
+          reporter_image_source=$pin_source
+          resolve_pin "$evaluator_commit" "${RESOLVED_EVALUATOR_COMMIT:-}" "$commit_pattern" \
+            "evaluator-commit" "evaluators.livingproof-evaluator-scenario.commit" \
+            "a 40-character lowercase hexadecimal SHA"
+          evaluator_commit=$pin_value
+          evaluator_commit_source=$pin_source
+          echo "pin source verifier-commit=$verifier_commit_source"
+          echo "pin source verifier-image=$verifier_image_source"
+          echo "pin source reporter-image=$reporter_image_source"
+          echo "pin source evaluator-commit=$evaluator_commit_source"
           {
             echo "configurations=$configurations"
             echo "verifier-repository=$(jq -r '.releases.verifier.repository' verification.lock.json)"
-            echo "verifier-commit=$(jq -r '.releases.verifier.commit' verification.lock.json)"
+            echo "verifier-commit=$verifier_commit"
             echo "verifier-version=$(jq -r '.releases.verifier.tag | ltrimstr("v")' verification.lock.json)"
-            echo "verifier-image=$(jq -r '.releases.verifier | if .image then .image + ":" + (.tag | ltrimstr("v")) + "@" + .digest else "" end' verification.lock.json)"
-            echo "reporter-image=$(jq -r '.releases.reporter.image + ":" + (.releases.reporter.tag | ltrimstr("v")) + "@" + .releases.reporter.digest' verification.lock.json)"
+            echo "verifier-image=$verifier_image"
+            echo "reporter-image=$reporter_image"
             echo "evaluator-repository=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].repository // empty' "$pin")"
-            echo "evaluator-commit=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].commit // empty' "$pin")"
+            echo "evaluator-commit=$evaluator_commit"
             echo "evaluator-tag=$(jq -r '(.evaluators // {})["livingproof-evaluator-scenario"].tag // empty' "$pin")"
+            echo "verifier-commit-source=$verifier_commit_source"
+            echo "verifier-image-source=$verifier_image_source"
+            echo "reporter-image-source=$reporter_image_source"
+            echo "evaluator-commit-source=$evaluator_commit_source"
             # Tag-only pin. Default livingproof-evaluator-run v1.5.0 so
             # the run-integrity job runs when the lock omits the pin.
             repo=$(jq -r '(.evaluators // {})["livingproof-evaluator-run"].repository // empty' "$pin")

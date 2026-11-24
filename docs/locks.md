@@ -121,6 +121,64 @@ evaluator outputs empty. The robot fixtures in this repository have no
 does not: the projection copies `scenario`, `releases`, `world`,
 `configurations` and `plan`, and the copied caller file keeps `evaluators`.
 
+<span id="resolved-pins"></span>
+
+## Resolved pin inputs
+
+`walk-hallway.yml` and `scenario.yml` take four optional string inputs. Each
+defaults to empty. An empty input leaves the lock field as the value the plan
+step already writes. A caller that has resolved a release tag passes the commit
+or image ref it checked, and the run uses that value.
+
+| Input | Lock field | Accepted value |
+| --- | --- | --- |
+| `verifier-commit` | `releases.verifier.commit` | 40 lowercase hexadecimal characters |
+| `verifier-image` | `releases.verifier.image`, `releases.verifier.tag` and `releases.verifier.digest`, joined as `image:tag@digest` | `ghcr.io/living-proof-labs/capability-verifier-hallway:<semver>@sha256:<64 hex>` |
+| `reporter-image` | `releases.reporter.image`, `releases.reporter.tag` and `releases.reporter.digest`, joined the same way | `ghcr.io/living-proof-labs/livingproof-capability-report:<semver>@sha256:<64 hex>` |
+| `evaluator-commit` | `evaluators.livingproof-evaluator-scenario.commit` on the selected pin file | 40 lowercase hexadecimal characters |
+
+`<semver>` is `MAJOR.MINOR.PATCH`: three numeric parts, no leading zeros, and no
+pre-release suffix. The image tag has no leading `v`. That is the ref the plan
+step builds from a lock (`ltrimstr("v")` on the tag, then `image:tag@digest`).
+Digests and commits are lowercase. Any other spelling fails before the value is
+written as a job output. The media and bundle gate still reads
+`releases.verifier.tag` and `releases.reporter.tag` from the lock file.
+
+The plan step passes each input through an environment variable
+(`RESOLVED_VERIFIER_COMMIT`, `RESOLVED_VERIFIER_IMAGE`, `RESOLVED_REPORTER_IMAGE`,
+`RESOLVED_EVALUATOR_COMMIT`). It does not interpolate the inputs into the shell
+script.
+
+`jq -r` prints `null` for a missing verifier commit and `:@` when the reporter
+image, tag and digest are all missing. A verifier image with no `image` key is
+empty. An evaluator commit that is absent is empty. Those results count as an
+absent lock field, so a set input fills them. When the lock field is present
+and equal to the input, the run uses the input. When the lock field is present
+and different, the step exits 1 before it writes the plan outputs. The message
+names the input, the input value, the lock field and the lock value:
+
+```text
+verifier-commit <input> does not match releases.verifier.commit (<lock>); the verification lock is stale
+```
+
+The same sentence is used for `verifier-image` with `releases.verifier image ref`,
+for `reporter-image` with `releases.reporter image ref`, and for
+`evaluator-commit` with `evaluators.livingproof-evaluator-scenario.commit`.
+A value that fails the spelling check is not compared with the lock. The
+messages are:
+
+```text
+verifier-commit must be a 40-character lowercase hexadecimal SHA (got <value>)
+evaluator-commit must be a 40-character lowercase hexadecimal SHA (got <value>)
+verifier-image must be ghcr.io/living-proof-labs/capability-verifier-hallway:<semver>@sha256:<64 hex> (got <value>)
+reporter-image must be ghcr.io/living-proof-labs/livingproof-capability-report:<semver>@sha256:<64 hex> (got <value>)
+```
+
+`got` prints the rejected value with shell quoting. The plan job records the
+source that supplied each field: `verifier-commit-source`,
+`verifier-image-source`, `reporter-image-source` and `evaluator-commit-source`
+are `input` or `lock`.
+
 ## Caller verification lock 0.1.0
 
 `python3 -m capability_verifier.definition lock DEFINITION.toml` fetches the

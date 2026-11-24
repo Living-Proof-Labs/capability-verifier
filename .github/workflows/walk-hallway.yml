@@ -29,6 +29,34 @@ on:
           PENDING_RELEASE in a caller lock still fails.
         type: string
         default: ''
+      verifier-commit:
+        description: >-
+          Optional releases.verifier.commit resolved from the release tag
+          (40 lowercase hexadecimal characters). Empty keeps the lock. When the
+          lock commit is present and different, the plan fails.
+        type: string
+        default: ''
+      verifier-image:
+        description: >-
+          Optional verifier image ref resolved from the release tag:
+          ghcr.io/living-proof-labs/capability-verifier-hallway:<semver>@sha256:<64 hex>.
+          Empty keeps the lock. When the lock ref is present and different, the plan fails.
+        type: string
+        default: ''
+      reporter-image:
+        description: >-
+          Optional reporter image ref resolved from the release tag:
+          ghcr.io/living-proof-labs/livingproof-capability-report:<semver>@sha256:<64 hex>.
+          Empty keeps the lock. When the lock ref is present and different, the plan fails.
+        type: string
+        default: ''
+      evaluator-commit:
+        description: >-
+          Optional evaluators.livingproof-evaluator-scenario.commit resolved from
+          the release tag (40 lowercase hexadecimal characters). Empty keeps the
+          lock. When the lock commit is present and different, the plan fails.
+        type: string
+        default: ''
       artifact-prefix:
         description: Prefix for artifact names, unique per call when fanning out
         type: string
@@ -68,6 +96,10 @@ jobs:
       ref: ${{ inputs.ref }}
       configurations: ${{ inputs.configurations }}
       verification-lock: ${{ inputs.verification-lock }}
+      verifier-commit: ${{ inputs.verifier-commit }}
+      verifier-image: ${{ inputs.verifier-image }}
+      reporter-image: ${{ inputs.reporter-image }}
+      evaluator-commit: ${{ inputs.evaluator-commit }}
       artifact-prefix: ${{ inputs.artifact-prefix }}
       comment: ${{ inputs.comment }}
       check: ${{ inputs.check }}

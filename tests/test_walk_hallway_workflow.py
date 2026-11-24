@@ -829,7 +829,9 @@ def test_capability_installs_pinned_packaging_before_the_gate():
 
 def test_evidence_verify_and_media_run_in_the_locked_hallway_image():
     assert ".releases.verifier | if .image then .image" in STEPS
-    assert "ghcr.io/living-proof-labs/capability-verifier-hallway" not in STEPS  # lock only
+    # Jobs take the container image from the plan output. The registry name is
+    # checked only when a caller passes the resolved verifier-image input.
+    assert "image: ghcr.io/" not in STEPS
     for job in ("evidence", "verify", "scenario-evaluator", "scenario-media", "media"):
         body = WORKFLOW.split(f"\n  {job}:\n", 1)[1].split("\n  report:\n", 1)[0]
         head = body.split("    steps:\n", 1)[0]
@@ -1323,7 +1325,8 @@ elif "].tag" in filt:
 elif "verifier.repository" in filt:
     emit(verifier.get("repository", ""))
 elif "verifier.commit" in filt:
-    emit(verifier.get("commit", ""))
+    # jq -r prints the word null for a missing or JSON null commit.
+    emit("null" if verifier.get("commit") is None else verifier["commit"])
 elif "verifier.tag" in filt:
     emit(str(verifier.get("tag", "")).removeprefix("v"))
 elif "if .image" in filt:
@@ -1333,8 +1336,14 @@ elif "if .image" in filt:
     else:
         emit("")
 elif "reporter" in filt:
-    tag = str(reporter.get("tag", "")).removeprefix("v")
-    emit(f"{reporter['image']}:{tag}@{reporter['digest']}")
+    # jq joins null image, tag and digest as :@. A present tag loses one leading v.
+    image = reporter.get("image")
+    tag = reporter.get("tag")
+    digest = reporter.get("digest")
+    tag_text = "" if tag is None else str(tag).removeprefix("v")
+    emit(
+        f"{'' if image is None else image}:{tag_text}@{'' if digest is None else digest}"
+    )
 elif ".scenario" in filt:
     emit(doc.get("scenario") or "")
 elif ".world.id" in filt:
@@ -1358,6 +1367,13 @@ def _run_refs(robot: Path, source: str):
     env["ONLY"] = ""
     env["EVIDENCE_SOURCE"] = source
     env.pop("PYTHONPATH", None)
+    for name in (
+        "RESOLVED_VERIFIER_COMMIT",
+        "RESOLVED_VERIFIER_IMAGE",
+        "RESOLVED_REPORTER_IMAGE",
+        "RESOLVED_EVALUATOR_COMMIT",
+    ):
+        env.pop(name, None)
     done = subprocess.run(
         ["bash", "-eo", "pipefail", "-c", _step("Refs from verification.lock.json")],
         check=False,

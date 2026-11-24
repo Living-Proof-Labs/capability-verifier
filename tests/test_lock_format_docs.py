@@ -391,6 +391,14 @@ def test_checker_messages_are_documented():
         "every ref is a released tag": ROOT / "src/capability_verifier/repin.py",
         "committed in the robot repository": ROOT / ".github/workflows/scenario.yml",
         "not evaluator/src": ROOT / ".github/workflows/scenario.yml",
+        "the verification lock is stale": ROOT / ".github/workflows/scenario.yml",
+        "a 40-character lowercase hexadecimal SHA": ROOT / ".github/workflows/scenario.yml",
+        "ghcr.io/living-proof-labs/capability-verifier-hallway:<semver>@sha256:<64 hex>": (
+            ROOT / ".github/workflows/scenario.yml"
+        ),
+        "ghcr.io/living-proof-labs/livingproof-capability-report:<semver>@sha256:<64 hex>": (
+            ROOT / ".github/workflows/scenario.yml"
+        ),
         "verification-lock must be a relative path inside the caller repository": (
             ROOT / ".github/scripts/write_evidence_inputs.sh"
         ),
