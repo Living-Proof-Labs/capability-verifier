@@ -510,9 +510,13 @@ A commit is 40 lowercase hexadecimal characters. A verifier image ref is
 `ghcr.io/living-proof-labs/capability-verifier-hallway:<semver>@sha256:<64 hex>`.
 A reporter image ref is
 `ghcr.io/living-proof-labs/livingproof-capability-report:<semver>@sha256:<64 hex>`.
-`<semver>` is `MAJOR.MINOR.PATCH` with no leading zeros. When the lock already
-holds a different value, the plan fails and names both values, because the lock
-is stale. The plan job records `verifier-commit-source`, `verifier-image-source`,
+`<semver>` is `MAJOR.MINOR.PATCH` with no leading zeros, and it has to equal
+the lock tag with one leading `v` removed. A supplied commit has to be the
+commit already recorded for that tag. An empty commit, image or digest is
+absent and the input fills it; the plan writes that value into the lock before
+`repin --check`, and the evidence lock records it. When the lock already holds
+a different value, the plan fails and names both values, because the lock is
+stale. The plan job records `verifier-commit-source`, `verifier-image-source`,
 `reporter-image-source` and `evaluator-commit-source` as `input` or `lock`.
 The spelling rules and the failure text are in
 [Verification locks](docs/locks.md#resolved-pins).

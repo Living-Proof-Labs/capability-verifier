@@ -141,31 +141,42 @@ or image ref it checked, and the run uses that value.
 pre-release suffix. The image tag has no leading `v`. That is the ref the plan
 step builds from a lock (`ltrimstr("v")` on the tag, then `image:tag@digest`).
 Digests and commits are lowercase. Any other spelling fails before the value is
-written as a job output. The media and bundle gate still reads
-`releases.verifier.tag` and `releases.reporter.tag` from the lock file.
+written as a job output. The image semver has to equal the lock tag with one
+leading `v` removed. `verifier-image semver 2.11.5 does not match releases.verifier.tag v2.11.4`
+and the same sentence for `reporter-image` and `releases.reporter.tag`. A
+supplied commit has to be the commit already recorded for that tag:
+`verifier-commit <input> does not match the commit for tag <tag> (<lock commit>)`.
+The same sentence is used for `evaluator-commit`. The media and bundle gate
+still reads `releases.verifier.tag` and `releases.reporter.tag` from the lock
+file.
 
 The plan step passes each input through an environment variable
 (`RESOLVED_VERIFIER_COMMIT`, `RESOLVED_VERIFIER_IMAGE`, `RESOLVED_REPORTER_IMAGE`,
 `RESOLVED_EVALUATOR_COMMIT`). It does not interpolate the inputs into the shell
-script.
+script. `apply_resolved_pins.sh` decides with `jq` and, when the input supplies
+the value, writes the commit, image and digest into `verification.lock.json`
+and `caller-verification.lock.json` before the capability step and
+`repin --check`. The evidence and media jobs stamp those plan outputs onto the
+fresh evidence lock, so the recorded releases are the values the run used.
+`definition run` applies the same inputs before it checks out
+`releases.verifier.commit`.
 
-`jq -r` prints `null` for a missing verifier commit and `:@` when the reporter
-image, tag and digest are all missing. A verifier image with no `image` key is
-empty. An evaluator commit that is absent is empty. Those results count as an
-absent lock field, so a set input fills them. When the lock field is present
-and equal to the input, the run uses the input. When the lock field is present
-and different, the step exits 1 before it writes the plan outputs. The message
-names the input, the input value, the lock field and the lock value:
+An empty component is absent. `jq -r` still prints `null` for a missing
+verifier commit and `:3.15.4@` when the reporter tag is present and the image
+and digest are missing, and that text is the output when the input is empty.
+It is not a present value. A missing or empty `.commit`, `.image` or `.digest`
+is filled by the input. A non-empty component that differs from the input
+fails before the plan outputs are written. The message names the input, the
+input value, the lock field and the lock value:
 
 ```text
-verifier-commit <input> does not match releases.verifier.commit (<lock>); the verification lock is stale
+verifier-image <input> does not match releases.verifier.digest (<lock>); the verification lock is stale
 ```
 
-The same sentence is used for `verifier-image` with `releases.verifier image ref`,
-for `reporter-image` with `releases.reporter image ref`, and for
-`evaluator-commit` with `evaluators.livingproof-evaluator-scenario.commit`.
-A value that fails the spelling check is not compared with the lock. The
-messages are:
+The same sentence is used for `releases.verifier.image`, `releases.reporter.image`
+and `releases.reporter.digest`. A commit that differs uses
+`does not match the commit for tag` instead. A value that fails the spelling
+check is not compared with the lock. The messages are:
 
 ```text
 verifier-commit must be a 40-character lowercase hexadecimal SHA (got <value>)

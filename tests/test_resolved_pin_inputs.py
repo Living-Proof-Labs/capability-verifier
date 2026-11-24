@@ -44,6 +44,8 @@ VERIFIER_IMAGE = _ref("capability-verifier-hallway", "2.11.4", VERIFIER_DIGEST)
 REPORTER_IMAGE = _ref("livingproof-capability-report", "3.15.4", REPORTER_DIGEST)
 OTHER_VERIFIER_IMAGE = _ref("capability-verifier-hallway", "2.11.5", VERIFIER_DIGEST)
 OTHER_REPORTER_IMAGE = _ref("livingproof-capability-report", "3.15.5", REPORTER_DIGEST)
+STALE_VERIFIER_IMAGE = _ref("capability-verifier-hallway", "2.11.4", OTHER_DIGEST)
+STALE_REPORTER_IMAGE = _ref("livingproof-capability-report", "3.15.4", OTHER_DIGEST)
 
 
 def _document(
@@ -70,11 +72,11 @@ def _document(
         verifier["digest"] = verifier_digest
     releases = {"verifier": verifier}
     if include_reporter:
-        releases["reporter"] = {
-            "image": reporter_image,
-            "tag": reporter_tag,
-            "digest": reporter_digest,
-        }
+        reporter = {"tag": reporter_tag}
+        if reporter_image is not None:
+            reporter["image"] = reporter_image
+            reporter["digest"] = reporter_digest
+        releases["reporter"] = reporter
     body = {
         "configurations": [{"name": "stock"}],
         "releases": releases,
@@ -99,7 +101,7 @@ def _write(robot, body, caller=None):
         (robot / "caller-verification.lock.json").write_text(json.dumps(caller))
 
 
-def _run(robot, source, pins=None, *, jq_text=None, use_stub=True):
+def _run(robot, source, pins=None, *, jq_text=None, use_stub=False):
     output = robot / "github-output.txt"
     if output.exists():
         output.unlink()
@@ -112,6 +114,9 @@ def _run(robot, source, pins=None, *, jq_text=None, use_stub=True):
         env.pop(name, None)
     if pins:
         env.update(pins)
+    env["RESOLVED_PINS_SCRIPT"] = str(
+        Path(__file__).parents[1] / ".github/scripts/apply_resolved_pins.sh"
+    )
     if use_stub:
         bindir = robot / "bin"
         bindir.mkdir(exist_ok=True)
@@ -183,11 +188,14 @@ def test_resolved_pins_reach_the_step_through_env():
         "RESOLVED_REPORTER_IMAGE": "reporter-image",
         "RESOLVED_EVALUATOR_COMMIT": "evaluator-commit",
     }
+    pins = (ROOT / ".github/scripts/apply_resolved_pins.sh").read_text()
     assert "${{" not in script
+    assert "${{" not in pins
     for env_name, input_name in expected.items():
         assert f"inputs.{input_name}" not in script
+        assert f"inputs.{input_name}" not in pins
         assert f"{env_name}: ${{{{ inputs.{input_name} }}}}" in head
-        assert f"${{{env_name}:-}}" in script
+        assert f"${{{env_name}:-}}" in pins
 
 
 @pytest.mark.parametrize(
@@ -272,7 +280,7 @@ def test_inputs_fill_absent_lock_fields(tmp_path):
         _document(
             verifier_commit=None,
             include_verifier_image=False,
-            include_reporter=False,
+            reporter_image=None,
             evaluator=None,
         ),
     )
@@ -321,17 +329,17 @@ def test_one_input_leaves_the_other_fields_on_the_lock(tmp_path):
         ),
         (
             "RESOLVED_VERIFIER_IMAGE",
-            OTHER_VERIFIER_IMAGE,
+            STALE_VERIFIER_IMAGE,
             "verifier-image",
-            "releases.verifier image ref",
-            VERIFIER_IMAGE,
+            "releases.verifier.digest",
+            "sha256:" + VERIFIER_DIGEST,
         ),
         (
             "RESOLVED_REPORTER_IMAGE",
-            OTHER_REPORTER_IMAGE,
+            STALE_REPORTER_IMAGE,
             "reporter-image",
-            "releases.reporter image ref",
-            REPORTER_IMAGE,
+            "releases.reporter.digest",
+            "sha256:" + REPORTER_DIGEST,
         ),
         (
             "RESOLVED_EVALUATOR_COMMIT",
@@ -349,9 +357,15 @@ def test_a_mismatch_fails_and_names_both_values(tmp_path, env_name, given, label
     assert done.returncode != 0
     assert outputs == {}
     assert "pin source" not in done.stdout
-    assert f"{label} {given} does not match {field}" in done.stderr
+    assert f"{label} {given} does not match {field}" in done.stderr or (
+        "does not match the commit for tag" in done.stderr and label.endswith("commit")
+    )
     assert locked in done.stderr
-    assert "the verification lock is stale" in done.stderr
+    if label.endswith("commit"):
+        assert "does not match the commit for tag" in done.stderr
+        assert "the verification lock is stale" not in done.stderr
+    else:
+        assert "the verification lock is stale" in done.stderr
     assert "must be" not in done.stderr
 
 
@@ -479,8 +493,7 @@ def test_evaluator_input_is_compared_to_the_selected_pin(tmp_path):
     assert outputs == {}
     assert OTHER_EVAL in done.stderr
     assert EVAL_SHA in done.stderr
-    assert "evaluators.livingproof-evaluator-scenario.commit" in done.stderr
-    assert "the verification lock is stale" in done.stderr
+    assert "does not match the commit for tag" in done.stderr
 
 
 def test_a_resolved_pin_does_not_run_before_the_caller_lock_refusal(tmp_path):
@@ -492,6 +505,7 @@ def test_a_resolved_pin_does_not_run_before_the_caller_lock_refusal(tmp_path):
         "robot",
         {"RESOLVED_VERIFIER_COMMIT": VERIFIER_SHA},
         jq_text=canary,
+        use_stub=True,
     )
     assert done.returncode != 0
     assert outputs == {}
