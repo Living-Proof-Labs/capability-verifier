@@ -67,8 +67,23 @@ jobs:
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e
         with:
           version: '3.54.0'
-      - run: task verify
-      - run: task docs
+      # semantic-release reports published=false while draft-release is true.
+      # This job runs only after release-reports publishes that draft, and the
+      # guard above has confirmed the immutable stable tag on this commit.
+      # The preview documentation job never sets these, so it stays development-<sha>.
+      # Pass the identity as env entries. Do not interpolate it inside run:.
+      - name: Verify the released source
+        env:
+          RELEASE_PUBLISHED: "true"
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_COMMIT: ${{ inputs.commit }}
+        run: task verify
+      - name: Build the released manual
+        env:
+          RELEASE_PUBLISHED: "true"
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_COMMIT: ${{ inputs.commit }}
+        run: task docs
       - run: task test:docs
       - name: Retain stable build verification evidence
         if: ${{ !cancelled() }}

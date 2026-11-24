@@ -12,7 +12,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from docs import source_identity
+from docs import checkout_version, source_identity
 
 
 @pytest.hookimpl(hookwrapper=True, tryfirst=True)
@@ -25,10 +25,8 @@ def pytest_sessionfinish(session, exitstatus):
             return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
 
         commit = os.environ.get("SOURCE_COMMIT") or git("rev-parse", "HEAD")
-        try:
-            version = git("describe", "--tags", "--always", "--long", "--dirty")
-        except subprocess.CalledProcessError:
-            version = "development-" + commit
+        # The runtime image excludes .git, so a release tag is read from the environment.
+        version = checkout_version(commit)
         context = {
             "commit": commit,
             "version": version,

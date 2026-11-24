@@ -146,13 +146,16 @@ def test_documentation_identity_keeps_development_and_requires_green_exact_stabl
         release_identity({"exitstatus": 1})
 
 
-@pytest.mark.parametrize("mode", ["exact", "wrong-attempt", "wrong-revision", "changed-bytes"])
+@pytest.mark.parametrize(
+    "mode", ["exact", "wrong-attempt", "wrong-revision", "wrong-checkout", "changed-bytes"]
+)
 def test_deploy_reads_the_exact_sealed_tar_without_running_repository_code(tmp_path, mode):
     producer = tmp_path / "verified-capability-verifier"
     producer.mkdir()
     commit = "a" * 40
     record = json.dumps(
         {
+            "version": f"development-{commit}" if mode == "wrong-checkout" else TAG,
             "release_version": TAG[1:],
             "release_tag": TAG,
             "commit": "b" * 40 if mode == "wrong-revision" else commit,
