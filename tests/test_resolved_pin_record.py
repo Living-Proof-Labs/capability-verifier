@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from capability_verifier import evidence_lock, repin
+from capability_verifier import definition, evidence_lock, repin
 from capability_verifier.resolved_pins import apply_resolved_pins, record_resolved_pins
 
 ROOT = Path(__file__).parents[1]
@@ -36,6 +36,8 @@ REPORTER_IMAGE = (
 WRONG_VERIFIER_IMAGE = (
     "ghcr.io/living-proof-labs/capability-verifier-hallway:2.11.5@sha256:" + VERIFIER_DIGEST
 )
+OTHER_VERIFIER_NAME = "ghcr.io/living-proof-labs/not-the-hallway"
+OTHER_DIGEST = "ff" * 32
 PYPROJECT = (
     "[tool.uv.sources]\n"
     "livingproof-sim-mujoco = { git = "
@@ -464,3 +466,187 @@ def test_an_evaluator_commit_without_a_tag_is_refused(tmp_path, path, shape):
         return
     with pytest.raises(SystemExit, match="evaluator-commit: lock has no tag"):
         apply_resolved_pins(lock, {"RESOLVED_EVALUATOR_COMMIT": EVAL_SHA})
+
+
+def test_the_script_writes_the_verifier_commit_into_the_caller_lock(tmp_path):
+    """repin --lock caller-verification.lock.json reads this file when a caller passes it."""
+    robot = tmp_path / "robot"
+    body = _lock(verifier_commit=None)
+    robot.mkdir()
+    (robot / "verification.lock.json").write_text(json.dumps(body))
+    (robot / "caller-verification.lock.json").write_text(json.dumps(body))
+    (robot / "pyproject.toml").write_text(PYPROJECT)
+    env = os.environ.copy()
+    for name in (
+        "RESOLVED_VERIFIER_COMMIT",
+        "RESOLVED_VERIFIER_IMAGE",
+        "RESOLVED_REPORTER_IMAGE",
+        "RESOLVED_EVALUATOR_COMMIT",
+    ):
+        env.pop(name, None)
+    env["RESOLVED_VERIFIER_COMMIT"] = OTHER_SHA
+    env["EVIDENCE_SOURCE"] = "caller"
+    done = subprocess.run(
+        ["bash", str(SCRIPT)],
+        check=False,
+        cwd=robot,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert done.returncode == 0, done.stderr
+    caller = json.loads((robot / "caller-verification.lock.json").read_text())
+    assert caller["releases"]["verifier"]["commit"] == OTHER_SHA
+    assert repin.check(caller, PYPROJECT) == []
+
+
+def test_the_script_refuses_an_image_name_that_differs_from_the_lock(tmp_path):
+    robot = tmp_path / "robot"
+    body = _lock()
+    body["releases"]["verifier"]["image"] = OTHER_VERIFIER_NAME
+    done, written = _run(robot, body, {"RESOLVED_VERIFIER_IMAGE": VERIFIER_IMAGE})
+    assert done.returncode != 0
+    assert (
+        f"verifier-image {VERIFIER_IMAGE} does not match releases.verifier.image "
+        f"({OTHER_VERIFIER_NAME}); the verification lock is stale"
+    ) in done.stderr
+    assert written["releases"]["verifier"]["image"] == OTHER_VERIFIER_NAME
+
+
+def test_apply_refuses_an_image_semver_that_differs_from_the_lock_tag():
+    lock = _lock(verifier_image=False)
+    with pytest.raises(
+        SystemExit,
+        match="verifier-image semver 2.11.5 does not match releases.verifier.tag v2.11.4",
+    ):
+        apply_resolved_pins(lock, {"RESOLVED_VERIFIER_IMAGE": WRONG_VERIFIER_IMAGE})
+
+
+def test_apply_refuses_a_commit_that_differs_from_the_recorded_commit():
+    with pytest.raises(
+        SystemExit,
+        match=(
+            f"verifier-commit {OTHER_SHA} does not match the commit for tag "
+            f"v2.11.4 \\({VERIFIER_SHA}\\)"
+        ),
+    ):
+        apply_resolved_pins(_lock(), {"RESOLVED_VERIFIER_COMMIT": OTHER_SHA})
+
+
+def test_apply_refuses_an_image_name_that_differs_from_the_lock():
+    lock = _lock()
+    lock["releases"]["verifier"]["image"] = OTHER_VERIFIER_NAME
+    with pytest.raises(
+        SystemExit,
+        match=re.escape(
+            f"verifier-image {VERIFIER_IMAGE} does not match releases.verifier.image "
+            f"({OTHER_VERIFIER_NAME}); the verification lock is stale"
+        ),
+    ):
+        apply_resolved_pins(lock, {"RESOLVED_VERIFIER_IMAGE": VERIFIER_IMAGE})
+
+
+def test_apply_refuses_a_digest_that_differs_from_the_lock():
+    lock = _lock()
+    lock["releases"]["verifier"]["digest"] = "sha256:" + OTHER_DIGEST
+    with pytest.raises(
+        SystemExit,
+        match=re.escape(
+            f"verifier-image {VERIFIER_IMAGE} does not match releases.verifier.digest "
+            f"(sha256:{OTHER_DIGEST}); the verification lock is stale"
+        ),
+    ):
+        apply_resolved_pins(lock, {"RESOLVED_VERIFIER_IMAGE": VERIFIER_IMAGE})
+
+
+def test_apply_refuses_a_malformed_commit():
+    lock = _lock(verifier_commit=None)
+    with pytest.raises(
+        SystemExit,
+        match=re.escape(
+            "verifier-commit must be a 40-character lowercase hexadecimal SHA (got 'not-a-sha')"
+        ),
+    ):
+        apply_resolved_pins(lock, {"RESOLVED_VERIFIER_COMMIT": "not-a-sha"})
+
+
+def test_the_stamp_records_the_evaluator_commit():
+    fresh = _lock(evaluator=None)
+    fresh["evaluators"] = {
+        "livingproof-evaluator-scenario": {
+            "repository": "Living-Proof-Labs/livingproof-evaluator-scenario",
+            "tag": "v1.5.16",
+        }
+    }
+    stamped = record_resolved_pins(
+        fresh,
+        {"EVALUATOR_COMMIT": EVAL_SHA, "EVALUATOR_COMMIT_SOURCE": "input"},
+    )
+    assert stamped["evaluators"]["livingproof-evaluator-scenario"]["commit"] == EVAL_SHA
+
+
+def _clear_pin_env(monkeypatch):
+    for name in (
+        "RESOLVED_VERIFIER_COMMIT",
+        "RESOLVED_VERIFIER_IMAGE",
+        "RESOLVED_REPORTER_IMAGE",
+        "RESOLVED_EVALUATOR_COMMIT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_definition_run_checks_out_the_filled_verifier_commit(tmp_path, monkeypatch):
+    """Replay reads releases.verifier.commit. The supplied commit has to be applied first."""
+    lock = {
+        "releases": {
+            "verifier": {
+                "repository": "Living-Proof-Labs/capability-verifier",
+                "tag": "v2.11.4",
+            }
+        }
+    }
+    monkeypatch.setattr(definition, "check", lambda definition_path, work: lock)
+    seen = {}
+
+    def checkout(repository, commit, dest):
+        seen["repository"] = repository
+        seen["commit"] = commit
+        raise SystemExit("stop after verifier checkout")
+
+    monkeypatch.setattr(definition, "checkout", checkout)
+    _clear_pin_env(monkeypatch)
+    monkeypatch.setenv("RESOLVED_VERIFIER_COMMIT", OTHER_SHA)
+    with pytest.raises(SystemExit, match="stop after verifier checkout"):
+        definition.run(tmp_path / "definition.json", tmp_path / "out")
+    assert seen == {
+        "repository": "Living-Proof-Labs/capability-verifier",
+        "commit": OTHER_SHA,
+    }
+
+
+def test_prepare_evidence_inputs_writes_the_filled_lock(tmp_path, monkeypatch):
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    caller = tmp_path / "caller-verification.lock.json"
+    caller.write_text("{}\n")
+    lock = {
+        "format": "livingproof-verification-lock/0.2.0",
+        "scenario": "walk-hallway@0.1.0",
+        "world": {"id": "hallway-open"},
+        "configurations": [{"name": "stock"}],
+        "plan": {"command_speed": 0.5},
+        "releases": {
+            "verifier": {
+                "repository": "Living-Proof-Labs/capability-verifier",
+                "tag": "v2.11.4",
+            }
+        },
+    }
+    _clear_pin_env(monkeypatch)
+    monkeypatch.setenv("RESOLVED_VERIFIER_COMMIT", OTHER_SHA)
+    assert definition.prepare_evidence_inputs(lock, robot, caller, work=tmp_path / "work") == {
+        "EVIDENCE_SOURCE": "caller"
+    }
+    evidence = json.loads((robot / "verification.lock.json").read_text())
+    assert evidence["format"] == "livingproof-verification-lock/1.0.0"
+    assert evidence["releases"]["verifier"]["commit"] == OTHER_SHA

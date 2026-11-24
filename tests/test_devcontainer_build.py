@@ -53,7 +53,15 @@ class DevcontainerBuildTests(unittest.TestCase):
     def test_runtime_image_installs_jq(self):
         dockerfile = (ROOT / "Dockerfile").read_text()
         runtime = dockerfile.split("AS runtime", 1)[1].split("AS development", 1)[0]
-        self.assertIn(" jq ", runtime)
+        installs = [
+            line.strip()
+            for line in runtime.splitlines()
+            if "apt-get install" in line and not line.lstrip().startswith("#")
+        ]
+        self.assertEqual(len(installs), 1)
+        packages = installs[0].split("install -y --no-install-recommends ", 1)[1]
+        packages = packages.split(" && ", 1)[0].split()
+        self.assertIn("jq", packages)
 
     def test_default_devcontainer_reuses_runtime(self):
         config = json.loads((ROOT / ".devcontainer/devcontainer.json").read_text())

@@ -150,6 +150,31 @@ def _sources(outputs):
     }
 
 
+RECORD_RUN = "python3 -m capability_verifier.resolved_pins --record verification.lock.json"
+
+
+def test_evidence_and_media_record_resolved_pins_on_the_evidence_lock():
+    """The evidence and media jobs stamp the plan outputs before they use the lock."""
+    import yaml
+
+    scenario = yaml.safe_load((ROOT / ".github/workflows/scenario.yml").read_text())
+    following = {
+        "evidence": "Evidence (observations only, no grade)",
+        "media": "Recordings (MCAP every trial; video for the first PASS and first FAIL trial)",
+    }
+    for job_name, later in following.items():
+        steps = scenario["jobs"][job_name]["steps"]
+        names = [step.get("name") for step in steps]
+        write_at = names.index("Write evidence inputs for livingproof-sim-mujoco")
+        record_at = names.index("Record resolved pins in the evidence lock")
+        later_at = names.index(later)
+        assert write_at < record_at < later_at, job_name
+        assert steps[record_at]["run"] == RECORD_RUN
+        assert steps[record_at]["env"]["VERIFIER_COMMIT_SOURCE"].endswith(
+            "verifier-commit-source }}"
+        )
+
+
 def test_resolved_pin_inputs_are_optional_and_forwarded():
     import yaml
 
