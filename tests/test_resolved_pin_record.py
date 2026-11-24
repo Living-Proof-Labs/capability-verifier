@@ -421,28 +421,26 @@ def test_empty_image_patterns_are_refused(tmp_path):
     assert "could not load the image patterns from capability_verifier.resolved_pins" in done.stderr
 
 
-def test_an_evaluator_less_lock_uses_the_default_tag(tmp_path):
-    """A missing scenario-evaluator tag is v1.5.0, then the commit is compared."""
+@pytest.mark.parametrize("path", ["script", "apply"])
+@pytest.mark.parametrize("shape", ["absent", "no-tag"])
+def test_an_evaluator_commit_without_a_tag_is_refused(tmp_path, path, shape):
+    """livingproof-evaluator-scenario has no default. v1.5.0 is the run-integrity pin."""
     lock = _lock(evaluator=None)
-    assert "evaluators" not in lock
-    done, written = _run(tmp_path / "script", lock, {"RESOLVED_EVALUATOR_COMMIT": EVAL_SHA})
-    assert done.returncode == 0, done.stderr
-    recorded = written["evaluators"]["livingproof-evaluator-scenario"]
-    assert recorded["tag"] == "v1.5.0"
-    assert recorded["repository"] == "Living-Proof-Labs/livingproof-evaluator-scenario"
-    assert recorded["commit"] == EVAL_SHA
-    applied = apply_resolved_pins(lock, {"RESOLVED_EVALUATOR_COMMIT": EVAL_SHA})
-    assert applied["evaluators"]["livingproof-evaluator-scenario"] == recorded
-    mismatched = _lock(evaluator=None)
-    mismatched["evaluators"] = {
-        "livingproof-evaluator-scenario": {"commit": OTHER_SHA},
-    }
-    refused, unchanged = _run(
-        tmp_path / "mismatch", mismatched, {"RESOLVED_EVALUATOR_COMMIT": EVAL_SHA}
-    )
-    assert refused.returncode != 0
-    assert (
-        f"evaluator-commit {EVAL_SHA} does not match the commit for tag v1.5.0 ({OTHER_SHA})"
-        in refused.stderr
-    )
-    assert unchanged["evaluators"]["livingproof-evaluator-scenario"]["commit"] == OTHER_SHA
+    if shape == "no-tag":
+        lock["evaluators"] = {
+            "livingproof-evaluator-scenario": {
+                "repository": "Living-Proof-Labs/livingproof-evaluator-scenario",
+            }
+        }
+    if path == "script":
+        done, written = _run(
+            tmp_path / f"{path}-{shape}", lock, {"RESOLVED_EVALUATOR_COMMIT": EVAL_SHA}
+        )
+        assert done.returncode != 0
+        assert "evaluator-commit: lock has no tag" in done.stderr
+        assert "v1.5.0" not in json.dumps(written)
+        scenario = (written.get("evaluators") or {}).get("livingproof-evaluator-scenario") or {}
+        assert "commit" not in scenario
+        return
+    with pytest.raises(SystemExit, match="evaluator-commit: lock has no tag"):
+        apply_resolved_pins(lock, {"RESOLVED_EVALUATOR_COMMIT": EVAL_SHA})

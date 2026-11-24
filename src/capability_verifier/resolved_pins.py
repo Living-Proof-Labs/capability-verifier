@@ -81,25 +81,15 @@ def _require_tag(label: str, tag: object) -> str:
     return str(tag)
 
 
-# scenario.yml and verification-reports-action use this when the run-integrity
-# pin is omitted. An omitted scenario-evaluator tag uses the same tag, then the
-# supplied commit is compared with the commit recorded for it.
-DEFAULT_EVALUATOR_TAG = "v1.5.0"
-DEFAULT_EVALUATOR_REPOSITORY = "Living-Proof-Labs/livingproof-evaluator-scenario"
-
-
-def _check_commit(
-    label: str, given: str, recorded: object, tag: object, *, default_tag: str | None = None
-) -> str:
+def _check_commit(label: str, given: str, recorded: object, tag: object) -> str:
     if not COMMIT.fullmatch(given):
         raise PinError(f"{label} must be a 40-character lowercase hexadecimal SHA (got {given!r})")
-    if not _present(tag):
-        if default_tag is None:
-            raise PinError(f"{label}: lock has no tag")
-        tag = default_tag
+    # livingproof-evaluator-scenario has no default. v1.5.0 belongs to
+    # livingproof-evaluator-run, the run-integrity pin.
+    shown = _require_tag(label, tag)
     if _present(recorded) and recorded != given:
-        raise PinError(f"{label} {given} does not match the commit for tag {tag} ({recorded})")
-    return str(tag)
+        raise PinError(f"{label} {given} does not match the commit for tag {shown} ({recorded})")
+    return shown
 
 
 def _check_image(
@@ -166,17 +156,7 @@ def apply_resolved_pins(lock: dict, environ: dict[str, str] | None = None) -> di
         entry["digest"] = digest
     if evaluator_commit:
         entry = _evaluator(result)
-        tag = _check_commit(
-            "evaluator-commit",
-            evaluator_commit,
-            entry.get("commit"),
-            entry.get("tag"),
-            default_tag=DEFAULT_EVALUATOR_TAG,
-        )
-        if not _present(entry.get("tag")):
-            entry["tag"] = tag
-        if not _present(entry.get("repository")):
-            entry["repository"] = DEFAULT_EVALUATOR_REPOSITORY
+        _check_commit("evaluator-commit", evaluator_commit, entry.get("commit"), entry.get("tag"))
         entry["commit"] = evaluator_commit
     return result
 

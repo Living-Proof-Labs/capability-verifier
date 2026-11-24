@@ -80,15 +80,10 @@ resolve_commit() {
   if [[ ! "$given" =~ $commit_pattern ]]; then
     fail "$label must be a 40-character lowercase hexadecimal SHA (got $(printf '%q' "$given"))"
   fi
+  # livingproof-evaluator-scenario has no default. v1.5.0 belongs to
+  # livingproof-evaluator-run, the run-integrity pin.
   if [ -z "$tag" ]; then
-    if [ "$label" = "evaluator-commit" ]; then
-      # Same default scenario.yml uses when the run-integrity pin is omitted,
-      # and that verification-reports-action applies for that pin.
-      tag=v1.5.0
-      evaluator_tag_filled=v1.5.0
-    else
-      fail "$label: lock has no tag"
-    fi
+    fail "$label: lock has no tag"
   fi
   if [ -n "$recorded" ] && [ "$recorded" != "$given" ]; then
     fail "$label $given does not match the commit for tag ${tag:-<missing>} ($recorded)"
@@ -206,14 +201,7 @@ if [ "$evaluator_commit_source" = "input" ]; then
     .evaluators = (.evaluators // {})
     | .evaluators["livingproof-evaluator-scenario"] = (.evaluators["livingproof-evaluator-scenario"] // {})
     | .evaluators["livingproof-evaluator-scenario"].commit = $c
-    | if (.evaluators["livingproof-evaluator-scenario"].tag // "") == "" then
-        .evaluators["livingproof-evaluator-scenario"].tag = $tag
-      else . end
-    | if (.evaluators["livingproof-evaluator-scenario"].repository // "") == "" then
-        .evaluators["livingproof-evaluator-scenario"].repository = $repo
-      else . end
-  ' --arg c "$evaluator_commit" --arg tag "${evaluator_tag_filled:-}" \
-    --arg repo "Living-Proof-Labs/livingproof-evaluator-scenario"
+  ' --arg c "$evaluator_commit"
 fi
 
 printf 'verifier-commit=%s\n' "$verifier_commit"
