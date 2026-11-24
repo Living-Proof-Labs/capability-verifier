@@ -139,6 +139,26 @@ def _problems(robot: Path) -> list[str]:
     return repin.check(lock, (robot / "pyproject.toml").read_text())
 
 
+def test_a_missing_jq_is_named(tmp_path):
+    robot = tmp_path / "robot"
+    robot.mkdir()
+    (robot / "verification.lock.json").write_text("{}\n")
+    env = os.environ.copy()
+    env["PATH"] = str(tmp_path / "empty")
+    (tmp_path / "empty").mkdir()
+    done = subprocess.run(
+        [shutil.which("bash"), str(SCRIPT)],
+        check=False,
+        cwd=robot,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert done.returncode != 0
+    assert done.stdout == ""
+    assert done.stderr.strip() == "jq is required"
+
+
 def test_jq_is_the_real_binary():
     """These probes failed under the stub and passed only with jq."""
     found = subprocess.run(["jq", "--version"], check=True, capture_output=True, text=True)

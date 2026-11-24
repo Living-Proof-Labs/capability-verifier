@@ -50,6 +50,11 @@ class DevcontainerBuildTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertFalse(ran)
 
+    def test_runtime_image_installs_jq(self):
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        runtime = dockerfile.split("AS runtime", 1)[1].split("AS development", 1)[0]
+        self.assertIn(" jq ", runtime)
+
     def test_default_devcontainer_reuses_runtime(self):
         config = json.loads((ROOT / ".devcontainer/devcontainer.json").read_text())
         self.assertEqual(config["build"]["dockerfile"], "../Dockerfile")

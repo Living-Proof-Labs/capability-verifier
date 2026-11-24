@@ -11,6 +11,11 @@
 # A supplied commit must match the commit already recorded for that tag.
 set -euo pipefail
 
+if ! command -v jq >/dev/null 2>&1; then
+  printf '%s\n' "jq is required" >&2
+  exit 1
+fi
+
 lock=verification.lock.json
 pin=${RESOLVED_PIN_FILE:-$lock}
 
