@@ -2,8 +2,8 @@
 """How the evidence step ended is recorded in the evidence artifact (#155).
 
 The evidence step's shell sees the runner's exit code, and only the workflow knows how the
-step ended. These tests run the workflow's own scripts, under `sh -e` like the verifier
-image's job shell, with a stub in place of `uv run ... livingproof_sim_mujoco.evidence`:
+step ended. These tests run the evidence job's scripts under `bash -eo pipefail`, that
+job's shell, with a stub in place of `uv run ... livingproof_sim_mujoco.evidence`:
 
 - a clean run, a non-zero exit, exit 4, and a runner killed by a signal are recorded by the
   evidence step itself;
@@ -69,8 +69,14 @@ def _env(tmp_path, **extra):
 
 
 def _run(script, cwd, env):
+    # GitHub's `shell: bash` is `bash --noprofile --norc -eo pipefail`.
     return subprocess.run(
-        ["sh", "-e", "-c", script], cwd=cwd, env=env, capture_output=True, text=True, check=False
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
 
