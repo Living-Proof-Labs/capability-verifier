@@ -78,6 +78,7 @@ jobs:
               with tar.extractfile(records[0]) as stream:
                   record = json.load(stream)
           expected = {
+              "version": os.environ["RELEASE_TAG"],
               "release_version": os.environ["VERSION"], "release_tag": os.environ["RELEASE_TAG"],
               "commit": os.environ["SOURCE"], "exitstatus": 0,
               "release_run_id": os.environ["GITHUB_RUN_ID"],

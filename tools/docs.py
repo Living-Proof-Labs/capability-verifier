@@ -58,6 +58,33 @@ def command(*args):
     return subprocess.check_output(args, cwd=ROOT, text=True).strip()
 
 
+# A release tag is only vX.Y.Z. Prereleases, build metadata and anything a shell
+# could interpret stay off the manual.
+PLAIN_RELEASE_TAG = re.compile(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
+SOURCE_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+def checkout_version(commit, environ=None):
+    """build.json version and the provenance Checkout identity.
+
+    The runtime image has no git history (.dockerignore drops .git), so git
+    describe cannot see the release tag and used to record development-<sha>
+    on a published release. A plain vX.Y.Z is recorded only when this run
+    published that tag on this commit. Every other build, including one whose
+    commit already carries a tag, stays development-<sha>.
+    """
+    env = os.environ if environ is None else environ
+    tag = env.get("RELEASE_TAG") or ""
+    if (
+        env.get("RELEASE_PUBLISHED") == "true"
+        and env.get("RELEASE_COMMIT") == commit
+        and SOURCE_SHA.fullmatch(commit or "")
+        and PLAIN_RELEASE_TAG.fullmatch(tag)
+    ):
+        return tag
+    return "development-" + commit
+
+
 def release_identity(context):
     tag = os.environ.get("DOCS_RELEASE_TAG")
     if not tag:
@@ -65,7 +92,7 @@ def release_identity(context):
     run = os.environ["DOCS_RELEASE_RUN_ID"]
     attempt = os.environ["DOCS_RELEASE_RUN_ATTEMPT"]
     if (
-        not re.fullmatch(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", tag)
+        not PLAIN_RELEASE_TAG.fullmatch(tag)
         or os.environ.get("LIVINGPROOF_VERIFIER_VERSION") != tag[1:]
         or context["exitstatus"] != 0
         or not re.fullmatch(r"[1-9][0-9]*", run)

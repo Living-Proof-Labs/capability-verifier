@@ -11,6 +11,11 @@ services:
         LIVINGPROOF_VERIFIER_VERSION: ${LIVINGPROOF_VERIFIER_VERSION:-}
     environment:
       GITHUB_RUN_URL: ${GITHUB_RUN_URL:-local run}
+      # Empty unless a published release build sets them. Pytest records the tag
+      # only when all three name a plain vX.Y.Z on this commit.
+      RELEASE_PUBLISHED: ${RELEASE_PUBLISHED:-}
+      RELEASE_TAG: ${RELEASE_TAG:-}
+      RELEASE_COMMIT: ${RELEASE_COMMIT:-}
     volumes:
       - ./artifacts:/app/artifacts
   documentation:
