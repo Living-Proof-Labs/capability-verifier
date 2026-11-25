@@ -437,6 +437,10 @@ jobs:
       # The image's user is lpl (uid 1000), but actions/checkout, upload-artifact and
       # download-artifact write the runner-owned workspace (/__w, uid 1001), so run as root.
       options: --user root
+    # A container job's default shell is sh. resolved-pin-source uses bash, and the image has it.
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -980,6 +984,10 @@ jobs:
       # The image's user is lpl (uid 1000), but actions/checkout, upload-artifact and
       # download-artifact write the runner-owned workspace (/__w, uid 1001), so run as root.
       options: --user root
+    # A container job's default shell is sh. resolved-pin-source uses bash, and the image has it.
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 120
     strategy:
       fail-fast: false
