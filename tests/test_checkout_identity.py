@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Release builds record vX.Y.Z; every other build stays development-<sha> (#235)."""
 
+import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -46,10 +48,28 @@ def test_a_missing_release_env_stays_development():
     assert identity({}) == DEVELOPMENT
 
 
-def test_a_tag_for_another_commit_stays_development():
-    env = {**RELEASE, "RELEASE_COMMIT": OTHER}
+@pytest.mark.parametrize("release_commit", [None, "", OTHER])
+def test_a_release_without_this_commit_stays_development(release_commit):
+    """Absent or empty RELEASE_COMMIT must not count as this commit."""
+    env = dict(RELEASE)
+    if release_commit is None:
+        del env["RELEASE_COMMIT"]
+    else:
+        env["RELEASE_COMMIT"] = release_commit
     assert identity(env) == DEVELOPMENT
-    assert checkout_version(OTHER, env) == TAG
+    assert identity(env) != TAG
+    if release_commit == OTHER:
+        assert checkout_version(OTHER, env) == TAG
+
+
+@pytest.mark.parametrize("tag", [None, ""])
+def test_a_release_without_a_tag_stays_development(tag):
+    env = dict(RELEASE)
+    if tag is None:
+        del env["RELEASE_TAG"]
+    else:
+        env["RELEASE_TAG"] = tag
+    assert identity(env) == DEVELOPMENT
 
 
 @pytest.mark.parametrize(
@@ -101,6 +121,52 @@ def test_a_non_sha_commit_cannot_carry_a_release_label():
     assert checkout_version(poisoned, env) == f"development-{poisoned}"
 
 
+def _loaded_conftest():
+    for module in sys.modules.values():
+        file = getattr(module, "__file__", None)
+        if file and file.endswith("tests/conftest.py") and hasattr(module, "pytest_sessionfinish"):
+            return module
+    raise RuntimeError("verification conftest is not loaded")
+
+
+def test_the_verification_session_records_the_release_tag(tmp_path, monkeypatch):
+    """The session hook writes vX.Y.Z, not a truthy expression that ignores the tag."""
+    module = _loaded_conftest()
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(module, "source_identity", lambda: {"tools/docs.py": "abc"})
+    monkeypatch.setenv("SOURCE_COMMIT", COMMIT)
+    monkeypatch.setenv("RELEASE_PUBLISHED", "true")
+    monkeypatch.setenv("RELEASE_TAG", TAG)
+    monkeypatch.setenv("RELEASE_COMMIT", COMMIT)
+    monkeypatch.setenv("GITHUB_RUN_URL", "https://example.test/runs/1")
+    xml = tmp_path / "artifacts" / "results.xml"
+    xml.parent.mkdir(parents=True)
+    xml.write_bytes(b"<testsuite/>")
+
+    class Option:
+        xmlpath = str(xml)
+
+    class Config:
+        option = Option()
+
+    class Session:
+        config = Config()
+        testscollected = 1
+
+    hook = module.pytest_sessionfinish(Session(), 0)
+    next(hook)
+    with pytest.raises(StopIteration):
+        next(hook)
+
+    context = json.loads((tmp_path / "artifacts" / "test-context.json").read_text())
+    assert context["commit"] == COMMIT
+    assert context["version"] == TAG
+    assert context["version"] != DEVELOPMENT
+    assert context["run"] == "https://example.test/runs/1"
+    assert context["exitstatus"] == 0
+    assert context["collected"] == 1
+
+
 def test_verification_records_checkout_version_instead_of_git_describe():
     """Reverting conftest to git describe brings back development-<sha> on release images."""
     text = (ROOT / "tests/conftest.py").read_text()
@@ -135,9 +201,12 @@ def test_only_the_released_manual_build_receives_the_published_tag():
         "RELEASE_COMMIT": "${{ inputs.commit }}",
     }
     named = {step.get("name"): step for step in steps}
-    for name in ("Verify the released source", "Build the released manual"):
+    # checkout_version runs inside task verify. The env must sit on that command.
+    runs = {"Verify the released source": "task verify", "Build the released manual": "task docs"}
+    for name, command in runs.items():
         step = named[name]
         assert step["env"] == expected
+        assert step["run"] == command
         assert "${{" not in step["run"]
     for step in steps:
         run = step.get("run")
