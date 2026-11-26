@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/vocabulary.schema.json",
+  "title": "Observable vocabulary",
+  "description": "The observable terms a scenario may use. Each term has a meaning, a frame, units, and a rule for when a per-robot nominal applies. It does not map a term to an MCAP channel or to a robot model; that is the observation-binding format and the robot bindings. See docs/observable-vocabulary.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "scope", "terms"],
+  "properties": {
+    "format": {"const": "livingproof-observable-vocabulary/1.0.0"},
+    "scope": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The scenario family the terms cover, for example hallway. A term is added only when a scenario fixture uses it."
+    },
+    "terms": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/term"}
+    }
+  },
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "term": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "meaning", "frame", "units", "nominal", "sources"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(_[a-z0-9]+)*$",
+          "description": "The observable as a scenario step and a binding name it, for example base_height."
+        },
+        "name": {"$ref": "#/$defs/text", "description": "The term as scenario text reads it, for example base height."},
+        "meaning": {"$ref": "#/$defs/text"},
+        "frame": {"$ref": "#/$defs/text", "description": "What the value is measured in or against."},
+        "units": {
+          "type": "string",
+          "pattern": "^(?:(?:meters|seconds|for|in|and|position|sample|time|depth|start|end),? ?)+$",
+          "description": "Units in words, from a closed set: meters and seconds. A term that needs another unit adds it here first."
+        },
+        "nominal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["applies", "rule"],
+          "properties": {
+            "applies": {
+              "enum": ["never", "per-robot-configuration"],
+              "description": "never: the term has no per-robot nominal. per-robot-configuration: a nominal value exists for each robot and configuration."
+            },
+            "rule": {"$ref": "#/$defs/text"}
+          }
+        },
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Evaluator metrics defined in terms of this term. Optional.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "maps"],
+            "properties": {
+              "id": {"$ref": "#/$defs/text", "description": "The evaluator's metric name, for example wall_contacts."},
+              "maps": {"$ref": "#/$defs/text", "description": "How the metric relates to the term."}
+            }
+          }
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/text"},
+          "description": "Where the hallway evaluator and its fixtures use the term, so the definition can be checked against them."
+        }
+      }
+    }
+  }
+}

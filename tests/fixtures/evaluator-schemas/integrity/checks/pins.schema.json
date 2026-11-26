@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/checks/pins.schema.json",
+  "title": "pins 1.1.0",
+  "description": "The run manifest pin hashes match the verification lock for specs, runner, verifier, world, and configuration. Each difference is a hash-mismatch finding on that subject and is a test-system finding. Version 1.1.0: a subject is checked when both the manifest and the lock carry its hash. A subject the lock does not carry is not-checked with reason not-declared. A subject the manifest does not carry (and the lock does) is not-checked with reason not-recorded. A subject neither the manifest nor the lock carries is not-checked with reason not-declared, because the lock is tested first and there is nothing declared to compare with. not_checked lists every subject that was not checked, and is required. percentage is 100 times the number of checked subjects without a finding divided by the number of checked subjects, so a not-checked subject is not in the denominator. When no subject was checked the check is not applicable. Version 1.0.0, which stays valid: every request carried all five subjects, and percentage is 100 times the number of matching subjects divided by 5. A 1.0.0 result has no not_checked. The schema enforces two of the rules: a check that is not applicable lists all five subjects, and an applicable one does not. The rest are rule-level, checked by the reference rules and not by this schema: a subject is never both a finding and not checked, a subject is listed once, and the percentage equals the rule's value.",
+  "allOf": [
+    {
+      "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/result.schema.json#/$defs/check"
+    }
+  ],
+  "unevaluatedProperties": false,
+  "if": {
+    "properties": {"version": {"const": "1.0.0"}},
+    "required": ["version"]
+  },
+  "then": {"properties": {"not_checked": false}},
+  "else": {
+    "required": ["not_checked"],
+    "allOf": [
+      {
+        "if": {"properties": {"applicable": {"const": false}}, "required": ["applicable"]},
+        "then": {"properties": {"not_checked": {"$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/checks/pins.schema.json#/$defs/lists_all_five"}}}
+      },
+      {
+        "if": {"properties": {"applicable": {"const": true}}, "required": ["applicable"]},
+        "then": {"properties": {"not_checked": {"not": {"$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/checks/pins.schema.json#/$defs/lists_all_five"}}}}
+      }
+    ]
+  },
+  "$defs": {
+    "lists_all_five": {
+      "allOf": [{"contains": {"properties": {"subject": {"const": "specs"}}, "required": ["subject"]}},{"contains": {"properties": {"subject": {"const": "runner"}}, "required": ["subject"]}},{"contains": {"properties": {"subject": {"const": "verifier"}}, "required": ["subject"]}},{"contains": {"properties": {"subject": {"const": "world"}}, "required": ["subject"]}},{"contains": {"properties": {"subject": {"const": "configuration"}}, "required": ["subject"]}}]
+    }
+  },
+  "properties": {
+    "id": {"const": "pins"},
+    "version": {"enum": ["1.0.0", "1.1.0"]},
+    "not_checked": {
+      "items": {
+        "required": ["subject"],
+        "properties": {
+          "subject": {"enum": ["specs", "runner", "verifier", "world", "configuration"]},
+          "reason": {"enum": ["not-recorded", "not-declared"]},
+          "trial_id": false
+        }
+      }
+    },
+    "findings": {
+      "items": {
+        "required": ["subject"],
+        "properties": {
+          "category": {"const": "hash-mismatch"},
+          "classification": {"const": "test_system"},
+          "trial_id": false,
+          "trial_ids": false,
+          "check_run": false
+        }
+      }
+    }
+  }
+}

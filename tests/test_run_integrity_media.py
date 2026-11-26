@@ -58,9 +58,9 @@ def _jobs():
 def test_run_integrity_waits_for_the_media_job_and_runs_whatever_it_did():
     job = _jobs()["run-integrity"]
     assert set(job["needs"]) == {"plan", "evidence", "media"}
-    # `!cancelled()` runs the job after a skipped or failed need: media off, not media-capable,
-    # media failed, or evidence failed so that verify and media never ran.
-    assert job["if"] == "${{ !cancelled() }}"
+    # `!cancelled()` runs the job after a skipped or failed need when evaluators is
+    # empty: media off, not media-capable, media failed, or evidence failed.
+    assert job["if"] == "${{ !cancelled() && inputs.evaluators == '' }}"
     assert "run-integrity" in _jobs()["report"]["needs"]
 
 
@@ -386,8 +386,8 @@ def test_help_probe_pattern_matches_media_as_a_whole_flag():
 
 
 def test_download_gate_for_each_media_job_result():
-    # run-integrity itself still runs whenever the workflow is not cancelled
-    # (`if: ${{ !cancelled() }}`). The download step's if and continue-on-error are
+    # run-integrity runs when the workflow is not cancelled and evaluators is empty.
+    # The download step's if and continue-on-error are
     # evaluated from needs.media.result, the matrix aggregate:
     #   success   — attempt; a missing artifact or a genuine download failure fails the job
     #   failure   — attempt; a missing artifact (this leg or a sibling failed) does not

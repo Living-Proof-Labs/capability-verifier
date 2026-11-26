@@ -279,6 +279,31 @@ at `v1.5.0`. An explicit lock pin still takes precedence. This default supports
 recording integrity via `--media`; applicability remains determined by the run’s
 declared recording limits, not by the evaluator version alone.
 
+## Evaluator declaration lines
+
+`scenario.yml` and `walk-hallway.yml` take an optional string input,
+`evaluators`. It is newline-separated declaration lines:
+
+```text
+<owner>/<repo>@<ref>/<path>.json
+```
+
+`ref` is a release tag `vMAJOR.MINOR.PATCH` or a 40-character hexadecimal
+commit. A tag is peeled to the commit it names. A branch of the same name is
+refused, as are a short commit, `latest`, a missing ref, a URL, another host,
+a `.` or `..` path segment, and any other character outside the line grammar.
+Blank lines and lines that start with `#` are ignored. An input with no
+declaration lines is an error when the loader reads it.
+
+Empty, the default, keeps today's `run-integrity` job. When the input is
+non-empty, that job's `if` is false, so it is skipped, and the report's
+`RUN_INTEGRITY_RESULT` is empty, so the collector does not store
+`integrity_not_run` for the skipped job. The workflow does not run the loader.
+The caller runs `python -m capability_verifier.evaluators`: `check` resolves
+and validates each descriptor, and `run` installs that commit and executes it.
+Results are attached by kind. An `integrity` result is stored at
+`assessment.integrity_results[<id>]`.
+
 The assessing jobs fetch the specs commit the evidence lock declares with
 `tools/fetch_hallway_specs.py --from evidence/manifest.json`. Every file in
 `releases.specs.files` must match its declared sha256, `description.json` as well as

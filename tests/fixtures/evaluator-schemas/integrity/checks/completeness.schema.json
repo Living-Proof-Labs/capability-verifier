@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/checks/completeness.schema.json",
+  "title": "completeness 1.1.0",
+  "description": "Every planned trial has a recording and observations, neither missing, truncated, nor empty, and the trial ended on its own. percentage is 100 times the number of complete planned trials divided by the number of planned trials. A planned trial with no evidence is missing-trial. This check's findings are test-system findings. The recordings it reads are the ones the manifest lists: a listed recording that is missing is missing-recording, a truncated one is truncated-recording, and an empty one is empty-recording, so a run with a listed recording missing is never complete and never reads COMPLETED and 100. A remark in a summary does not replace the finding. Version 1.1.0 follows plan-conformance's applicability: when the run's preconditions were unmet (evidence['plan-conformance'].preconditions.met is false) the run ran no trials, the check is not applicable, and a planned trial is not reported as missing. When the preconditions are met or not stated, it judges as in 1.0.0. Version 1.0.0, which stays valid, is always applicable.",
+  "allOf": [
+    {
+      "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/result.schema.json#/$defs/check"
+    }
+  ],
+  "unevaluatedProperties": false,
+  "properties": {
+    "id": {"const": "completeness"},
+    "version": {"enum": ["1.0.0", "1.1.0"]},
+    "findings": {
+      "items": {
+        "required": ["trial_id"],
+        "properties": {
+          "category": {
+            "enum": [
+              "missing-trial",
+              "missing-recording",
+              "missing-observations",
+              "truncated-recording",
+              "truncated-observations",
+              "empty-recording",
+              "empty-observations",
+              "ended-by-timeout",
+              "ended-by-crash"
+            ]
+          },
+          "classification": {"const": "test_system"},
+          "subject": false,
+          "trial_ids": false,
+          "check_run": false
+        }
+      }
+    }
+  }
+}

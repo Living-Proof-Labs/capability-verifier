@@ -314,8 +314,9 @@ def test_an_evidence_failure_still_stops_grading():
     assert "if" not in verify
     assert "evidence" in jobs["scenario-evaluator"]["needs"]
     assert "if" not in jobs["scenario-evaluator"]
-    # Only run-integrity runs after a failed evidence job.
-    assert jobs["run-integrity"]["if"] == "${{ !cancelled() }}"
+    # Only run-integrity runs after a failed evidence job, and only when evaluators
+    # is empty. Empty is the default, so a caller that does not set it still gets the job.
+    assert jobs["run-integrity"]["if"] == "${{ !cancelled() && inputs.evaluators == '' }}"
 
 
 def _checkout(tmp_path, tag):

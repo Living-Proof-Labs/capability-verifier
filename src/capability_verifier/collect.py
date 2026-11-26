@@ -417,13 +417,24 @@ def _not_run_reason(directory: Path, job_result: str) -> str:
     )
 
 
-def _attach_not_run(bundle: dict, job_result: str, reason: str, refused: bool = False) -> None:
+def _attach_not_run(
+    bundle: dict,
+    job_result: str,
+    reason: str,
+    refused: bool = False,
+    evaluator: str = NOT_RUN_ID,
+) -> None:
+    """Record a missing integrity result.
+
+    ``evaluator`` defaults to the historical run-integrity id so callers that
+    omit it keep today's record.
+    """
     assessment = bundle.get("assessment")
     if not isinstance(assessment, dict):
         assessment = {}
         bundle["assessment"] = assessment
     assessment["integrity_not_run"] = {
-        "evaluator": NOT_RUN_ID,
+        "evaluator": evaluator,
         "job_result": job_result,
         "reason": reason,
     }

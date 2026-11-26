@@ -1,0 +1,85 @@
+{
+  "format": "livingproof-run-integrity-checks/1.0.0",
+  "checks": [
+    {
+      "id": "completeness",
+      "version": "1.1.0",
+      "previous_versions": ["1.0.0"],
+      "schema": "schema/integrity/checks/completeness.schema.json",
+      "examples": [
+        "examples/integrity/completeness",
+        "examples/integrity/completeness-preconditions-unmet",
+        "examples/integrity/completeness-recording-listed-missing"
+      ]
+    },
+    {
+      "id": "pins",
+      "version": "1.1.0",
+      "previous_versions": ["1.0.0"],
+      "schema": "schema/integrity/checks/pins.schema.json",
+      "examples": [
+        "examples/integrity/pins",
+        "examples/integrity/pins-partial",
+        "examples/integrity/pins-not-checked",
+        "examples/integrity/pins-none-checked"
+      ]
+    },
+    {
+      "id": "same-input-agreement",
+      "version": "1.0.0",
+      "schema": "schema/integrity/checks/same-input-agreement.schema.json",
+      "examples": [
+        "examples/integrity/same-input-agreement/recording-mismatch",
+        "examples/integrity/same-input-agreement/grader-disagreement",
+        "examples/integrity/same-input-agreement/robot-variation",
+        "examples/integrity/same-input-agreement/undeclared"
+      ]
+    },
+    {
+      "id": "ci-publisher",
+      "version": "1.0.0",
+      "schema": "schema/integrity/checks/ci-publisher.schema.json",
+      "examples": ["examples/integrity/ci-publisher"],
+      "recorded_run": "https://github.com/Living-Proof-Labs/livingproof-capability-report/actions/runs/43139248932"
+    },
+    {
+      "id": "plan-conformance",
+      "version": "1.1.0",
+      "previous_versions": ["1.0.0"],
+      "schema": "schema/integrity/checks/plan-conformance.schema.json",
+      "examples": [
+        "examples/integrity/plan-conformance/conformant",
+        "examples/integrity/plan-conformance/findings",
+        "examples/integrity/plan-conformance/preconditions-unmet",
+        "examples/integrity/plan-conformance/no-lock",
+        "examples/integrity/plan-conformance/lock-checked"
+      ]
+    },
+    {
+      "id": "termination",
+      "version": "1.1.0",
+      "previous_versions": ["1.0.0"],
+      "schema": "schema/integrity/checks/termination.schema.json",
+      "examples": [
+        "examples/integrity/termination/clean",
+        "examples/integrity/termination/findings",
+        "examples/integrity/termination/timeout-single-report",
+        "examples/integrity/termination/simulation-broken"
+      ]
+    },
+    {
+      "id": "recording",
+      "version": "1.2.0",
+      "previous_versions": ["1.0.0", "1.1.0"],
+      "schema": "schema/integrity/checks/recording.schema.json",
+      "examples": [
+        "examples/integrity/recording/clean",
+        "examples/integrity/recording/findings",
+        "examples/integrity/recording/no-media",
+        "examples/integrity/recording/not-checked",
+        "examples/integrity/recording/none-judged",
+        "examples/integrity/recording/over-limit"
+      ]
+    }
+  ]
+}

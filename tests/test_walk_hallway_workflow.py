@@ -1815,7 +1815,7 @@ def test_run_integrity_job_is_enabled_and_checks_out_the_v1_5_0_tag():
 
     doc = yaml.safe_load(WORKFLOW)
     job = doc["jobs"]["run-integrity"]
-    assert job["if"] == "${{ !cancelled() }}"
+    assert job["if"] == "${{ !cancelled() && inputs.evaluators == '' }}"
     assert "run-integrity-commit" not in doc["jobs"]["plan"]["outputs"]
     checkout = next(
         step
