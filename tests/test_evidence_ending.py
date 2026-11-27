@@ -8,9 +8,7 @@ job's shell, with a stub in place of `uv run ... livingproof_sim_mujoco.evidence
 - a clean run, a non-zero exit, exit 4, and a runner killed by a signal are recorded by the
   evidence step itself;
 - a step whose own shell dies (job timeout, cancellation, the shell killed) writes nothing, so
-  the `always()` step after it records `unfinished` with the step's outcome;
-- with no manifest.json, the run-integrity job still writes a Run Integrity result, by
-  running the evaluator on a stand-in manifest, instead of failing on the missing input.
+  the `always()` step after it records `unfinished` with the step's outcome.
 """
 
 import json
@@ -26,7 +24,6 @@ from capability_verifier import definition
 ROOT = Path(__file__).parents[1]
 WORKFLOW_PATH = ROOT / ".github/workflows/scenario.yml"
 WORKFLOW = WORKFLOW_PATH.read_text()
-RUN_INTEGRITY_REPO = "https://github.com/Living-Proof-Labs/livingproof-evaluator-run.git"
 
 # Stands in for `uv run python -m livingproof_sim_mujoco.evidence ...`.
 UV = """#!/bin/sh
@@ -314,50 +311,7 @@ def test_an_evidence_failure_still_stops_grading():
     assert "if" not in verify
     assert "evidence" in jobs["scenario-evaluator"]["needs"]
     assert "if" not in jobs["scenario-evaluator"]
-    # Only run-integrity runs after a failed evidence job, and only when evaluators
-    # is empty. Empty is the default, so a caller that does not set it still gets the job.
-    assert jobs["run-integrity"]["if"] == "${{ !cancelled() && inputs.evaluators == '' }}"
-
-
-def _checkout(tmp_path, tag):
-    checkout = tmp_path / "run-integrity"
-    clone = subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", tag, RUN_INTEGRITY_REPO, str(checkout)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if clone.returncode != 0:
-        pytest.fail(f"could not clone {RUN_INTEGRITY_REPO}@{tag}: {clone.stderr}")
-    sync = subprocess.run(
-        ["uv", "sync", "--locked", "--directory", str(checkout)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert sync.returncode == 0, sync.stderr
-    return checkout
-
-
-def _integrity(tmp_path, ending, name="work"):
-    work = tmp_path / name
-    (work / "evidence").mkdir(parents=True, exist_ok=True)
-    if ending is not None:
-        (work / "evidence" / "evidence-ending.json").write_text(json.dumps(ending))
-    env = {
-        **os.environ,
-        "GITHUB_WORKSPACE": str(work),
-        "PYTHONPATH": str(tmp_path / "run-integrity" / "src"),
-        "CONFIGURATION": "go1",
-        "GITHUB_RUN_ID": "1234",
-    }
-    (work / "run-integrity").symlink_to(tmp_path / "run-integrity")
-    script = definition.step(WORKFLOW, "Run Integrity, one result")
-    done = subprocess.run(
-        ["sh", "-e", "-c", script], cwd=work, env=env, capture_output=True, text=True, check=False
-    )
-    out = work / "evaluator-results" / "livingproof-run-integrity" / "result.json"
-    return done, (json.loads(out.read_text()) if out.exists() else None)
+    assert "run-integrity" not in jobs
 
 
 KILLED = {
@@ -370,107 +324,6 @@ KILLED = {
     "manifest_present": False,
     "planned_trials": 3,
 }
-
-
-@pytest.mark.parametrize("tag", ["v1.0.0", "v1.2.0"])
-def test_no_manifest_still_gives_a_run_integrity_result(tmp_path, tag):
-    _checkout(tmp_path, tag)
-    done, result = _integrity(tmp_path, KILLED)
-    assert done.returncode == 0, done.stderr
-    assert result is not None
-    run = result["integrity"]["run"]
-    assert run["test_system_status"] == "ERROR"
-    assert run["conclusion"] == "INCONCLUSIVE"
-    assert run["success"] is False
-    completeness = next(c for c in result["integrity"]["checks"] if c["id"] == "completeness")
-    assert [f["category"] for f in completeness["findings"]] == ["missing-trial"] * 3
-    assert {f["classification"] for f in completeness["findings"]} == {"test_system"}
-    # The result's input is the stand-in, named as such, never a manifest.json of the run.
-    uris = [i.get("uri", "") for i in result["inputs"]]
-    assert any("stand-in" in uri for uri in uris), result["inputs"]
-    stand_in = json.loads(
-        (tmp_path / "work" / "no-evidence" / "stand-in-manifest.json").read_text()
-    )
-    assert stand_in["stand_in"]["ending"] == KILLED
-    assert "without a manifest" in done.stderr
-
-
-# Why a no-manifest run gets no Run Integrity result, per case. The evaluator refuses a plan
-# of 0 trials (exit 2, nothing written), so a stand-in with 0 cannot produce one either.
-NO_RESULT = [
-    pytest.param({**KILLED, "planned_trials": None}, "planned_trials is null", id="null-count"),
-    pytest.param({**KILLED, "planned_trials": 0}, "planned_trials is 0", id="zero-count"),
-    pytest.param({**KILLED, "planned_trials": -2}, "planned_trials is -2", id="negative-count"),
-    pytest.param(
-        {**KILLED, "planned_trials": "3"},
-        "planned_trials is not a whole number: '3'",
-        id="malformed-count",
-    ),
-    pytest.param(
-        {**KILLED, "planned_trials": True},
-        "planned_trials is not a whole number: True",
-        id="boolean-count",
-    ),
-    pytest.param(
-        {k: v for k, v in KILLED.items() if k != "planned_trials"},
-        "planned_trials is missing",
-        id="no-count-key",
-    ),
-    pytest.param(["not", "an", "object"], "is not a JSON object", id="not-an-object"),
-    pytest.param(None, "evidence-ending.json is missing", id="no-ending-file"),
-]
-
-
-@pytest.mark.parametrize(("ending", "reason"), NO_RESULT)
-def test_no_result_fails_the_job_on_purpose_and_says_why(tmp_path, ending, reason):
-    # Exit 0 with nothing written made upload-artifact (if-no-files-found: error) fail the
-    # job later with a message about files. The job fails here, naming the cause, and leaves
-    # a file saying so, so the upload that follows has something to keep.
-    job = yaml.safe_load(WORKFLOW)["jobs"]["run-integrity"]
-    upload = next(s for s in job["steps"] if "upload-artifact" in s.get("uses", ""))
-    assert upload["with"]["if-no-files-found"] == "error"
-    assert upload["with"]["path"] == "evaluator-results/"
-    _checkout(tmp_path, "v1.0.0")
-    done, result = _integrity(tmp_path, ending)
-    assert done.returncode == 1, (done.returncode, done.stdout, done.stderr)
-    assert result is None
-    output = done.stdout + done.stderr
-    assert "::error::" in output and reason in output, output
-    work = tmp_path / "work"
-    marker = work / "evaluator-results" / "livingproof-run-integrity" / "no-result.txt"
-    assert marker.is_file()
-    assert reason in marker.read_text()
-    # No stand-in is evaluated for these, and nothing that looks like a result is written.
-    assert not (work / "no-evidence").exists()
-    assert [p.name for p in marker.parent.iterdir()] == ["no-result.txt"]
-
-
-def test_the_run_integrity_job_downloads_what_it_always_did():
-    job = yaml.safe_load(WORKFLOW)["jobs"]["run-integrity"]
-    text = json.dumps(job["steps"])
-    assert "download-artifact" in text
-    script = definition.step(WORKFLOW, "Run Integrity, one result")
-    assert 'manifest="$GITHUB_WORKSPACE/evidence/manifest.json"' in script
-    assert "stand_in" in script
-
-
-def test_the_specs_record_step_waits_for_the_manifest_it_reads():
-    # tools/fetch_hallway_specs.py --from evidence/manifest.json cannot run without one.
-    steps = yaml.safe_load(WORKFLOW)["jobs"]["run-integrity"]["steps"]
-    specs = next(s for s in steps if "fetch_hallway_specs.py" in s.get("run", ""))
-    assert specs["if"] == "${{ hashFiles('evidence/manifest.json') != '' }}"
-
-
-def test_the_specs_record_is_kept_with_the_result_when_there_is_one(tmp_path):
-    _checkout(tmp_path, "v1.0.0")
-    work = tmp_path / "work"
-    (work / "evidence").mkdir(parents=True, exist_ok=True)
-    (work / "evidence" / "specs-files.json").write_text("{}")
-    done, result = _integrity(tmp_path, KILLED)
-    assert done.returncode == 0, done.stderr
-    kept = work / "evaluator-results" / "livingproof-run-integrity" / "specs-files.json"
-    assert kept.read_text() == "{}"
-    assert result is not None
 
 
 SCHEMA_PATH = ROOT / "src/capability_verifier/livingproof-evidence-ending-0.1.schema.json"
@@ -535,13 +388,6 @@ def test_a_record_with_no_planned_count_and_a_manifest_matches_the_schema(tmp_pa
     )
     assert record["planned_trials"] is None and record["manifest_present"] is True
     assert list(_schema_validator().iter_errors(record)) == []
-
-
-def test_the_stand_in_carries_an_ending_that_matches_the_schema(tmp_path):
-    _checkout(tmp_path, "v1.0.0")
-    _integrity(tmp_path, KILLED)
-    stand_in = json.loads((tmp_path / "work/no-evidence/stand-in-manifest.json").read_text())
-    assert list(_schema_validator().iter_errors(stand_in["stand_in"]["ending"])) == []
 
 
 MALFORMED_ENDINGS = {

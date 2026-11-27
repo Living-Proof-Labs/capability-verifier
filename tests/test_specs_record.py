@@ -18,7 +18,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 DESCRIPTION = "specs/scenarios/walk-hallway/description.json"
@@ -263,35 +262,3 @@ def test_the_recorded_digest_is_the_hash_of_the_bytes_read_not_the_lock_value():
     assert "actual = hashlib.sha256(path.read_bytes()).hexdigest()" in body
     assert "read[name] = actual" in body
     assert "read[name] = expected" not in body
-
-
-def _job(name: str) -> dict:
-    document = yaml.safe_load((ROOT / ".github/workflows/scenario.yml").read_text())
-    return document["jobs"][name]
-
-
-def test_the_run_integrity_job_writes_the_record_beside_the_evidence_manifest():
-    steps = _job("run-integrity")["steps"]
-    index = {step.get("name"): i for i, step in enumerate(steps)}
-    fetch = next(s for s in steps if "fetch_hallway_specs.py" in s.get("run", ""))
-    assert "--from evidence/manifest.json --record evidence/specs-files.json" in fetch["run"], (
-        fetch["run"]
-    )
-    evaluate = index["Run Integrity, one result for the run"]
-    download = next(i for i, s in enumerate(steps) if "download-artifact" in s.get("uses", ""))
-    assert download < steps.index(fetch) < evaluate
-    # The record is kept with the integrity result.
-    text = json.dumps(steps[evaluate])
-    assert "specs-files.json" in text
-
-
-def test_the_record_is_copied_beside_the_result_before_the_evaluator_runs():
-    """Steps run under bash -e, so a copy placed after the evaluator is skipped when the
-    evaluator fails, and the uploaded artifact then lacks the record exactly when it is
-    most needed. The copy must come before the evaluator command."""
-    steps = _job("run-integrity")["steps"]
-    run = next(s for s in steps if s.get("name") == "Run Integrity, one result for the run")["run"]
-    copy = run.index(
-        "cp evidence/specs-files.json evaluator-results/livingproof-run-integrity/specs-files.json"
-    )
-    assert copy < run.index("python -m livingproof_evaluator_run"), run

@@ -84,8 +84,7 @@ def _require_tag(label: str, tag: object) -> str:
 def _check_commit(label: str, given: str, recorded: object, tag: object) -> str:
     if not COMMIT.fullmatch(given):
         raise PinError(f"{label} must be a 40-character lowercase hexadecimal SHA (got {given!r})")
-    # livingproof-evaluator-scenario has no default. v1.5.0 belongs to
-    # livingproof-evaluator-run, the run-integrity pin.
+    # livingproof-evaluator-scenario has no default, so a missing tag is a refusal.
     shown = _require_tag(label, tag)
     if _present(recorded) and recorded != given:
         raise PinError(f"{label} {given} does not match the commit for tag {shown} ({recorded})")

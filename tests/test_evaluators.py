@@ -375,14 +375,11 @@ EVALUATOR_RUN_LINE = "Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingp
 EVALUATOR_RUN_COPY = ROOT / "tests" / "fixtures" / "evaluators" / "run-integrity.json"
 
 
-def test_workflow_and_docs_declare_the_released_evaluator_line():
-    for path in (
-        ROOT / ".github" / "workflows" / "scenario.yml",
-        ROOT / ".github" / "workflows" / "walk-hallway.yml",
-        ROOT / "README.md",
-        ROOT / "docs" / "locks.md",
-    ):
+def test_docs_declare_the_released_evaluator_line_and_workflows_do_not():
+    for path in (ROOT / "README.md", ROOT / "docs" / "locks.md"):
         assert EVALUATOR_RUN_LINE in path.read_text(encoding="utf-8"), path
+    for path in (ROOT / ".github" / "workflows").glob("*.yml"):
+        assert EVALUATOR_RUN_LINE not in path.read_text(encoding="utf-8"), path
 
 
 def test_evaluator_run_descriptor_matches_the_release():
@@ -800,29 +797,25 @@ def test_a_refusal_is_attached_under_the_descriptor_id(tmp_path):
         assert key not in stored["assessment"]
 
 
-def test_attach_not_run_defaults_to_todays_evaluator_and_accepts_another():
+def test_attach_not_run_records_the_declared_evaluator():
     bundle = {"assessment": {"runs": [{"grade": "PASS", "conclusion": "PASS"}]}}
-    _attach_not_run(bundle, "failure", "gone")
-    assert bundle["assessment"]["integrity_not_run"]["evaluator"] == "livingproof-run-integrity"
     _attach_not_run(bundle, "failure", "other", evaluator="example-integrity")
     assert bundle["assessment"]["integrity_not_run"]["evaluator"] == "example-integrity"
 
 
-def test_collect_without_an_integrity_job_stores_no_not_run(tmp_path):
+def test_collect_without_an_integrity_result_stores_no_not_run(tmp_path):
     bundle, _directory = _bundle(tmp_path)
-    collect(bundle, tmp_path / "absent", integrity_job=None)
+    collect(bundle, tmp_path / "absent")
     assert "integrity_not_run" not in bundle["assessment"]
 
 
-def test_run_integrity_is_skipped_when_evaluators_are_set_and_the_wrapper_forwards_them():
+def test_an_explicit_evaluators_list_is_forwarded_and_there_is_no_integrity_job():
     scenario = yaml.safe_load((ROOT / ".github/workflows/scenario.yml").read_text())
-    job = scenario["jobs"]["run-integrity"]
-    assert "inputs.evaluators == ''" in job["if"]
+    assert "run-integrity" not in scenario["jobs"]
     report = scenario["jobs"]["report"]
-    step = next(item for item in report["steps"] if "RUN_INTEGRITY_RESULT" in item.get("env", {}))
-    assert step["env"]["RUN_INTEGRITY_RESULT"] == (
-        "${{ inputs.evaluators == '' && needs.run-integrity.result || '' }}"
-    )
+    assert "run-integrity" not in report["needs"]
+    for step in report.get("steps") or []:
+        assert "RUN_INTEGRITY_RESULT" not in (step.get("env") or {})
     wrapper = yaml.safe_load((ROOT / ".github/workflows/walk-hallway.yml").read_text())
     assert "evaluators" in wrapper[True]["workflow_call"]["inputs"]
     assert wrapper["jobs"]["scenario"]["with"]["evaluators"] == "${{ inputs.evaluators }}"

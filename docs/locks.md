@@ -149,11 +149,9 @@ supplied commit has to be the commit already recorded for that tag:
 The same sentence is used for `evaluator-commit`. If the verifier, the
 reporter, or `evaluators.livingproof-evaluator-scenario` has no tag, the
 input fails with `lock has no tag` before either comparison.
-`livingproof-evaluator-scenario` has no default. The `v1.5.0` default in
-`scenario.yml` belongs to the run-integrity pin,
-`Living-Proof-Labs/livingproof-evaluator-run`. The media and bundle gate
-still reads `releases.verifier.tag` and `releases.reporter.tag` from the lock
-file.
+`livingproof-evaluator-scenario` has no default. The workflow does not fill a
+missing scenario tag. The media and bundle gate still reads
+`releases.verifier.tag` and `releases.reporter.tag` from the lock file.
 
 The plan step passes each input through an environment variable
 (`RESOLVED_VERIFIER_COMMIT`, `RESOLVED_VERIFIER_IMAGE`, `RESOLVED_REPORTER_IMAGE`,
@@ -273,11 +271,10 @@ configuration sha256s.
 
 `evaluators.livingproof-evaluator-run` is optional. When present it is a
 tag-only pin: `repository` (`OWNER/NAME`) and `tag` (`vX.Y.Z`). There is
-no commit field. When the lock omits the pin, the walk-hallway
-run-integrity job defaults to `Living-Proof-Labs/livingproof-evaluator-run`
-at `v1.5.0`. An explicit lock pin still takes precedence. This default supports
-recording integrity via `--media`; applicability remains determined by the run’s
-declared recording limits, not by the evaluator version alone.
+no commit field. `scenario.yml` does not read this pin and does not run an
+evaluator from it. An empty `evaluators` input runs no integrity evaluator
+and writes no Run Integrity card. A caller that wants one passes a
+declaration line and runs `python -m capability_verifier.evaluators`.
 
 ## Evaluator declaration lines
 
@@ -296,11 +293,11 @@ a `.` or `..` path segment, and any other character outside the line grammar.
 Blank lines and lines that start with `#` are ignored. An input with no
 declaration lines is an error when the loader reads it.
 
-Empty, the default, keeps today's `run-integrity` job. When the input is
-non-empty, that job's `if` is false, so it is skipped, and the report's
-`RUN_INTEGRITY_RESULT` is empty, so the collector does not store
-`integrity_not_run` for the skipped job. The workflow does not run the loader.
-The caller runs `python -m capability_verifier.evaluators`: `check` resolves
+Empty, the default, runs no evaluators in this workflow and writes no Run
+Integrity card. The collector does not invent `integrity_not_run` when no
+integrity result was collected. The workflow does not run the loader. When
+the input is set, the caller runs `python -m capability_verifier.evaluators`:
+`check` resolves
 and validates each descriptor, and `run` installs that commit and executes it.
 Results are attached by kind. An `integrity` result is stored at
 `assessment.integrity_results[<id>]`. An `advisory` result is stored at
@@ -352,12 +349,13 @@ The loader maps each exit code from the descriptor:
 The assessing jobs fetch the specs commit the evidence lock declares with
 `tools/fetch_hallway_specs.py --from evidence/manifest.json`. Every file in
 `releases.specs.files` must match its declared sha256, `description.json` as well as
-`parameters.json`, or the step fails. The run-integrity job adds
-`--record evidence/specs-files.json`, which writes `livingproof-specs-files/0.1` beside
-`manifest.json`: `run_id`, the specs `repository` and `tag`, the `commit` the checkout
-resolved to, and `files`, the sha256 of each declared file as read from the checkout (not the
-lock's values). A failed check writes no record and removes an old one. The job keeps a copy
-with the integrity result as `specs-files.json`.
+`parameters.json`, or the step fails. Those jobs do not pass `--record`.
+`fetch_hallway_specs.py --from MANIFEST --record PATH` still writes
+`livingproof-specs-files/0.1` when a caller asks for it: `run_id`, the specs
+`repository` and `tag`, the `commit` the checkout resolved to, and `files`,
+the sha256 of each declared file as read from the checkout (not the lock's
+values). A failed check writes no record and removes an old one. The workflow
+does not copy that file into an integrity result.
 
 `releases.specs.digest`, `releases.runner.digest`, `releases.verifier.digest`
 and `evaluators.livingproof-evaluator-scenario.digest` are optional. A `digest`
@@ -374,15 +372,15 @@ a digest read from the lock only repeats the lock. When the lock names a verifie
 commit. It asks the container engine for the image under the job's container (the runner's
 `job.container.id`) and the registry digests that image was pulled by, and writes
 `verifier-image.json` (`livingproof-verifier-image/0.1`) into the evidence artifact, beside
-`manifest.json`, where Run Integrity already reads. Fields: `image` and `locked_digest` (the
+`manifest.json`. Fields: `image` and `locked_digest` (the
 lock), `digest` (the engine's digest of that image), `matches` (`true` when the locked digest is
 one the engine reports, `false` when the engine reports another), `image_id`, `repo_digests`
 and `container`. When the engine cannot be reached, does not know the container, or reports no
 digest of that image, `digest` and `matches` are `null` and `unavailable` says why. A difference or
-a missing answer is recorded with a workflow warning and does not fail the job; the Run
-Integrity `pins` check reports it. The record comes from the `evidence` job only: the `verify`,
-`scenario-evaluator` and `run-integrity` jobs run in the same reference but are not recorded.
-The reporter image is not recorded, because the `report` job runs after Run Integrity.
+a missing answer is recorded with a workflow warning and does not fail the job.
+The record comes from the `evidence` job only: the `verify` and
+`scenario-evaluator` jobs run in the same reference but are not recorded.
+The reporter image is not recorded.
 
 `robot.json` configuration names must equal the `configurations` names in the
 same order. That list is the full `configurations` array, including entries the
@@ -807,37 +805,21 @@ existing robot `verification.lock.json` byte for byte.
 
 <span id="recorded-hashes"></span>
 
-## Recordings in the Run Integrity job
+## Integrity results
 
-The `run-integrity` job also needs the `media` job. Whenever that job was not skipped it attempts
-this configuration's artifact, `<prefix>mcap-<configuration>` (`media.json` and `mcap/`), into
-`media/`. `needs.media.result` is the matrix aggregate, so one failed configuration must not drop
-another's already-uploaded recordings. If the aggregate succeeded and this artifact is missing, the
-download fails: the job does not silently grade without recordings. If the aggregate is not success
-and the artifact is missing, the job continues without `--media`. When `media.json` is present, the
-job passes the directory to the evaluator as `--media "$GITHUB_WORKSPACE/media"`. The flag arrived
-in livingproof-evaluator-run v1.4.0 with the `recording` check. The job passes it only when the
-pinned evaluator lists `--media` as a whole flag in its `--help` (not as a prefix of a longer
-option such as `--media-dir`), so a lock that pins an earlier tag, or none (the default is
-v1.0.0), runs exactly as before.
+`scenario.yml` does not run an integrity evaluator. An empty `evaluators` input,
+the default, produces no integrity result and no Run Integrity card. A caller
+that passes declaration lines runs `python -m capability_verifier.evaluators`.
+An integrity result document in the downloaded evaluator results is stored at
+`assessment.integrity_results[<id>]` and shown next to the verdict. It never
+changes the robot grade. A failed integrity result marks each assessment run
+`INCONCLUSIVE`.
 
-With media off, not media-capable, skipped because the evidence step failed, or with no uploaded
-artifact for this configuration, there is no usable `media/media.json` and the job runs without
-`--media`: it stays green, and v1.4.0 and later report `recording` as not applicable. The gap
-limit is `plan.recording.max_gap_seconds`, read by the evaluator from the evidence manifest and
-then the lock. Neither this repository nor the evaluator has a default for it, so a run that
-declares none is not judged, with or without media.
-
-A failed or refused Run Integrity is shown, not omitted. The `report` job does not require
-`run-integrity` to succeed, and passes its result to the collector. With no integrity result
-collected (the job failed, the evaluator refused the run with exit 2, or it was cancelled or
-skipped, or it succeeded and left nothing) the stored assessment gets `integrity_not_run` (the job
-result and the reason: the evaluator's refusal message, else the job's own `no-result.txt` line, else the job result),
-every assessment run is `INCONCLUSIVE`, and the reports show a
-`Run Integrity: REFUSED` or `Run Integrity: NOT RUN (...)` line. The robot grade is stored as before and is not changed. The
-job result is the matrix aggregate, so one failed configuration is reported for each. The reason is
-the first line of the run-integrity job's own `no-result.txt`; a note in any other evaluator's
-artifact is never used.
+Collecting result files does not invent `integrity_not_run`. The loader stores
+that record when a declared integrity evaluator fails or is refused, marks each
+assessment run `INCONCLUSIVE`, and the reports show `Run Integrity: REFUSED` or
+`Run Integrity: NOT RUN (...)`. The robot grade is stored as before and is not
+changed. The reason is the note the loader kept.
 
 The integrity line sits with the verdict in every format, never after the footer: in `report.md`
 and `report.txt` right after the verdict line (the reporter words it `...; overall PASS. 100% required.`
@@ -849,15 +831,12 @@ how the result is shown and never what is stored:
 | --- | --- | --- |
 | `PASS` | the evaluator ran and the check passed | `test_system_status` `COMPLETED` |
 | `FAILED` | the evaluator ran and the check failed | `ERROR` (or `success: false`) |
-| `REFUSED: <message>` | the evaluator refused the run (exit 2, no result); the reason is its own message | `assessment.integrity_not_run` with `refused: true` |
-| `NOT RUN (<job result>)` | the check never ran: cancelled, skipped, or the job ended without a result and without a refusal | `assessment.integrity_not_run` |
+| `REFUSED: <message>` | the loader recorded a refusal; the reason is its note | `assessment.integrity_not_run` with `refused: true` |
+| `NOT RUN (<job result>)` | the loader recorded a missing result that was not a refusal | `assessment.integrity_not_run` |
 
 Any other stored status (`INCONCLUSIVE`, or one a later evaluator adds) is shown as it is. A
-`PASS` line reads `Run Integrity: PASS`. The run-integrity step knows the evaluator's exit status:
-on exit 2 it keeps the evaluator's last message line in `refused.txt` in the same artifact (still
-failing the job), and the collector reads it from the run-integrity artifact only. Any exit 2 is `REFUSED`, whatever the
-cause (a media refusal, a malformed request, or a tool's own exit 2), and the reason is the
-message itself, so they read differently. The message is capped at 500 characters, ends in a full
+`PASS` line reads `Run Integrity: PASS`. A refusal and a failure that left no result read
+differently because the loader's note is the reason. The reason ends in a full
 stop before "The run is INCONCLUSIVE", and is backslash-escaped in `report.md` and HTML-escaped in
 `report.html`; `report.txt` shows it as it is. Markdown escaping covers backslash, backtick,
 asterisk, underscore, tilde, ampersand, brackets, and pipe, so emphasis, a labelled link, and an
@@ -876,23 +855,15 @@ and only around an address with no whitespace or control character. Inside them,
 Whitespace that ends an address is the ASCII set cmark uses (space, tab, line feed, carriage
 return), not a non-breaking space. An `https://` run that is not a real link, such as
 `https://*bold*`, is still escaped. `report.html` HTML-escapes the original line once, so `&` is
-`&amp;` and is not escaped again. Only an artifact named
-`[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>` (or its inner
-`livingproof-run-integrity` directory) counts, not a lookalike name. A
-`no-result.txt` note is the reason for `NOT RUN`, as before. The reporter has no integrity input,
+`&amp;` and is not escaped again. The reporter has no integrity input,
 so the workflow places the lines after rendering
 (`collect_evaluator_results.py --place-integrity reports`) and before it writes `SHA256SUMS`, so
 the sums cover the edited files. The reporter's own grade line is unchanged.
 
-Run Integrity starts after `verify` and `media` (the `media` job needs `verify`), where it used to
-start after `evidence`. `report` already waited for all of them, so the run's total time does not
-change, and only the time the integrity result is ready moves later.
-
 ## Recordings in the scenario media job
 
 The `scenario-media` job runs the scenario evaluator on each trial's MCAP, read through that trial's
-binding file (media 2.1.0 and 2.2.0; the 2.2.0 `robot_mcap` recording is not read here, only Run Integrity
-reads it). It needs the `media` job, runs only when the lock pins the scenario
+binding file (media 2.1.0 and 2.2.0; this job does not read the 2.2.0 `robot_mcap` recording). It needs the `media` job, runs only when the lock pins the scenario
 evaluator by commit, and never holds up the report. The evaluator resolves every limit from the run's
 `manifest.json`; the job passes none, and a limit the manifest cannot give leaves its step
 `NOT_EVALUATED` (`missing_threshold`). Each result names the evaluator (id, version, and the pinned
@@ -946,8 +917,7 @@ bare 64-character hash fails `.digest must be a sha256 digest`.
 
 The `evidence` job writes `evidence-ending.json` (`livingproof-evidence-ending/0.1`) into the
 evidence artifact, beside `manifest.json`, whether the step succeeded, failed, was cancelled or
-timed out. The Run Integrity job downloads that artifact, so it can tell these cases apart
-even when the runner left no `manifest.json`. The JSON Schema is
+timed out. The JSON Schema is
 `src/capability_verifier/livingproof-evidence-ending-0.1.schema.json`, and the tests check every
 record the workflow writes against it. Fields:
 
@@ -982,29 +952,7 @@ A temp record from the evidence step that is not a complete `exited` or `signall
 missing key, a wrong type) is not used: the record says `unfinished` with a `null` exit code and
 signal, and the job log shows what was there.
 
-The `run-integrity` job runs when the evidence job failed. With no `manifest.json`, it does not
-fail on the missing file: when `planned_trials` is a whole number above zero, it writes a stand-in
-manifest, `no-evidence/stand-in-manifest.json`, that carries `plan.trials.count` from
-`planned_trials`, no trial results, and the ending record, and runs the Run Integrity evaluator
-on it. The evaluator then reports each planned trial as missing in its own words, and the
-result's input is named as the stand-in.
-
-When there is no usable planned trial count, the job has no result to write and **fails** with
-an `::error::` that names the cause. It also writes
-`evaluator-results/livingproof-run-integrity/no-result.txt` with the same sentence, so the
-artifact upload that follows has a file to keep and the job's only failure is the named one.
-`no-result.txt` is not a result document, and the report ignores it. The cases:
-
-| Case | Message says |
-| --- | --- |
-| No `evidence-ending.json` in the artifact | `evidence-ending.json is missing from the evidence artifact` |
-| The file cannot be read or is not JSON | `evidence-ending.json cannot be read` |
-| The file is not a JSON object | `evidence-ending.json is not a JSON object` |
-| No `planned_trials` key | `planned_trials is missing from evidence-ending.json` |
-| `planned_trials` is `null` (the lock has no `plan.trials.count`) | `planned_trials is null` |
-| `planned_trials` is not a whole number (a string, a boolean, a float) | `planned_trials is not a whole number` |
-| `planned_trials` is 0 or negative | `planned_trials is 0` (or the negative value): the evaluator does not take a plan with no trials |
-
-No stand-in is evaluated for these. The report job runs only when `verify` succeeded, which needs
-the evidence job, so a run in this state is already failed and nothing downstream reads a missing
-result.
+The report job runs only when `verify` succeeded, which needs the evidence job, so a
+run whose evidence step failed is already failed. An empty `evaluators` input does
+not run an integrity evaluator on that evidence, and it does not write a Run
+Integrity card.

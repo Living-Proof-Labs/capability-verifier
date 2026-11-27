@@ -1,196 +1,50 @@
 # SPDX-License-Identifier: Apache-2.0
-"""A failed or refused run-integrity is shown explicitly, never omitted (capability-verifier#214).
+"""A missing integrity result is not invented from a job result (#264).
 
-When livingproof-evaluator-run refuses (exit 2) or the run-integrity job fails, no integrity
-result document exists. The report job still runs, and the collector, told the job's result
-(``RUN_INTEGRITY_RESULT``), stores ``assessment.integrity_not_run`` with the reason, marks every
-assessment run ``INCONCLUSIVE`` as a failed integrity result does, and the rendered report gets a
-"Run Integrity: NOT RUN" line. The robot grade is untouched.
+An integrity result document is still stored and shown. A directory with no
+such document does not store ``integrity_not_run``, and the collector command
+ignores ``RUN_INTEGRITY_RESULT``.
 """
 
 from __future__ import annotations
 
 import json
-import re
-from pathlib import Path
 
-import pytest
 from test_collect_cli import CITED, _layout
 from test_collect_integrity import _bundle, _integrity, _robot_grades, _write
 
 from capability_verifier.collect import collect, integrity_report_lines, main
 
-WORKFLOW = Path(__file__).parents[1] / ".github" / "workflows" / "scenario.yml"
 
-
-def _empty(tmp_path):
-    downloads = tmp_path / "downloads"
-    downloads.mkdir()
-    return downloads
-
-
-@pytest.mark.parametrize("result", ["failure", "cancelled", "skipped"])
-def test_a_job_that_did_not_succeed_is_stored_and_makes_the_run_inconclusive(result, tmp_path):
+def test_a_result_document_is_stored_and_not_called_not_run(tmp_path):
     bundle, _ = _bundle(tmp_path)
     grades = _robot_grades(bundle)
-    collect(bundle, _empty(tmp_path), integrity_job=result)
-    stored = bundle["assessment"]["integrity_not_run"]
-    assert stored["evaluator"] == "livingproof-run-integrity"
-    assert stored["job_result"] == result and stored["reason"]
-    assert "integrity_results" not in bundle["assessment"]
-    assert _robot_grades(bundle) == grades
-    for run in bundle["assessment"]["runs"]:
-        assert run["conclusion"] == "INCONCLUSIVE" and run["grade"] == "PASS"
-
-
-def test_the_report_line_says_not_run_and_inconclusive(tmp_path):
-    bundle, _ = _bundle(tmp_path)
-    collect(bundle, _empty(tmp_path), integrity_job="failure")
-    (line,) = integrity_report_lines(bundle)
-    assert line.startswith("Run Integrity: NOT RUN")
-    assert "INCONCLUSIVE" in line and "failure" in line
-
-
-def test_a_succeeded_job_that_left_no_result_is_not_omitted_either(tmp_path):
-    bundle, _ = _bundle(tmp_path)
-    collect(bundle, _empty(tmp_path), integrity_job="success")
-    assert bundle["assessment"]["integrity_not_run"]["job_result"] == "success"
-    assert "no result" in bundle["assessment"]["integrity_not_run"]["reason"]
-
-
-def test_the_reason_is_the_job_s_own_no_result_note_when_it_wrote_one(tmp_path):
-    bundle, _ = _bundle(tmp_path)
-    downloads = tmp_path / "downloads"
-    note = downloads / "evaluator-results-livingproof-run-integrity-playground"
-    note.mkdir(parents=True)
-    (note / "no-result.txt").write_text(
-        "no Run Integrity result for this run: planned_trials is 0\n"
-    )
-    collect(bundle, downloads, integrity_job="failure")
-    assert "planned_trials is 0" in bundle["assessment"]["integrity_not_run"]["reason"]
-
-
-def test_a_result_that_is_there_is_not_called_not_run(tmp_path):
-    bundle, _ = _bundle(tmp_path)
     downloads = tmp_path / "downloads"
     _write(
         downloads,
-        "evaluator-results-livingproof-run-integrity-playground",
-        _integrity("livingproof-run-integrity", ok=True),
+        "evaluator-results-example-integrity-playground",
+        _integrity("example-integrity", ok=True),
     )
-    collect(bundle, downloads, integrity_job="success")
+    collect(bundle, downloads)
     assert "integrity_not_run" not in bundle["assessment"]
     assert integrity_report_lines(bundle) == ["Run Integrity: PASS"]
+    assert _robot_grades(bundle) == grades
 
 
-def test_without_the_job_result_nothing_changes(tmp_path):
+def test_without_a_result_document_nothing_is_stored(tmp_path):
     bundle, _ = _bundle(tmp_path)
     before = json.dumps(bundle, sort_keys=True)
-    collect(bundle, _empty(tmp_path))
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    collect(bundle, downloads)
     assert json.dumps(bundle, sort_keys=True) == before
+    assert integrity_report_lines(bundle) == []
 
 
-def test_the_command_line_reads_the_job_result_from_the_environment(tmp_path, monkeypatch):
+def test_the_command_ignores_a_job_result_variable(tmp_path, monkeypatch):
     manifest, results, report, _original = _layout(tmp_path, CITED)
     monkeypatch.setenv("RUN_INTEGRITY_RESULT", "failure")
     assert main([str(manifest), str(results), str(report)]) == 0
     stored = json.loads(manifest.read_text(encoding="utf-8"))
-    assert stored["assessment"]["integrity_not_run"]["job_result"] == "failure"
-    assert (report / "integrity-lines.txt").read_text().startswith("Run Integrity: NOT RUN")
-
-
-def test_the_command_line_is_unchanged_when_the_variable_is_unset(tmp_path, monkeypatch):
-    manifest, results, report, _original = _layout(tmp_path, CITED)
-    monkeypatch.delenv("RUN_INTEGRITY_RESULT", raising=False)
-    assert main([str(manifest), str(results), str(report)]) == 0
-    assert "assessment" not in json.loads(manifest.read_text(encoding="utf-8"))
+    assert "integrity_not_run" not in stored.get("assessment", {})
     assert not (report / "integrity-lines.txt").exists()
-
-
-def _job(name):
-    text = WORKFLOW.read_text()
-    match = re.search(rf"^  {re.escape(name)}:\n", text, re.MULTILINE)
-    rest = text[match.end() :]
-    later = re.search(r"^  [a-z][a-z-]*:\n", rest, re.MULTILINE)
-    return text[match.start() : match.end() + (later.start() if later else len(rest))]
-
-
-def test_the_report_job_runs_whatever_run_integrity_did_and_is_told_what_it_did():
-    job = _job("report")
-    condition = re.search(r"^    if: (.*)$", job, re.MULTILINE).group(1)
-    assert "run-integrity" not in condition and "!cancelled()" in condition
-    assert "needs: [plan, verify, scenario-evaluator, scenario-media, media, run-integrity]" in job
-    assert (
-        "RUN_INTEGRITY_RESULT: ${{ inputs.evaluators == '' && needs.run-integrity.result || '' }}"
-        in job
-    )
-
-
-def test_a_no_result_note_from_another_evaluator_is_not_the_integrity_reason(tmp_path):
-    """Only the run-integrity job writes ``no-result.txt`` today; the search is scoped anyway."""
-    bundle, _ = _bundle(tmp_path)
-    downloads = _empty(tmp_path)
-    other = downloads / "evaluator-results-livingproof-scenario-stock"
-    other.mkdir()
-    (other / "no-result.txt").write_text("a note from the scenario evaluator\n")
-    collect(bundle, downloads, integrity_job="failure")
-    reason = bundle["assessment"]["integrity_not_run"]["reason"]
-    assert "scenario evaluator" not in reason and "ended failure" in reason
-
-
-def test_the_run_integrity_jobs_own_note_is_still_the_reason(tmp_path):
-    bundle, _ = _bundle(tmp_path)
-    downloads = _empty(tmp_path)
-    mine = downloads / "evaluator-results-livingproof-run-integrity-stock"
-    mine.mkdir()
-    (mine / "no-result.txt").write_text("media is refused: no trials\n")
-    collect(bundle, downloads, integrity_job="failure")
-    assert bundle["assessment"]["integrity_not_run"]["reason"] == "media is refused: no trials"
-
-
-def _with_refusal(tmp_path, note, *, job="failure"):
-    bundle, _ = _bundle(tmp_path)
-    downloads = _empty(tmp_path)
-    mine = downloads / "evaluator-results-livingproof-run-integrity-stock"
-    mine.mkdir()
-    (mine / "refused.txt").write_text(note)
-    collect(bundle, downloads, integrity_job=job)
-    return bundle
-
-
-def test_a_refusal_is_labelled_refused_with_the_evaluator_s_note_as_the_reason(tmp_path):
-    note = (
-        "livingproof-evaluator-run: media is refused: media.json has no trials; no result written"
-    )
-    bundle = _with_refusal(tmp_path, note + "\n")
-    stored = bundle["assessment"]["integrity_not_run"]
-    assert stored["refused"] is True and stored["job_result"] == "failure"
-    assert stored["reason"] == note
-    (line,) = integrity_report_lines(bundle)
-    assert line.startswith(f"Run Integrity: REFUSED: {note}")
-    assert "NOT RUN" not in line and "INCONCLUSIVE" in line
-
-
-def test_a_refusal_with_no_note_still_says_refused(tmp_path):
-    bundle = _with_refusal(tmp_path, "\n")
-    (line,) = integrity_report_lines(bundle)
-    assert line.startswith("Run Integrity: REFUSED: ") and "exit 2" in line
-
-
-def test_a_refusal_note_in_another_evaluators_artifact_does_not_make_it_refused(tmp_path):
-    bundle, _ = _bundle(tmp_path)
-    downloads = _empty(tmp_path)
-    other = downloads / "evaluator-results-livingproof-scenario-stock"
-    other.mkdir()
-    (other / "refused.txt").write_text("not ours\n")
-    collect(bundle, downloads, integrity_job="failure")
-    assert not bundle["assessment"]["integrity_not_run"].get("refused")
-
-
-@pytest.mark.parametrize("job", ["failure", "cancelled", "skipped", "success"])
-def test_a_check_that_never_ran_still_says_not_run(job, tmp_path):
-    bundle, _ = _bundle(tmp_path)
-    collect(bundle, _empty(tmp_path), integrity_job=job)
-    assert not bundle["assessment"]["integrity_not_run"].get("refused")
-    (line,) = integrity_report_lines(bundle)
-    assert line.startswith(f"Run Integrity: NOT RUN ({job})") and "REFUSED" not in line

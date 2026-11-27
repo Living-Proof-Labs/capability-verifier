@@ -2,7 +2,7 @@
 """The loader runs a pinned evaluator on recorded evidence.
 
 The loader fetches the released descriptor. Install, execution, and the
-schema pin use the network, as ``test_run_integrity_job`` does.
+schema pin use the network.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ def _view(document: dict) -> dict:
 
 
 def _hardcoded(tmp_path: Path, media: Path | None) -> dict:
-    """Same command the scenario.yml run-integrity job uses, at the tagged release."""
+    """The released evaluator, run directly, at the tagged release."""
     checkout = tmp_path / "checkout"
     out = tmp_path / "hardcoded.json"
     clone = subprocess.run(
