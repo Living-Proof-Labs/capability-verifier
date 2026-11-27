@@ -446,7 +446,7 @@ def test_empty_image_patterns_are_refused(tmp_path):
 @pytest.mark.parametrize("path", ["script", "apply"])
 @pytest.mark.parametrize("shape", ["absent", "no-tag"])
 def test_an_evaluator_commit_without_a_tag_is_refused(tmp_path, path, shape):
-    """livingproof-evaluator-scenario has no default. v1.5.0 is the run-integrity pin."""
+    """livingproof-evaluator-scenario has no default, so a missing tag is refused."""
     lock = _lock(evaluator=None)
     if shape == "no-tag":
         lock["evaluators"] = {

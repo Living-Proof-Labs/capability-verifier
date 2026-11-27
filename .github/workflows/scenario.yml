@@ -22,13 +22,10 @@
 # Optional input `evaluators` is newline-separated declaration lines
 # `<owner>/<repo>@<ref>/<path>.json`. `ref` is a release tag `vMAJOR.MINOR.PATCH`
 # (peeled to a commit; a branch of the same name is refused) or a 40-character
-# commit. One such line is
-# `Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json`.
-# Blank lines and lines starting with `#` are ignored. Empty, the
-# default, keeps the run-integrity job. When the input is set, that job is
-# skipped and the report does not treat the skipped job as a missing integrity
-# result. This workflow does not run the loader; the caller runs
-# `python -m capability_verifier.evaluators`.
+# commit. Blank lines and lines starting with `#` are ignored. Empty, the
+# default, runs no evaluators in this workflow and writes no Run Integrity
+# card. This workflow does not run the loader; the caller runs
+# `python -m capability_verifier.evaluators` when the input is set.
 # Optional inputs verifier-commit, verifier-image, reporter-image and evaluator-commit
 # supply a commit or image ref the caller resolved from a release tag. Empty leaves
 # the lock field unchanged. A set input replaces that field after a strict check.
@@ -129,11 +126,10 @@ on:
         description: >-
           Newline-separated declaration lines, owner/repo@ref/path.json.
           ref is a release tag vMAJOR.MINOR.PATCH or a 40-character hexadecimal
-          commit. One line is
-          Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json.
-          Blank lines and lines starting with # are ignored. Empty keeps
-          the run-integrity job. When set, that job is skipped and the caller
-          runs python -m capability_verifier.evaluators. This workflow does not.
+          commit. Blank lines and lines starting with # are ignored. Empty,
+          the default, runs no evaluators in this workflow and writes no Run
+          Integrity card. When set, the caller runs
+          python -m capability_verifier.evaluators. This workflow does not.
         type: string
         default: ''
     outputs:
@@ -209,9 +205,6 @@ jobs:
       verifier-image-source: ${{ steps.lock.outputs.verifier-image-source }}
       reporter-image-source: ${{ steps.lock.outputs.reporter-image-source }}
       evaluator-commit-source: ${{ steps.lock.outputs.evaluator-commit-source }}
-      # Tag-only pin for livingproof-evaluator-run (no commit).
-      run-integrity-repository: ${{ steps.lock.outputs.run-integrity-repository }}
-      run-integrity-tag: ${{ steps.lock.outputs.run-integrity-tag }}
       media-capable: ${{ steps.capability.outputs.media-capable }}
       bundle-version: ${{ steps.capability.outputs.bundle-version }}
     steps:
@@ -363,14 +356,6 @@ jobs:
             echo "verifier-image-source=$verifier_image_source"
             echo "reporter-image-source=$reporter_image_source"
             echo "evaluator-commit-source=$evaluator_commit_source"
-            # Tag-only pin. Default livingproof-evaluator-run v1.5.0 so
-            # the run-integrity job runs when the lock omits the pin.
-            repo=$(jq -r '(.evaluators // {})["livingproof-evaluator-run"].repository // empty' "$pin")
-            tag=$(jq -r '(.evaluators // {})["livingproof-evaluator-run"].tag // empty' "$pin")
-            [ -n "$repo" ] || repo="Living-Proof-Labs/livingproof-evaluator-run"
-            [ -n "$tag" ] || tag="v1.5.0"
-            echo "run-integrity-repository=$repo"
-            echo "run-integrity-tag=$tag"
           } >> "$GITHUB_OUTPUT"
       - name: Media and bundle capability from the locks
         # Media needs runner >= 1.6.0 with mcap and reporter >= 1.11.0; robots still on runner
@@ -922,7 +907,7 @@ jobs:
           name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
           path: evidence
       - name: Download the media job's artifact
-        # As in run-integrity: a missing artifact after a successful media job fails the download.
+        # A missing artifact after a successful media job fails the download.
         if: ${{ needs.media.result != 'skipped' }}
         continue-on-error: ${{ needs.media.result != 'success' }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -1252,9 +1237,8 @@ jobs:
           if-no-files-found: error
   report:
     # Runs without links when media is off or failed; links never change a decision.
-    # scenario-evaluator must succeed: its entry is part of the stored run. run-integrity does not
-    # gate it: a failed or refused one is shown as NOT RUN and the run as INCONCLUSIVE, never omitted.
-    needs: [plan, verify, scenario-evaluator, scenario-media, media, run-integrity]
+    # scenario-evaluator must succeed: its entry is part of the stored run.
+    needs: [plan, verify, scenario-evaluator, scenario-media, media]
     if: ${{ !cancelled() && needs.verify.result == 'success' && needs.scenario-evaluator.result == 'success' }}
     runs-on: ubuntu-24.04
     strategy:
@@ -1276,10 +1260,6 @@ jobs:
         env:
           # Named in the failure when no result reaches this configuration's bundle.
           EVALUATOR_RESULTS_PATTERN: ${{ inputs.artifact-prefix }}evaluator-results-*-${{ matrix.configuration }}
-          # A failed or refused run-integrity leaves no result; the report says so (#214).
-          # Empty when the caller passed evaluators: that job did not run, and this
-          # workflow does not record the skip as a missing integrity result.
-          RUN_INTEGRITY_RESULT: ${{ inputs.evaluators == '' && needs.run-integrity.result || '' }}
         run: |
           if [ ! -f verified/bundle/manifest.json ]; then
             exit 0
@@ -1311,11 +1291,11 @@ jobs:
           outside the contract fails the collection. The manifest is left unchanged
           when that happens.
 
-          When the run-integrity job's result is given (``RUN_INTEGRITY_RESULT``) and no integrity result
-          was collected, whether the job failed, was refused by the evaluator (exit 2), was cancelled or
-          skipped, or succeeded and left nothing, the run is not shown as clean: ``assessment.integrity_not_run``
-          records the job result and the reason, every assessment run is ``INCONCLUSIVE``, and the report
-          gets a "Run Integrity: NOT RUN" line (#214).
+          Collecting result files never invents a missing-integrity record. The loader
+          stores ``assessment.integrity_not_run`` when a declared integrity evaluator
+          fails or is refused. That record marks each assessment run ``INCONCLUSIVE``
+          and the report shows a Run Integrity line. With no integrity result and no
+          such record, the report has no Run Integrity card.
 
           A result that cites ``thresholds.json`` keeps that input reference. The file
           at the cited path is copied into the report output, and its SHA-256 has to
@@ -1379,7 +1359,6 @@ jobs:
               directory: Path,
               report_dir: Path | None = None,
               counts: dict | None = None,
-              integrity_job: str | None = None,
           ) -> dict:
               """Append this bundle's result documents. ``bundle`` is updated.
 
@@ -1399,8 +1378,8 @@ jobs:
               the file at that URI, relative to the result file. When ``report_dir`` is
               set, the matching bytes are copied there under the cited relative path.
 
-              ``integrity_job`` is the run-integrity job's result (``success``, ``failure``, ``cancelled``,
-              ``skipped``). Without it nothing about a missing integrity result is stored.
+              A directory with no integrity result does not store ``integrity_not_run``.
+              The loader records a missing declared evaluator separately.
 
               ``counts``, when given, is filled with ``{evaluator id: {"appended": n,
               "skipped": m}}``.
@@ -1482,14 +1461,6 @@ jobs:
                   entries.append(document)
               _attach_integrity(bundle, integrity_docs)
               _attach_advisory(bundle, advisory_docs)
-              if integrity_job and not integrity_docs:
-                  refusal = _refusal(directory)
-                  _attach_not_run(
-                      bundle,
-                      integrity_job,
-                      refusal if refusal is not None else _not_run_reason(directory, integrity_job),
-                      refused=refusal is not None,
-                  )
               if report_dir is not None:
                   report = Path(report_dir)
                   _write_thresholds(report, exports)
@@ -1889,85 +1860,24 @@ jobs:
               }
 
 
-          NOT_RUN_ID = "livingproof-run-integrity"
-
-
-          REFUSED_FILE = "refused.txt"
-          _MESSAGE_CAP = 500
-          _INTEGRITY_ARTIFACT = re.compile(
-              rf"(?:{re.escape(NOT_RUN_ID)}|(?:.*-)?evaluator-results-{re.escape(NOT_RUN_ID)}-[^/]+)"
-          )
-
-
-          def _is_integrity_artifact(directory: Path) -> bool:
-              """True for the run-integrity job's own artifact: its inner directory, or the artifact name
-              ``[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>``, not a lookalike."""
-              return _INTEGRITY_ARTIFACT.fullmatch(directory.name) is not None
-
-
-          def _cap(text: str) -> str:
-              return text if len(text) <= _MESSAGE_CAP else text[: _MESSAGE_CAP - 3].rstrip() + "..."
-
-
           def _sentence(text: str) -> str:
               """``text`` ended with a full stop (none added when it already ends one), so a sentence can follow."""
               text = text.rstrip()
               return text if text.endswith((".", "!", "?")) else text + "."
 
 
-          _REFUSED_DEFAULT = "the evaluator refused the run (exit 2) and wrote no result"
-
-
-          def _refusal(directory: Path) -> str | None:
-              """The evaluator's refusal message when the run-integrity step left ``refused.txt``, else None.
-
-              The step writes it only when the evaluator exits 2, so its presence is what makes a missing
-              result a refusal and not a check that never ran. Only the run-integrity artifact counts.
-              """
-              if not Path(directory).is_dir():
-                  return None
-              for note in sorted(Path(directory).rglob(REFUSED_FILE)):
-                  if not _is_integrity_artifact(note.parent):
-                      continue
-                  try:
-                      text = note.read_text(encoding="utf-8").strip()
-                  except (OSError, ValueError):
-                      text = ""
-                  return _cap(text.splitlines()[0].strip()) if text else _REFUSED_DEFAULT
-              return None
-
-
-          def _not_run_reason(directory: Path, job_result: str) -> str:
-              """Why there is no integrity result: the job's own note when it wrote one, else its result."""
-              notes = sorted(Path(directory).rglob("no-result.txt")) if Path(directory).is_dir() else []
-              for note in notes:
-                  if not _is_integrity_artifact(note.parent):
-                      continue  # only the run-integrity job's artifact explains a missing integrity result
-                  try:
-                      text = note.read_text(encoding="utf-8").strip()
-                  except (OSError, ValueError):
-                      continue
-                  if text:
-                      return _cap(text.splitlines()[0].strip())
-              if job_result == "success":
-                  return "the run-integrity job succeeded but left no result"
-              return (
-                  f"the run-integrity job ended {job_result} and left no result "
-                  "(see its log; an evaluator that refuses a run exits 2 and writes none)"
-              )
-
-
           def _attach_not_run(
               bundle: dict,
               job_result: str,
               reason: str,
+              *,
+              evaluator: str,
               refused: bool = False,
-              evaluator: str = NOT_RUN_ID,
           ) -> None:
-              """Record a missing integrity result.
+              """Record a missing integrity result for one declared evaluator.
 
-              ``evaluator`` defaults to the historical run-integrity id so callers that
-              omit it keep today's record.
+              The loader calls this when that evaluator fails or is refused. Collecting
+              result files does not.
               """
               assessment = bundle.get("assessment")
               if not isinstance(assessment, dict):
@@ -2503,7 +2413,7 @@ jobs:
 
 
           def place_integrity_lines(report_dir: Path) -> bool:
-              """Put the run-integrity lines next to the verdict in report.md, report.txt and report.html.
+              """Put the integrity lines next to the verdict in report.md, report.txt and report.html.
 
               The reporter does not know the integrity result, so the lines the collector wrote are placed
               after rendering: in Markdown and text right after each ``... overall <GRADE>.`` line, in HTML
@@ -2568,7 +2478,6 @@ jobs:
                       Path(args[1]),
                       Path(args[2]),
                       counts,
-                      integrity_job=os.environ.get("RUN_INTEGRITY_RESULT") or None,
                   )
               except (ThresholdCitationError, DetailsCitationError, AdvisoryResultError) as exc:
                   print(str(exc), file=sys.stderr)
@@ -2608,6 +2517,7 @@ jobs:
 
           if __name__ == "__main__":
               sys.exit(main())
+
           COLLECT
           python3 /tmp/collect_evaluator_results.py verified/bundle/manifest.json evaluator-results reports
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -2638,7 +2548,7 @@ jobs:
           livingproof-capability-report render verified/bundle/manifest.json "$@" --format markdown -o reports/report.md
           livingproof-capability-report render verified/bundle/manifest.json "$@" --format html -o reports/report.html
           livingproof-capability-report render reports/report.json > reports/report.txt
-          # The run-integrity result goes next to the verdict in every format. The reporter has
+          # An integrity result goes next to the verdict in every format. The reporter has
           # no integrity input, so it is placed after rendering and before the sums.
           if [ -f reports/integrity-lines.txt ]; then
             python3 /tmp/collect_evaluator_results.py --place-integrity reports
@@ -2679,167 +2589,3 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: livingproof-capability-report comment --repo "$REPO" --pr "$PR" reports/*/report.md
-
-  run-integrity:
-    # Second evaluator job: livingproof-run-integrity (kind integrity,
-    # execution deterministic) on the evidence artifact, after the robot
-    # (scenario) evaluator in this file. Needs evidence, and the media job for the
-    # recordings the recording check reads, so it waits for verify and media (report already
-    # did). With media off, skipped or failed it runs without media.
-    # Tag-only pin: checkout the tag, never a commit. Plan defaults the
-    # pin to livingproof-evaluator-run v1.5.0 when the lock omits it.
-    needs: [plan, evidence, media]
-    if: ${{ !cancelled() && inputs.evaluators == '' }}
-    runs-on: ubuntu-24.04
-    container:
-      image: ${{ needs.plan.outputs.verifier-image }}
-      options: --user root
-    strategy:
-      fail-fast: false
-      matrix:
-        configuration: ${{ fromJSON(needs.plan.outputs.configurations) }}
-    steps:
-      - name: Capability verifier at the locked release
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          repository: ${{ needs.plan.outputs.verifier-repository }}
-          ref: ${{ needs.plan.outputs.verifier-commit }}
-          persist-credentials: false
-      - if: needs.plan.outputs.verifier-image == ''
-        run: python3 -m pip install --user uv==0.13.6
-      - run: uv sync --locked
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: ${{ inputs.artifact-prefix }}evidence-${{ matrix.configuration }}
-          path: evidence
-      - name: Specs files the verifier loads, checked and recorded
-        # Needs the manifest it reads. Without one (the evidence step left none), the
-        # stand-in path below still gives a Run Integrity result.
-        if: ${{ hashFiles('evidence/manifest.json') != '' }}
-        # Writes evidence/specs-files.json beside manifest.json: the sha256 of each
-        # declared specs file as read from the checkout, and the commit it resolved to.
-        run: uv run --no-sync python tools/fetch_hallway_specs.py --from evidence/manifest.json --record evidence/specs-files.json
-      - name: Recordings and media.json from the media job
-        # media.json and mcap/, as the media job uploaded them, for this configuration.
-        # needs.media.result is the matrix aggregate, so this step still attempts the
-        # artifact when another media leg failed. If the aggregate succeeded and the
-        # artifact is missing, the download fails (do not silently grade without
-        # recordings). If the aggregate is not success and the artifact is missing,
-        # continue without --media. A skipped media job (off, not media-capable, or
-        # evidence failed) leaves no directory.
-        if: ${{ needs.media.result != 'skipped' }}
-        continue-on-error: ${{ needs.media.result != 'success' }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: ${{ inputs.artifact-prefix }}mcap-${{ matrix.configuration }}
-          path: media
-      - name: Run Integrity evaluator at the locked pin
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          repository: ${{ needs.plan.outputs.run-integrity-repository }}
-          ref: ${{ needs.plan.outputs.run-integrity-tag }}
-          path: run-integrity
-          persist-credentials: false
-      - name: Run Integrity, one result for the run
-        run: |
-          uv sync --locked --directory run-integrity
-          mkdir -p evaluator-results/livingproof-run-integrity
-          manifest="$GITHUB_WORKSPACE/evidence/manifest.json"
-          if [ ! -f "$manifest" ]; then
-            # The evidence step left no manifest (killed, timed out, crashed). Evaluate a
-            # stand-in that plans the run's trial count and has no trials, so the evaluator
-            # reports every planned trial as missing in its own words. Whether and how the
-            # step ended is in evidence/evidence-ending.json, which the stand-in carries.
-            echo "evidence has no manifest.json; evaluating a stand-in manifest, without a manifest from the run" >&2
-            status=0
-            python3 - <<'PY' || status=$?
-          import json, os, pathlib, sys
-          workspace = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
-
-
-          def no_result(reason):
-              # The job fails here, naming the cause, instead of exiting 0 with nothing for
-              # the upload to keep. no-result.txt is the file the upload keeps; it is not a
-              # result document, so the report ignores it.
-              message = f"no Run Integrity result for this run: {reason}"
-              print(f"::error::{message}")
-              target = workspace / "evaluator-results" / "livingproof-run-integrity"
-              target.mkdir(parents=True, exist_ok=True)
-              (target / "no-result.txt").write_text(message + "\n")
-              sys.exit(3)
-
-
-          try:
-              ending = json.loads((workspace / "evidence" / "evidence-ending.json").read_text())
-          except FileNotFoundError:
-              no_result("evidence-ending.json is missing from the evidence artifact, so the planned trial count is unknown (the evidence job ended before its ending step ran, or ran a verifier release without it)")
-          except (OSError, ValueError) as error:
-              no_result(f"evidence-ending.json cannot be read ({type(error).__name__})")
-          if not isinstance(ending, dict):
-              no_result("evidence-ending.json is not a JSON object")
-          if "planned_trials" not in ending:
-              no_result("planned_trials is missing from evidence-ending.json")
-          planned = ending["planned_trials"]
-          if planned is None:
-              no_result("planned_trials is null: the run's lock has no plan.trials.count")
-          if not isinstance(planned, int) or isinstance(planned, bool):
-              no_result(f"planned_trials is not a whole number: {planned!r}")
-          if planned <= 0:
-              no_result(f"planned_trials is {planned}: the evaluator does not take a plan with no trials")
-          stand_in = {
-              "run_id": f"no-evidence-{os.environ.get('GITHUB_RUN_ID', 'run')}-{ending.get('configuration')}",
-              "plan": {"trials": {"count": planned}},
-              "trials": {"count": planned, "results": []},
-              "stand_in": {"reason": "the evidence step left no manifest.json", "ending": ending},
-          }
-          target = workspace / "no-evidence"
-          target.mkdir(exist_ok=True)
-          (target / "stand-in-manifest.json").write_text(json.dumps(stand_in, indent=2) + "\n")
-          PY
-            if [ "$status" -eq 3 ]; then
-              exit 1
-            fi
-            if [ "$status" -ne 0 ]; then
-              exit "$status"
-            fi
-            manifest="$GITHUB_WORKSPACE/no-evidence/stand-in-manifest.json"
-          fi
-          if [ -f evidence/specs-files.json ]; then
-            cp evidence/specs-files.json evaluator-results/livingproof-run-integrity/specs-files.json
-          fi
-          # --media arrived in livingproof-evaluator-run v1.4.0. A pinned livingproof-evaluator-run
-          # that does not list it in --help (v1.0.0 to v1.3.1) is not given it.
-          # Match it as a whole flag so a longer option such as --media-dir is not treated as it.
-          # Require media.json so a failed download that left an empty media/ is not given --media.
-          set --
-          if [ -f "$GITHUB_WORKSPACE/media/media.json" ]; then
-            if PYTHONPATH=run-integrity/src uv run --no-sync --directory run-integrity \
-                python -m livingproof_evaluator_run --help | grep -Eq -- '--media([^[:alnum:]-]|$)'; then
-              set -- --media "$GITHUB_WORKSPACE/media"
-            else
-              echo "the pinned evaluator does not take --media; running without media"
-            fi
-          fi
-          # Exit 2 is a refusal: no result is written. Keep the evaluator's own message in
-          # refused.txt (not a result document, so the report ignores it as a result) so the report
-          # can say REFUSED and why; any other failure is not a refusal. The job still fails.
-          results="$GITHUB_WORKSPACE/evaluator-results/livingproof-run-integrity"
-          status=0
-          PYTHONPATH=run-integrity/src uv run --no-sync --directory run-integrity \
-            python -m livingproof_evaluator_run \
-            "$manifest" \
-            "$@" \
-            --out "$results/result.json" 2> "$results/evaluator-stderr.txt" || status=$?
-          cat "$results/evaluator-stderr.txt" >&2
-          if [ "$status" -eq 2 ]; then
-            tail -n 1 "$results/evaluator-stderr.txt" > "$results/refused.txt"
-          fi
-          rm -f "$results/evaluator-stderr.txt"
-          exit "$status"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
-        with:
-          name: ${{ inputs.artifact-prefix }}evaluator-results-livingproof-run-integrity-${{ matrix.configuration }}
-          path: evaluator-results/
-          retention-days: 30
-          if-no-files-found: error

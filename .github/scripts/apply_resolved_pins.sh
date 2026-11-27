@@ -85,8 +85,7 @@ resolve_commit() {
   if [[ ! "$given" =~ $commit_pattern ]]; then
     fail "$label must be a 40-character lowercase hexadecimal SHA (got $(printf '%q' "$given"))"
   fi
-  # livingproof-evaluator-scenario has no default. v1.5.0 belongs to
-  # livingproof-evaluator-run, the run-integrity pin.
+  # livingproof-evaluator-scenario has no default, so a missing tag is a refusal.
   if [ -z "$tag" ]; then
     fail "$label: lock has no tag"
   fi

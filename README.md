@@ -527,10 +527,10 @@ The spelling rules and the failure text are in
 of the same name is refused. Blank lines and lines starting with `#` are
 ignored. One line is
 `Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json`.
-Empty, the default, keeps the `run-integrity` job. When the input is
-set, that job is skipped and the report does not treat the skip as a missing
-integrity result. This workflow does not run the loader. The caller runs
-`python -m capability_verifier.evaluators`. The line format is also in
+Empty, the default, runs no evaluators in this workflow and writes no Run
+Integrity card. When the input is set, the caller runs
+`python -m capability_verifier.evaluators`. This workflow does not. The line
+format is also in
 [Verification locks](docs/locks.md#evaluator-declaration-lines).
 
 The robot repository provides the lock, `pins.json`, `tests/` and a `pyproject.toml` with

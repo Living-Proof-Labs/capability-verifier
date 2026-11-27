@@ -125,9 +125,7 @@ def test_current_pins_keep_the_robot_lock_and_a_caller_lock_overrides_it():
                 assert step["if"] == writer_if
     assert writers == ["plan", "evidence", "media"]
     report = WORKFLOW.split("\n  report:\n", 1)[1].split("\n  comment:\n", 1)[0]
-    assert (
-        "needs: [plan, verify, scenario-evaluator, scenario-media, media, run-integrity]" in report
-    )
+    assert "needs: [plan, verify, scenario-evaluator, scenario-media, media]" in report
 
 
 def _release(commit, digest, *, tag, image, repository="Org/component"):
@@ -442,9 +440,7 @@ def test_media_links_are_named_artifacts_handed_to_the_reporter():
         assert step in STEPS, step
     assert "--evidence-links links/evidence-links.json" in STEPS
     # the report never waits on media succeeding, and links are rendered only by the reporter
-    assert (
-        "needs: [plan, verify, scenario-evaluator, scenario-media, media, run-integrity]" in STEPS
-    )
+    assert "needs: [plan, verify, scenario-evaluator, scenario-media, media]" in STEPS
     assert "needs.verify.result == 'success'" in STEPS
 
 
@@ -562,10 +558,7 @@ def test_report_collects_with_media_on_and_with_media_off():
     assert "if: inputs.media &&" in media_head
     assert "COLLECT" not in media
     assert "evaluator-results" not in media
-    assert (
-        "needs: [plan, verify, scenario-evaluator, scenario-media, media, run-integrity]"
-        in report_head
-    )
+    assert "needs: [plan, verify, scenario-evaluator, scenario-media, media]" in report_head
     assert "needs.media.result" not in report_head
     assert "needs.scenario-evaluator.result == 'success'" in report_head
     pattern = "evaluator-results-*-${{ matrix.configuration }}"
@@ -894,7 +887,7 @@ def test_evidence_verify_and_media_run_in_the_locked_hallway_image():
         assert "image: ${{ needs.plan.outputs.verifier-image }}" in head, job
         assert "options: --user root" in head, job
     # without an image in the lock the jobs still provision the runner themselves
-    assert STEPS.count("if: needs.plan.outputs.verifier-image == ''") == 8
+    assert STEPS.count("if: needs.plan.outputs.verifier-image == ''") == 7
 
 
 # Reporter 3.6.0, the release livingproof-verification pins. Duration cells are filled
@@ -1796,31 +1789,11 @@ def test_scenario_evaluator_refuses_a_build_that_reports_a_dev_version(tmp_path)
     assert "package-marker" not in done.stdout
 
 
-def test_run_integrity_job_is_enabled_and_checks_out_the_v1_5_0_tag():
-    """The job is on by default and checks out evaluators.livingproof-evaluator-run by tag.
-
-    The pin is tag-only (no commit). When the lock omits the pin, plan defaults
-    to Living-Proof-Labs/livingproof-evaluator-run @ v1.5.0 so the job still runs.
-    """
+def test_there_is_no_hardcoded_integrity_job():
+    """An empty evaluators input does not check out or run an integrity evaluator."""
     import yaml
 
-    refs = _step("Refs from verification.lock.json")
-    assert "run-integrity-commit=" not in refs
-    assert "Living-Proof-Labs/livingproof-evaluator-run" in refs
-    assert 'tag="v1.5.0"' in refs or "tag=v1.5.0" in refs or "tag='v1.5.0'" in refs
-    assert "run-integrity-tag=" in refs
-    assert "run-integrity-commit:" not in STEPS
-    assert "needs.plan.outputs.run-integrity-commit" not in STEPS
-    assert "ref: ${{ needs.plan.outputs.run-integrity-tag }}" in STEPS
-
     doc = yaml.safe_load(WORKFLOW)
-    job = doc["jobs"]["run-integrity"]
-    assert job["if"] == "${{ !cancelled() && inputs.evaluators == '' }}"
-    assert "run-integrity-commit" not in doc["jobs"]["plan"]["outputs"]
-    checkout = next(
-        step
-        for step in job["steps"]
-        if step.get("name") == "Run Integrity evaluator at the locked pin"
-    )
-    assert checkout["with"]["ref"] == "${{ needs.plan.outputs.run-integrity-tag }}"
-    assert checkout["with"]["repository"] == "${{ needs.plan.outputs.run-integrity-repository }}"
+    assert "run-integrity" not in doc["jobs"]
+    assert "run-integrity-repository" not in doc["jobs"]["plan"]["outputs"]
+    assert "run-integrity-tag" not in doc["jobs"]["plan"]["outputs"]

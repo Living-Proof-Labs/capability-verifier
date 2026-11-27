@@ -80,11 +80,10 @@ on:
         description: >-
           Newline-separated declaration lines, owner/repo@ref/path.json.
           ref is a release tag vMAJOR.MINOR.PATCH or a 40-character hexadecimal
-          commit. One line is
-          Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json.
-          Blank lines and lines starting with # are ignored. Empty keeps
-          the run-integrity job. When set, that job is skipped and the caller
-          runs python -m capability_verifier.evaluators. This workflow does not.
+          commit. Blank lines and lines starting with # are ignored. Empty,
+          the default, runs no evaluators in this workflow and writes no Run
+          Integrity card. When set, the caller runs
+          python -m capability_verifier.evaluators. This workflow does not.
         type: string
         default: ''
     outputs:

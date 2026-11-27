@@ -33,7 +33,6 @@ WHEELS = {
         "cab26f8baef6217353c3fd1c6f81d52be64f24dec074c33880592a3284fd7887"
     ),
 }
-REFUSAL = "livingproof-evaluator-run: media is refused: media.json has no trials; no result written"
 
 
 def _reporter(tmp_path_factory) -> Path:
@@ -106,8 +105,6 @@ CASES = {
         },
         "Run Integrity: FAILED",
     ),
-    "refused": ({"refusal": REFUSAL, "job": "failure"}, f"Run Integrity: REFUSED: {REFUSAL}"),
-    "not-run": ({"job": "cancelled"}, "Run Integrity: NOT RUN (cancelled)"),
 }
 
 

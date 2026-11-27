@@ -24,11 +24,11 @@ the citation. A missing file, different bytes, a substituted path, or a path
 outside the contract fails the collection. The manifest is left unchanged
 when that happens.
 
-When the run-integrity job's result is given (``RUN_INTEGRITY_RESULT``) and no integrity result
-was collected, whether the job failed, was refused by the evaluator (exit 2), was cancelled or
-skipped, or succeeded and left nothing, the run is not shown as clean: ``assessment.integrity_not_run``
-records the job result and the reason, every assessment run is ``INCONCLUSIVE``, and the report
-gets a "Run Integrity: NOT RUN" line (#214).
+Collecting result files never invents a missing-integrity record. The loader
+stores ``assessment.integrity_not_run`` when a declared integrity evaluator
+fails or is refused. That record marks each assessment run ``INCONCLUSIVE``
+and the report shows a Run Integrity line. With no integrity result and no
+such record, the report has no Run Integrity card.
 
 A result that cites ``thresholds.json`` keeps that input reference. The file
 at the cited path is copied into the report output, and its SHA-256 has to
@@ -92,7 +92,6 @@ def collect(
     directory: Path,
     report_dir: Path | None = None,
     counts: dict | None = None,
-    integrity_job: str | None = None,
 ) -> dict:
     """Append this bundle's result documents. ``bundle`` is updated.
 
@@ -112,8 +111,8 @@ def collect(
     the file at that URI, relative to the result file. When ``report_dir`` is
     set, the matching bytes are copied there under the cited relative path.
 
-    ``integrity_job`` is the run-integrity job's result (``success``, ``failure``, ``cancelled``,
-    ``skipped``). Without it nothing about a missing integrity result is stored.
+    A directory with no integrity result does not store ``integrity_not_run``.
+    The loader records a missing declared evaluator separately.
 
     ``counts``, when given, is filled with ``{evaluator id: {"appended": n,
     "skipped": m}}``.
@@ -195,14 +194,6 @@ def collect(
         entries.append(document)
     _attach_integrity(bundle, integrity_docs)
     _attach_advisory(bundle, advisory_docs)
-    if integrity_job and not integrity_docs:
-        refusal = _refusal(directory)
-        _attach_not_run(
-            bundle,
-            integrity_job,
-            refusal if refusal is not None else _not_run_reason(directory, integrity_job),
-            refused=refusal is not None,
-        )
     if report_dir is not None:
         report = Path(report_dir)
         _write_thresholds(report, exports)
@@ -602,85 +593,24 @@ def _attach_advisory_not_run(bundle: dict, evaluator: str, outcome: str, reason:
     }
 
 
-NOT_RUN_ID = "livingproof-run-integrity"
-
-
-REFUSED_FILE = "refused.txt"
-_MESSAGE_CAP = 500
-_INTEGRITY_ARTIFACT = re.compile(
-    rf"(?:{re.escape(NOT_RUN_ID)}|(?:.*-)?evaluator-results-{re.escape(NOT_RUN_ID)}-[^/]+)"
-)
-
-
-def _is_integrity_artifact(directory: Path) -> bool:
-    """True for the run-integrity job's own artifact: its inner directory, or the artifact name
-    ``[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>``, not a lookalike."""
-    return _INTEGRITY_ARTIFACT.fullmatch(directory.name) is not None
-
-
-def _cap(text: str) -> str:
-    return text if len(text) <= _MESSAGE_CAP else text[: _MESSAGE_CAP - 3].rstrip() + "..."
-
-
 def _sentence(text: str) -> str:
     """``text`` ended with a full stop (none added when it already ends one), so a sentence can follow."""
     text = text.rstrip()
     return text if text.endswith((".", "!", "?")) else text + "."
 
 
-_REFUSED_DEFAULT = "the evaluator refused the run (exit 2) and wrote no result"
-
-
-def _refusal(directory: Path) -> str | None:
-    """The evaluator's refusal message when the run-integrity step left ``refused.txt``, else None.
-
-    The step writes it only when the evaluator exits 2, so its presence is what makes a missing
-    result a refusal and not a check that never ran. Only the run-integrity artifact counts.
-    """
-    if not Path(directory).is_dir():
-        return None
-    for note in sorted(Path(directory).rglob(REFUSED_FILE)):
-        if not _is_integrity_artifact(note.parent):
-            continue
-        try:
-            text = note.read_text(encoding="utf-8").strip()
-        except (OSError, ValueError):
-            text = ""
-        return _cap(text.splitlines()[0].strip()) if text else _REFUSED_DEFAULT
-    return None
-
-
-def _not_run_reason(directory: Path, job_result: str) -> str:
-    """Why there is no integrity result: the job's own note when it wrote one, else its result."""
-    notes = sorted(Path(directory).rglob("no-result.txt")) if Path(directory).is_dir() else []
-    for note in notes:
-        if not _is_integrity_artifact(note.parent):
-            continue  # only the run-integrity job's artifact explains a missing integrity result
-        try:
-            text = note.read_text(encoding="utf-8").strip()
-        except (OSError, ValueError):
-            continue
-        if text:
-            return _cap(text.splitlines()[0].strip())
-    if job_result == "success":
-        return "the run-integrity job succeeded but left no result"
-    return (
-        f"the run-integrity job ended {job_result} and left no result "
-        "(see its log; an evaluator that refuses a run exits 2 and writes none)"
-    )
-
-
 def _attach_not_run(
     bundle: dict,
     job_result: str,
     reason: str,
+    *,
+    evaluator: str,
     refused: bool = False,
-    evaluator: str = NOT_RUN_ID,
 ) -> None:
-    """Record a missing integrity result.
+    """Record a missing integrity result for one declared evaluator.
 
-    ``evaluator`` defaults to the historical run-integrity id so callers that
-    omit it keep today's record.
+    The loader calls this when that evaluator fails or is refused. Collecting
+    result files does not.
     """
     assessment = bundle.get("assessment")
     if not isinstance(assessment, dict):
@@ -1216,7 +1146,7 @@ def _md_escape_text(text: str) -> str:
 
 
 def place_integrity_lines(report_dir: Path) -> bool:
-    """Put the run-integrity lines next to the verdict in report.md, report.txt and report.html.
+    """Put the integrity lines next to the verdict in report.md, report.txt and report.html.
 
     The reporter does not know the integrity result, so the lines the collector wrote are placed
     after rendering: in Markdown and text right after each ``... overall <GRADE>.`` line, in HTML
@@ -1281,7 +1211,6 @@ def main(argv: list[str] | None = None) -> int:
             Path(args[1]),
             Path(args[2]),
             counts,
-            integrity_job=os.environ.get("RUN_INTEGRITY_RESULT") or None,
         )
     except (ThresholdCitationError, DetailsCitationError, AdvisoryResultError) as exc:
         print(str(exc), file=sys.stderr)

@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The report job's own steps show a failed or refused Run Integrity (capability-verifier#214).
+"""The report job does not invent a Run Integrity card when no integrity result was collected (#264).
 
-Runs the workflow's collect step, then its render step with reporter 3.6.0 (downloaded as
-test_rendered_html_shows_each_trial_duration does), on a real bundle 1.1.0 export, and reads
-report.md and report.txt. The placement next to the verdict, and the HTML, are in test_report_integrity_next_to_verdict.py.
-Proposed by Vera in the capability-verifier#216 review.
+Runs the workflow's collect step, then its render step with reporter 3.6.0, on a real bundle
+1.1.0 export. Setting ``RUN_INTEGRITY_RESULT`` and leaving ``refused.txt`` or ``no-result.txt``
+does not store ``integrity_not_run`` or print a Run Integrity line.
 """
 
 from __future__ import annotations
@@ -20,8 +19,6 @@ from test_walk_hallway_workflow import (
     _reporter_3_6_0,
     _step,
 )
-
-NOT_RUN = "Run Integrity: NOT RUN"
 
 
 def _job(
@@ -76,23 +73,19 @@ def _run(job, tmp_path, result):
 
 
 @pytest.mark.parametrize("result", ["failure", "cancelled", "success"])
-def test_a_missing_integrity_result_is_shown_in_both_rendered_reports(
-    result, tmp_path, monkeypatch
-):
-    job = _job(tmp_path, monkeypatch, integrity=None, note=None)
+def test_a_missing_integrity_result_is_not_shown(result, tmp_path, monkeypatch):
+    job = _job(tmp_path, monkeypatch, integrity=None, note=None, refusal="refused the run")
     md, txt = _run(job, tmp_path, result)
     for text in (md, txt):
-        (line,) = [line for line in text.splitlines() if line.startswith(NOT_RUN)]
-        assert f"({result})" in line and "INCONCLUSIVE" in line
+        assert "Run Integrity" not in text
     stored = json.loads((job / "verified" / "bundle" / "manifest.json").read_text())
-    assert {run["conclusion"] for run in stored["assessment"]["runs"]} == {"INCONCLUSIVE"}
-    assert stored["assessment"]["integrity_not_run"]["job_result"] == result
+    assert "integrity_not_run" not in stored["assessment"]
+    assert "integrity_results" not in stored["assessment"]
 
 
-def test_the_job_s_own_no_result_note_is_the_reason_shown(tmp_path, monkeypatch):
+def test_a_no_result_note_does_not_become_a_run_integrity_line(tmp_path, monkeypatch):
     note = "no Run Integrity result for this run: planned_trials is 0"
     job = _job(tmp_path, monkeypatch, integrity=None, note=note)
     md, txt = _run(job, tmp_path, "failure")
-    # md backslash-escapes the underscore in ``planned_trials``; txt is verbatim.
-    assert f"{NOT_RUN} (failure): {note.replace('_', '\\_')}" in md
-    assert f"{NOT_RUN} (failure): {note}" in txt
+    assert note not in md and note not in txt
+    assert "Run Integrity" not in md and "Run Integrity" not in txt

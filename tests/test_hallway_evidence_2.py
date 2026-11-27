@@ -503,8 +503,7 @@ def test_media_2_0_0_needs_no_binding(tmp_path):
 
 
 def test_the_media_artifact_uploads_the_folder_with_the_binding_files():
-    """The media job's artifact carries mcap/ whole (so every trial-NN.binding.json), and the
-    run-integrity job downloads that same artifact."""
+    """The media job's artifact carries mcap/ whole (so every trial-NN.binding.json)."""
     text = WORKFLOW.read_text()
     step = text[text.index("      - id: mcap\n") :]
     step = step[: step.index("      - id: video-pass")]
