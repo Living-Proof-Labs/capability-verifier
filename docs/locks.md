@@ -319,10 +319,16 @@ and `commit` is 40 lowercase hex. `reason` is the loader's note after `<`,
 characters, or `"no result"` when that leaves nothing. The same id is never
 in both `advisory_results` and `advisory_not_run`. A bundle with no advisory
 evaluator has none of `advisory_results`, `advisory_provenance`, or
-`advisory_not_run`. A cited `advisory.details_file` is copied next to the
-report after its sha256 is checked. A missing, altered, or
-substituted file, or a path outside the contract, fails collection. The
-loader also refuses an advisory `trials` list that repeats an index, compared
+`advisory_not_run`. `evaluators run --report-dir DIR` copies a verified `advisory.details_file`
+byte-for-byte into `DIR`, under the cited relative path. Without
+`--report-dir` the file stays only in `out/<id>/`. A missing, altered,
+unreadable, or substituted file, or a path outside the contract, refuses
+that evaluator alone: `advisory_not_run[<id>]` is
+`{"outcome": "refused", "reason": "<file and problem>"}`, and that id is
+omitted from `advisory_results` and `advisory_provenance`. The grade,
+conclusions, and integrity results are unchanged, and the command keeps
+going. The same check during result collection still fails that collection.
+The loader also refuses an advisory `trials` list that repeats an index, compared
 as numbers so `1` and `1.0` are the same index, and a result with a duplicate
 JSON object key at any depth.
 

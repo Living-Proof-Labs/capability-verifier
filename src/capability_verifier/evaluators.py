@@ -110,6 +110,7 @@ class Record:
     evaluator_id: str = ""
     kind: str = ""
     document: dict | None = None
+    record_provenance: bool = True
 
     def as_dict(self) -> dict:
         return {
@@ -516,6 +517,25 @@ def _argparse_usage(stderr: str) -> bool:
     return usage >= 0 and "error:" in text[usage:]
 
 
+def _cited_advisory_details(document: dict, result_path: Path, report_dir: Path | None) -> None:
+    """Check an advisory details file under ``out/<id>`` and copy it when asked.
+
+    A bad or missing file is a refusal of this evaluator only. The message names
+    the file. A good file is copied byte-for-byte when ``report_dir`` is set.
+    """
+    evaluator = document.get("evaluator")
+    if not isinstance(evaluator, dict) or evaluator.get("kind") != "advisory":
+        return
+    exports: dict[str, bytes] = {}
+    try:
+        collect._take_details_file(result_path, document, result_path.parent, exports)
+    except OSError as exc:
+        name = result_path.name
+        raise collect.DetailsCitationError(f"unreadable: {name} ({exc.strerror or exc})") from exc
+    if report_dir is not None and exports:
+        collect._write_thresholds(report_dir, exports)
+
+
 def execute(
     prepared: Prepared,
     *,
@@ -525,6 +545,7 @@ def execute(
     work: Path,
     timeout: float,
     run=None,
+    report_dir: Path | None = None,
 ) -> Record:
     """Install and run one prepared descriptor. Returns its provenance record."""
     run = subprocess.run if run is None else run
@@ -557,6 +578,12 @@ def execute(
         try:
             document = load_object(result_path.read_bytes())
             _accept_result(document, descriptor, prepared.result_schema, prepared.registry)
+            _cited_advisory_details(document, result_path, report_dir)
+        except collect.DetailsCitationError as exc:
+            _discard(result_path)
+            refused = _finish(base, code, "refused", collect._advisory_reason(str(exc)), out)
+            refused.record_provenance = False
+            return refused
         except Refusal as exc:
             _discard(result_path)
             return _finish(base, code, "failure", str(exc), out)
@@ -621,8 +648,7 @@ def _fresh_output(out: Path, evaluator_id: str) -> Path:
     """
     if (
         not isinstance(evaluator_id, str)
-        or evaluator_id in {"", ".", ".."}
-        or "/" in evaluator_id
+        or evaluator_id in {".", ".."}
         or "\\" in evaluator_id
         or "\x00" in evaluator_id
     ):
@@ -653,6 +679,7 @@ def run_lines(
     out: Path,
     media_dir: Path | None = None,
     bundle: Path | None = None,
+    report_dir: Path | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     work: Path | None = None,
     fetch=None,
@@ -678,6 +705,7 @@ def run_lines(
                 work=workspace,
                 timeout=timeout,
                 run=run,
+                report_dir=report_dir,
             )
         )
     _write_provenance(out, records)
@@ -711,7 +739,7 @@ def _advisory_provenance(record: Record) -> dict:
 def _place(bundle_path: Path, records: list[Record]) -> None:
     bundle = load_object(bundle_path.read_text(encoding="utf-8"))
     for record in records:
-        if record.kind == "advisory":
+        if record.kind == "advisory" and record.record_provenance:
             collect._attach_advisory_provenance(
                 bundle, record.evaluator_id, _advisory_provenance(record)
             )
@@ -765,6 +793,11 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--out", type=Path, required=True)
     run.add_argument("--bundle", type=Path, help="verified bundle manifest to attach results to")
     run.add_argument(
+        "--report-dir",
+        type=Path,
+        help="copy each verified advisory details file next to the report",
+    )
+    run.add_argument(
         "--timeout",
         type=float,
         default=DEFAULT_TIMEOUT,
@@ -783,6 +816,7 @@ def main(argv: list[str] | None = None) -> int:
             out=args.out,
             media_dir=args.media_dir,
             bundle=args.bundle,
+            report_dir=args.report_dir,
             timeout=args.timeout,
         )
     except Refusal as exc:
@@ -793,7 +827,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     for record in records:
         print(f"{record.evaluator_id}: {record.outcome}")
-    if any(record.outcome in {"failure", "refused"} for record in records):
+    if any(
+        record.outcome in {"failure", "refused"} and record.record_provenance for record in records
+    ):
         return 1
     return 0
 

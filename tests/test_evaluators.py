@@ -24,6 +24,7 @@ from capability_verifier.evaluators import (
     NotFound,
     Record,
     Refusal,
+    _fresh_output,
     _place,
     accept_result_format,
     install,
@@ -848,9 +849,12 @@ def _advisory_runner(code, stderr, payload, calls, package):
         if command[0] == "uv" and command[1] == "pip":
             _plant(Path(command[4]), package, "0.1.0", COMMIT)
         if command[0] != "uv" and payload is not None and "--out" in command:
-            out = command[command.index("--out") + 1]
-            Path(out).parent.mkdir(parents=True, exist_ok=True)
-            Path(out).write_bytes(payload)
+            out = Path(command[command.index("--out") + 1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            notes = ADVISORY / "notes.txt"
+            if notes.is_file() and b'"notes.txt"' in payload:
+                (out.parent / "notes.txt").write_bytes(notes.read_bytes())
+            out.write_bytes(payload)
         status = 0 if command[0] in {"uv", "git"} else code
         return subprocess.CompletedProcess(command, status, "", stderr)
 
@@ -1245,6 +1249,7 @@ def test_a_fresh_directory_leaves_other_output_in_place(tmp_path):
         seen["provenance"] = provenance.read_text(encoding="utf-8")
         seen["other"] = (other / "keep.txt").read_text(encoding="utf-8")
         dest = Path(command[command.index("--out") + 1])
+        (dest.parent / "notes.txt").write_bytes((ADVISORY / "notes.txt").read_bytes())
         dest.write_bytes((ADVISORY / "result.json").read_bytes())
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -1280,3 +1285,159 @@ def test_a_symlinked_output_directory_is_replaced_and_the_target_is_kept(tmp_pat
     assert (replaced / "result.json").is_file()
     assert (outside / "secret.txt").read_text(encoding="utf-8") == "keep\n"
     assert list(outside.iterdir()) == [outside / "secret.txt"]
+
+
+def _advisory_cli(tmp_path, monkeypatch, writer, *, report_dir=None):
+    bundle, directory = _bundle(tmp_path)
+    grades = _robot_grades(bundle)
+    conclusions = _conclusions(bundle)
+    lines = integrity_report_lines(bundle)
+    manifest = directory / "manifest.json"
+    manifest.write_text(json.dumps(bundle), encoding="utf-8")
+    lines_file = tmp_path / "lines.txt"
+    lines_file.write_text(LINE + "\n", encoding="utf-8")
+    descriptor = _advisory_descriptor()
+
+    def fetch(url):
+        if url.endswith("/widget.json"):
+            return json.dumps(descriptor).encode()
+        return _schema_fetch(url)
+
+    def run(command, **kwargs):
+        if command[:2] == ["git", "ls-remote"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[0] == "uv" and command[1] == "pip":
+            _plant(Path(command[4]), descriptor["package"]["name"], "0.1.0", COMMIT)
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[0] == "uv":
+            return subprocess.CompletedProcess(command, 0, "", "")
+        dest = Path(command[command.index("--out") + 1])
+        writer(dest)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("capability_verifier.evaluators.fetch_bytes", fetch)
+    monkeypatch.setattr("capability_verifier.evaluators.resolve_tag", _resolve)
+    monkeypatch.setattr("capability_verifier.evaluators.subprocess.run", run)
+    argv = [
+        "run",
+        "--lines",
+        str(lines_file),
+        "--evidence-manifest",
+        str(tmp_path / "evidence.json"),
+        "--out",
+        str(tmp_path / "out"),
+        "--bundle",
+        str(manifest),
+    ]
+    if report_dir is not None:
+        argv += ["--report-dir", str(report_dir)]
+    code = main(argv)
+    stored = json.loads(manifest.read_text(encoding="utf-8"))
+    return code, stored, grades, conclusions, lines
+
+
+def _health_result(good: bytes) -> bytes:
+    return _result_citing("health.json", good)
+
+
+def test_a_tampered_details_file_refuses_only_that_evaluator(tmp_path, monkeypatch):
+    good = b"fresh observation\n"
+    bad = b"tampered observation\n"
+    payload = _health_result(good)
+
+    def writer(dest: Path) -> None:
+        dest.write_bytes(payload)
+        (dest.parent / "health.json").write_bytes(bad)
+
+    report = tmp_path / "reports"
+    code, stored, grades, conclusions, lines = _advisory_cli(
+        tmp_path, monkeypatch, writer, report_dir=report
+    )
+    digest = hashlib.sha256(bad).hexdigest()
+    cited = hashlib.sha256(good).hexdigest()
+    assert code == 0
+    assert stored["assessment"]["advisory_not_run"]["battery-thermal"] == {
+        "outcome": "refused",
+        "reason": f"altered: health.json sha256 is {digest}, not the cited {cited!r}",
+    }
+    assert "advisory_results" not in stored["assessment"]
+    assert "advisory_provenance" not in stored["assessment"]
+    assert "integrity_not_run" not in stored["assessment"]
+    assert "integrity_results" not in stored["assessment"]
+    assert _robot_grades(stored) == grades
+    assert _conclusions(stored) == conclusions
+    assert integrity_report_lines(stored) == lines
+    assert not (report / "health.json").exists()
+
+
+def test_a_missing_details_file_refuses_only_that_evaluator(tmp_path, monkeypatch):
+    payload = _health_result(b"fresh observation\n")
+
+    def writer(dest: Path) -> None:
+        dest.write_bytes(payload)
+
+    code, stored, grades, conclusions, lines = _advisory_cli(tmp_path, monkeypatch, writer)
+    assert code == 0
+    assert stored["assessment"]["advisory_not_run"]["battery-thermal"] == {
+        "outcome": "refused",
+        "reason": "missing: result.json cites health.json, and that file is not in the results",
+    }
+    assert "advisory_results" not in stored["assessment"]
+    assert "advisory_provenance" not in stored["assessment"]
+    assert _robot_grades(stored) == grades
+    assert _conclusions(stored) == conclusions
+    assert integrity_report_lines(stored) == lines
+
+
+def test_report_dir_copies_a_verified_details_file(tmp_path, monkeypatch):
+    notes = (ADVISORY / "notes.txt").read_bytes()
+    payload = (ADVISORY / "result.json").read_bytes()
+
+    def writer(dest: Path) -> None:
+        (dest.parent / "notes.txt").write_bytes(notes)
+        dest.write_bytes(payload)
+
+    report = tmp_path / "reports"
+    code, stored, _grades, _conclusions, _lines = _advisory_cli(
+        tmp_path, monkeypatch, writer, report_dir=report
+    )
+    assert code == 0
+    assert (report / "notes.txt").read_bytes() == notes
+    assert (
+        stored["assessment"]["advisory_results"]["battery-thermal"]["advisory"]["details_file"][
+            "uri"
+        ]
+        == "notes.txt"
+    )
+
+
+def _snapshot(root: Path) -> list[tuple[str, str]]:
+    found = []
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            found.append((rel, "link:" + str(path.readlink())))
+        elif path.is_file():
+            found.append((rel, path.read_bytes().hex()))
+        else:
+            found.append((rel, "dir"))
+    return found
+
+
+@pytest.mark.parametrize(
+    "evaluator_id",
+    ["..", ".", "", "/", "absolute", "a/b", "a\\b", "id\x00"],
+)
+def test_fresh_output_refuses_an_id_outside_the_output_directory(tmp_path, evaluator_id):
+    if evaluator_id == "absolute":
+        evaluator_id = str(tmp_path / "abs-target")
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "keep.txt").write_text("keep\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret\n", encoding="utf-8")
+    before = _snapshot(tmp_path)
+    with pytest.raises(Refusal):
+        _fresh_output(out, evaluator_id)
+    assert _snapshot(tmp_path) == before
