@@ -16,7 +16,6 @@ from test_collect_integrity import _bundle, _robot_grades
 
 from capability_verifier.collect import (
     _attach_not_run,
-    advisory_report_lines,
     collect,
     integrity_report_lines,
 )
@@ -795,6 +794,9 @@ def test_a_refusal_is_attached_under_the_descriptor_id(tmp_path):
     assert missing["refused"] is True
     assert missing["reason"] == "no trials"
     assert _robot_grades(stored) == grades
+    assert _conclusions(stored) == ["INCONCLUSIVE"] * len(stored["assessment"]["runs"])
+    for key in ("advisory_results", "advisory_provenance", "advisory_not_run"):
+        assert key not in stored["assessment"]
 
 
 def test_attach_not_run_defaults_to_todays_evaluator_and_accepts_another():
@@ -932,13 +934,39 @@ def test_an_advisory_result_is_stored_by_id_and_leaves_grade_and_integrity(tmp_p
     assert placed["evaluator"]["kind"] == "advisory"
     assert placed["advisory"]["summary"]
     assert "advisory_not_run" not in stored["assessment"]
+    provenance = stored["assessment"]["advisory_provenance"]["battery-thermal"]
+    assert set(provenance) == {
+        "line",
+        "repo",
+        "ref",
+        "commit",
+        "descriptor_sha256",
+        "package_name",
+        "installed_version",
+        "exit_code",
+        "outcome",
+    }
+    assert provenance["line"] == LINE
+    assert provenance["repo"] == "acme/widgets"
+    assert provenance["ref"] == "v1.2.3"
+    assert provenance["commit"] == COMMIT
+    assert provenance["outcome"] == "result"
     assert _robot_grades(stored) == grades
     assert stored["assessment"].get("integrity_results") == integrity
     assert integrity_report_lines(stored) == lines
     assert _conclusions(stored) == conclusions
 
 
-def test_an_advisory_failure_writes_a_not_run_note_without_grading(tmp_path):
+@pytest.mark.parametrize(
+    ("code", "stderr", "outcome", "reason"),
+    [
+        (1, "no pack sample\n", "failure", "no pack sample"),
+        (2, "no usable input\n", "refused", "no usable input"),
+    ],
+)
+def test_a_failed_or_refused_advisory_records_not_run_and_provenance(
+    tmp_path, code, stderr, outcome, reason
+):
     descriptor = _advisory_descriptor()
     descriptor["id"] = "pack-temperature"
     descriptor["package"] = {"name": "pack-temperature"}
@@ -948,18 +976,19 @@ def test_an_advisory_failure_writes_a_not_run_note_without_grading(tmp_path):
     conclusions = _conclusions(bundle)
     manifest = directory / "manifest.json"
     manifest.write_text(json.dumps(bundle), encoding="utf-8")
-    records = _run_advisory(
-        tmp_path, 1, "no pack sample\n", None, descriptor=descriptor, bundle=manifest
-    )
+    records = _run_advisory(tmp_path, code, stderr, None, descriptor=descriptor, bundle=manifest)
     stored = json.loads(manifest.read_text(encoding="utf-8"))
-    assert records[0].outcome == "failure"
-    missing = stored["assessment"]["advisory_not_run"]["pack-temperature"]
-    assert missing["evaluator"] == "pack-temperature"
-    assert missing["job_result"] == "failure"
-    assert missing["reason"] == "no pack sample"
-    assert missing["note"] == "pack-temperature: NOT RUN (failure): no pack sample."
-    assert advisory_report_lines(stored) == [missing["note"]]
-    assert "INCONCLUSIVE" not in missing["note"]
+    assert records[0].outcome == outcome
+    assert records[0].note == reason
+    assert stored["assessment"]["advisory_not_run"]["pack-temperature"] == {
+        "outcome": outcome,
+        "reason": reason,
+    }
+    provenance = stored["assessment"]["advisory_provenance"]["pack-temperature"]
+    assert provenance["repo"] == "acme/widgets"
+    assert provenance["ref"] == "v1.2.3"
+    assert provenance["commit"] == COMMIT
+    assert provenance["outcome"] == outcome
     assert "advisory_results" not in stored["assessment"]
     assert "integrity_not_run" not in stored["assessment"]
     assert "integrity_results" not in stored["assessment"]

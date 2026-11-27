@@ -305,13 +305,18 @@ and validates each descriptor, and `run` installs that commit and executes it.
 Results are attached by kind. An `integrity` result is stored at
 `assessment.integrity_results[<id>]`. An `advisory` result is stored at
 `assessment.advisory_results[<id>]`. The value is the result document, one
-per evaluator id, the same shape as an integrity result. Advisory results
-do not grade and do not change `integrity_results` or the integrity lines.
-A bundle with no advisory result has no `advisory_results` key. When an
-advisory evaluator fails, `assessment.advisory_not_run[<id>]` holds
-`evaluator` (the descriptor id), `job_result`, `reason`, and `note`. The
-note is `<id>: NOT RUN (<job result>): <reason>.`, or `<id>: REFUSED: <reason>.`
-when the evaluator refused the run. A cited `advisory.details_file` is copied
+per evaluator id, the same shape as an integrity result. Each advisory
+record, with or without a result, is also stored at
+`assessment.advisory_provenance[<id>]` as the loader record: `line`, `repo`,
+`ref`, `commit`, `descriptor_sha256`, `package_name`, `installed_version`,
+`exit_code`, and `outcome`. Advisory results do not grade and do not change
+`integrity_results`, the integrity lines, or any run conclusion. When an
+advisory record's outcome is `failure` or `refused`,
+`assessment.advisory_not_run[<id>]` is `{"outcome": <outcome>, "reason": <note>}`.
+`reason` is the note the loader kept, the evaluator's last stderr line, or
+`"no result"` when that note is empty. A bundle with no advisory evaluator
+has none of `advisory_results`, `advisory_provenance`, or `advisory_not_run`.
+A cited `advisory.details_file` is copied
 next to the report after its sha256 is checked. A missing, altered, or
 substituted file, or a path outside the contract, fails collection. The
 loader also refuses an advisory `trials` list that repeats an index, compared

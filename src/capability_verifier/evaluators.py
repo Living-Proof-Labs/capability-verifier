@@ -661,6 +661,8 @@ def _write_provenance(out: Path, records: list[Record]) -> None:
 def _place(bundle_path: Path, records: list[Record]) -> None:
     bundle = load_object(bundle_path.read_text(encoding="utf-8"))
     for record in records:
+        if record.kind == "advisory":
+            collect._attach_advisory_provenance(bundle, record.evaluator_id, record.as_dict())
         document = record.document
         if document is not None:
             placer = PLACERS.get(record.kind)
@@ -671,12 +673,12 @@ def _place(bundle_path: Path, records: list[Record]) -> None:
         if record.outcome not in {"refused", "failure"}:
             continue
         if record.kind == "advisory":
+            # note is the last non-empty stderr line the loader kept, if any.
             collect._attach_advisory_not_run(
                 bundle,
-                "failure",
+                record.evaluator_id,
+                record.outcome,
                 record.note or "no result",
-                refused=record.outcome == "refused",
-                evaluator=record.evaluator_id,
             )
             continue
         collect._attach_not_run(

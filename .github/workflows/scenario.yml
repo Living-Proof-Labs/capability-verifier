@@ -1300,9 +1300,10 @@ jobs:
           A result whose ``evaluator.kind`` is ``advisory`` is stored the same way, at
           ``assessment.advisory_results[<evaluator.id>]``. The value is that result
           document. Advisory results never grade, and they never change
-          ``integrity_results`` or the integrity lines. A failure records
-          ``assessment.advisory_not_run[<evaluator.id>]``. The note is worded from that
-          id. A bundle with no advisory result has no ``advisory_results`` key.
+          ``integrity_results``, the integrity lines, or any run conclusion. The loader
+          also stores ``assessment.advisory_provenance[<id>]`` for each advisory record,
+          and ``assessment.advisory_not_run[<id>]`` when that record failed or was
+          refused. A bundle with no advisory evaluator has none of those three keys.
           
           An advisory result may cite ``advisory.details_file``. The file at that
           relative path is copied into the report output, and its SHA-256 has to match
@@ -1817,73 +1818,37 @@ jobs:
                   stored[key] = document
           
           
-          def _advisory_label(evaluator: str) -> str:
-              """The words a NOT RUN note uses: the descriptor id, never a fixed name."""
+          def _advisory_key(evaluator: str) -> str:
               if isinstance(evaluator, str) and evaluator.strip():
                   return evaluator
               return "(no evaluator id)"
           
           
-          def _advisory_note_line(label: str, item: dict) -> str:
-              reason = _sentence(str(item.get("reason")))
-              if item.get("refused"):
-                  return f"{label}: REFUSED: {reason}"
-              return f"{label}: NOT RUN ({item.get('job_result')}): {reason}"
-          
-          
-          def _attach_advisory_not_run(
-              bundle: dict,
-              job_result: str,
-              reason: str,
-              refused: bool = False,
-              evaluator: str = "",
-          ) -> None:
-              """Record a missing advisory result under the descriptor's id.
-          
-              Unlike integrity, this does not mark the run inconclusive and does not
-              change the robot grade.
-              """
+          def _advisory_map(bundle: dict, field: str) -> dict:
               assessment = bundle.get("assessment")
               if not isinstance(assessment, dict):
                   assessment = {}
                   bundle["assessment"] = assessment
-              stored = assessment.get("advisory_not_run")
+              stored = assessment.get(field)
               if stored is None:
                   stored = {}
-                  assessment["advisory_not_run"] = stored
+                  assessment[field] = stored
               if not isinstance(stored, dict):
-                  raise TypeError("assessment advisory_not_run is not a mapping")
-              label = _advisory_label(evaluator)
-              entry = {
-                  "evaluator": label,
-                  "job_result": job_result,
+                  raise TypeError(f"assessment {field} is not a mapping")
+              return stored
+          
+          
+          def _attach_advisory_provenance(bundle: dict, evaluator: str, provenance: dict) -> None:
+              """Store one advisory record's provenance. It does not grade."""
+              _advisory_map(bundle, "advisory_provenance")[_advisory_key(evaluator)] = provenance
+          
+          
+          def _attach_advisory_not_run(bundle: dict, evaluator: str, outcome: str, reason: str) -> None:
+              """Record a missing advisory result. Does not touch integrity or conclusions."""
+              _advisory_map(bundle, "advisory_not_run")[_advisory_key(evaluator)] = {
+                  "outcome": outcome,
                   "reason": reason,
               }
-              if refused:
-                  entry["refused"] = True
-              entry["note"] = _advisory_note_line(label, entry)
-              stored[label] = entry
-          
-          
-          def advisory_report_lines(bundle: dict) -> list[str]:
-              """Plain lines for advisory results that did not run. Integrity lines are separate."""
-              assessment = bundle.get("assessment") if isinstance(bundle.get("assessment"), dict) else {}
-              stored = assessment.get("advisory_not_run") if isinstance(assessment, dict) else None
-              if not isinstance(stored, dict):
-                  return []
-              lines = []
-              for key, item in stored.items():
-                  if not isinstance(item, dict):
-                      continue
-                  label = item.get("evaluator")
-                  if not isinstance(label, str) or not label.strip():
-                      label = key if isinstance(key, str) else "(no evaluator id)"
-                  note = item.get("note")
-                  if isinstance(note, str) and note:
-                      lines.append(note)
-                      continue
-                  lines.append(_advisory_note_line(label, item))
-              return lines
           
           
           NOT_RUN_ID = "livingproof-run-integrity"

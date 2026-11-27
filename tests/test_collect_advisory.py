@@ -39,8 +39,8 @@ def _plant(root: Path, name: str, document: dict, notes: bytes | None, filename:
 def test_a_bundle_with_no_advisory_evaluator_has_no_advisory_results(tmp_path):
     bundle, _ = _bundle(tmp_path)
     collect(bundle, tmp_path / "empty")
-    assert "advisory_results" not in bundle["assessment"]
-    assert "advisory_not_run" not in bundle["assessment"]
+    for key in ("advisory_results", "advisory_provenance", "advisory_not_run"):
+        assert key not in bundle["assessment"]
     downloads = tmp_path / "downloads"
     _write(
         downloads,
@@ -49,7 +49,8 @@ def test_a_bundle_with_no_advisory_evaluator_has_no_advisory_results(tmp_path):
     )
     collect(bundle, downloads)
     assert "integrity_results" in bundle["assessment"]
-    assert "advisory_results" not in bundle["assessment"]
+    for key in ("advisory_results", "advisory_provenance", "advisory_not_run"):
+        assert key not in bundle["assessment"]
 
 
 def test_a_cited_details_file_is_copied_and_does_not_grade(tmp_path):
