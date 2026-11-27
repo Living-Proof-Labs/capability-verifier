@@ -1441,3 +1441,180 @@ def test_fresh_output_refuses_an_id_outside_the_output_directory(tmp_path, evalu
     with pytest.raises(Refusal):
         _fresh_output(out, evaluator_id)
     assert _snapshot(tmp_path) == before
+
+
+def _unchanged(stored, grades, conclusions, lines):
+    assert "integrity_not_run" not in stored["assessment"]
+    assert "integrity_results" not in stored["assessment"]
+    assert _robot_grades(stored) == grades
+    assert _conclusions(stored) == conclusions
+    assert integrity_report_lines(stored) == lines
+
+
+def test_a_different_report_file_refuses_only_that_evaluator(tmp_path, monkeypatch):
+    good = b"fresh observation\n"
+    payload = _health_result(good)
+    report = tmp_path / "reports"
+    report.mkdir()
+    (report / "health.json").write_bytes(b"already there\n")
+
+    def writer(dest: Path) -> None:
+        dest.write_bytes(payload)
+        (dest.parent / "health.json").write_bytes(good)
+
+    code, stored, grades, conclusions, lines = _advisory_cli(
+        tmp_path, monkeypatch, writer, report_dir=report
+    )
+    assert code == 0
+    assert stored["assessment"]["advisory_not_run"]["battery-thermal"] == {
+        "outcome": "refused",
+        "reason": "substituted: health.json is already a different file in the report",
+    }
+    assert "advisory_results" not in stored["assessment"]
+    assert "advisory_provenance" not in stored["assessment"]
+    assert (report / "health.json").read_bytes() == b"already there\n"
+    _unchanged(stored, grades, conclusions, lines)
+    provenance = json.loads((tmp_path / "out" / "evaluators-provenance.json").read_text())
+    assert provenance[0]["outcome"] == "refused"
+
+
+def test_a_report_symlink_refuses_only_that_evaluator(tmp_path, monkeypatch):
+    good = b"fresh observation\n"
+    payload = _health_result(good)
+    target = tmp_path / "elsewhere.txt"
+    target.write_text("keep\n", encoding="utf-8")
+    report = tmp_path / "reports"
+    report.mkdir()
+    (report / "health.json").symlink_to(target)
+
+    def writer(dest: Path) -> None:
+        dest.write_bytes(payload)
+        (dest.parent / "health.json").write_bytes(good)
+
+    code, stored, grades, conclusions, lines = _advisory_cli(
+        tmp_path, monkeypatch, writer, report_dir=report
+    )
+    assert code == 0
+    assert stored["assessment"]["advisory_not_run"]["battery-thermal"] == {
+        "outcome": "refused",
+        "reason": "substituted: health.json would replace a different path in the report",
+    }
+    assert "advisory_results" not in stored["assessment"]
+    assert (report / "health.json").is_symlink()
+    assert target.read_text(encoding="utf-8") == "keep\n"
+    _unchanged(stored, grades, conclusions, lines)
+    assert (tmp_path / "out" / "evaluators-provenance.json").is_file()
+
+
+def test_two_advisors_citing_one_path_refuse_only_the_second(tmp_path, monkeypatch):
+    first_bytes = b"first observation\n"
+    second_bytes = b"second observation\n"
+    first_id = "battery-thermal"
+    second_id = "pack-temperature"
+    first_line = "acme/widgets@v1.2.3/first.json"
+    second_line = "acme/widgets@v1.2.3/second.json"
+    descriptors = {
+        first_line: _advisory_descriptor(),
+        second_line: _advisory_descriptor(),
+    }
+    descriptors[second_line]["id"] = second_id
+    descriptors[second_line]["package"] = {"name": second_id}
+    payloads = {
+        first_id: _result_citing("health.json", first_bytes),
+        second_id: _result_citing("health.json", second_bytes),
+    }
+    payloads[second_id] = payloads[second_id].replace(
+        b'"id": "battery-thermal"', b'"id": "pack-temperature"'
+    )
+    files = {first_id: first_bytes, second_id: second_bytes}
+    bundle, directory = _bundle(tmp_path)
+    grades = _robot_grades(bundle)
+    conclusions = _conclusions(bundle)
+    lines = integrity_report_lines(bundle)
+    manifest = directory / "manifest.json"
+    manifest.write_text(json.dumps(bundle), encoding="utf-8")
+    lines_file = tmp_path / "lines.txt"
+    lines_file.write_text(first_line + "\n" + second_line + "\n", encoding="utf-8")
+
+    def fetch(url):
+        for line, document in descriptors.items():
+            if url.endswith(line.rsplit("/", 1)[-1]):
+                return json.dumps(document).encode()
+        return _schema_fetch(url)
+
+    def run(command, **kwargs):
+        if command[:2] == ["git", "ls-remote"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[0] == "uv" and command[1] == "pip":
+            evaluator_id = Path(command[4]).parent.name
+            _plant(Path(command[4]), evaluator_id, "0.1.0", COMMIT)
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[0] == "uv":
+            return subprocess.CompletedProcess(command, 0, "", "")
+        dest = Path(command[command.index("--out") + 1])
+        evaluator_id = dest.parent.name
+        (dest.parent / "health.json").write_bytes(files[evaluator_id])
+        dest.write_bytes(payloads[evaluator_id])
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("capability_verifier.evaluators.fetch_bytes", fetch)
+    monkeypatch.setattr("capability_verifier.evaluators.resolve_tag", _resolve)
+    monkeypatch.setattr("capability_verifier.evaluators.subprocess.run", run)
+    report = tmp_path / "reports"
+    code = main(
+        [
+            "run",
+            "--lines",
+            str(lines_file),
+            "--evidence-manifest",
+            str(tmp_path / "evidence.json"),
+            "--out",
+            str(tmp_path / "out"),
+            "--bundle",
+            str(manifest),
+            "--report-dir",
+            str(report),
+        ]
+    )
+    stored = json.loads(manifest.read_text(encoding="utf-8"))
+    assert code == 0
+    assert (report / "health.json").read_bytes() == first_bytes
+    assert stored["assessment"]["advisory_results"][first_id]["evaluator"]["id"] == first_id
+    assert second_id not in stored["assessment"]["advisory_results"]
+    assert stored["assessment"]["advisory_not_run"][second_id] == {
+        "outcome": "refused",
+        "reason": "substituted: health.json is already a different file in the report",
+    }
+    assert second_id not in stored["assessment"].get("advisory_provenance", {})
+    _unchanged(stored, grades, conclusions, lines)
+    provenance = json.loads((tmp_path / "out" / "evaluators-provenance.json").read_text())
+    assert [(item["package_name"], item["outcome"]) for item in provenance] == [
+        (first_id, "result"),
+        (second_id, "refused"),
+    ]
+
+
+def test_an_unreadable_details_file_names_the_cited_uri(tmp_path, monkeypatch):
+    good = b"fresh observation\n"
+    payload = _health_result(good)
+    real = Path.read_bytes
+
+    def read_bytes(self):
+        if self.name == "health.json":
+            raise OSError(13, "Permission denied")
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+
+    def writer(dest: Path) -> None:
+        dest.write_bytes(payload)
+        (dest.parent / "health.json").write_bytes(good)
+
+    code, stored, grades, conclusions, lines = _advisory_cli(tmp_path, monkeypatch, writer)
+    reason = stored["assessment"]["advisory_not_run"]["battery-thermal"]["reason"]
+    assert code == 0
+    assert stored["assessment"]["advisory_not_run"]["battery-thermal"]["outcome"] == "refused"
+    assert "health.json" in reason
+    assert "result.json" not in reason
+    assert "advisory_results" not in stored["assessment"]
+    _unchanged(stored, grades, conclusions, lines)

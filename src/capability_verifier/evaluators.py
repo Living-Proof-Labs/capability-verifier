@@ -526,14 +526,18 @@ def _cited_advisory_details(document: dict, result_path: Path, report_dir: Path 
     evaluator = document.get("evaluator")
     if not isinstance(evaluator, dict) or evaluator.get("kind") != "advisory":
         return
+    cited = collect._details_citation(document)
+    uri = cited.get("uri") if isinstance(cited, dict) else None
+    name = uri if isinstance(uri, str) and uri else "details file"
     exports: dict[str, bytes] = {}
     try:
         collect._take_details_file(result_path, document, result_path.parent, exports)
+        if report_dir is not None and exports:
+            collect._write_thresholds(report_dir, exports)
     except OSError as exc:
-        name = result_path.name
         raise collect.DetailsCitationError(f"unreadable: {name} ({exc.strerror or exc})") from exc
-    if report_dir is not None and exports:
-        collect._write_thresholds(report_dir, exports)
+    except collect.ThresholdCitationError as exc:
+        raise collect.DetailsCitationError(str(exc)) from exc
 
 
 def execute(
@@ -648,7 +652,8 @@ def _fresh_output(out: Path, evaluator_id: str) -> Path:
     """
     if (
         not isinstance(evaluator_id, str)
-        or evaluator_id in {".", ".."}
+        or evaluator_id in {"", ".", ".."}
+        or "/" in evaluator_id
         or "\\" in evaluator_id
         or "\x00" in evaluator_id
     ):

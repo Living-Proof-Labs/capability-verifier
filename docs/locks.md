@@ -321,7 +321,9 @@ in both `advisory_results` and `advisory_not_run`. A bundle with no advisory
 evaluator has none of `advisory_results`, `advisory_provenance`, or
 `advisory_not_run`. `evaluators run --report-dir DIR` copies a verified `advisory.details_file`
 byte-for-byte into `DIR`, under the cited relative path. Without
-`--report-dir` the file stays only in `out/<id>/`. A missing, altered,
+`--report-dir` the file stays only in `out/<id>/`. A copy that would replace
+a different file, or follow a symlink, refuses that evaluator the same way
+and leaves earlier copies in place. A missing, altered,
 unreadable, or substituted file, or a path outside the contract, refuses
 that evaluator alone: `advisory_not_run[<id>]` is
 `{"outcome": "refused", "reason": "<file and problem>"}`, and that id is
