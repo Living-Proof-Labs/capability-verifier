@@ -1145,7 +1145,7 @@ jobs:
                       sys.exit("media.json binding file %s is not in media/mcap/" % path)
           if fmt == "livingproof-hallway-media/2.2.0":
               # 2.2.0 adds the robot adapter's own recording per trial, mcap/trial-NN.robot.mcap. It
-              # sits in media/mcap/, which the artifact below uploads whole, so Run Integrity gets it
+              # sits in media/mcap/, which the artifact below uploads whole, so the recording travels
               # with media.json. Only the entry and the file are checked here: bytes and sha256 are
               # the evaluator's to check against the file (media-file-mismatch).
               for t in trials:

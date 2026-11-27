@@ -370,7 +370,7 @@ trial has no binding entry or its file is missing, and the `mcap` artifact uploa
 the binding files travel with the recordings. `livingproof-hallway-media/2.2.0` is 2.1.0 plus a
 `robot_mcap` entry per trial, the robot adapter's own recording `mcap/trial-NN.robot.mcap` (`mcap` stays
 the simulator's); the step stops if a trial has no `robot_mcap` entry or its file is missing from
-`media/mcap/`, and the same upload carries it to Run Integrity. The step checks the entry and the file;
+`media/mcap/`. The step checks the entry and the file;
 the evaluator checks its bytes and sha256. Any other media format fails the workflow step with a message that names the
 format, before it reads `seed` or `index`.
 
