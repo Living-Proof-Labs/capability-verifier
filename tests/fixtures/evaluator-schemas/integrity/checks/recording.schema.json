@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/checks/recording.schema.json",
+  "title": "recording 1.2.0",
+  "description": "Each trial recording that completeness reports as present is a usable MCAP file. It opens and has a valid footer and summary. Every required channel exists and has messages. Message timestamps never go backwards on a channel. No gap between consecutive messages on a channel is longer than the declared limit. Gaps are measured in log-time order: the messages on a channel are ordered by log time before the gaps are taken, so a write that is out of file order is not a capture gap. Timestamps that go backwards are counted in file order and are reported as timestamps-backwards. The file's size and sha256 match media.json, and the observation_sha256 in media.json matches the run evidence. A file that exists but has no valid footer is completeness's: the producer classifies it while reading (recording.state truncated), completeness reports truncated-recording and the run is incomplete, and this check does not judge it. It lists the trial in not_checked as not-present, so the truncation is reported once. mcap-incomplete is a finding of version 1.0.0 only and is not emitted from 1.1.0. A recording that completeness reports as missing, truncated, or empty is not judged here and is listed in not_checked with reason not-present. A present recording the evidence has no entry for is listed with reason not-recorded. Every trial that was not judged is listed, also when nothing was judged and the check is not applicable. Version 1.1.0 requires not_checked, and an empty list means every trial was judged. From 1.1.0 an evidence trial entry that is not in trials is a malformed request. A present trial whose evidence says incomplete is also a malformed request, which an evaluator rejects with no result (exit status 2) instead of listing the trial as not-present. From 1.2.0, a present recording the reader refused because a decompression cap was hit (chunk-bytes, total-bytes, records, or chunks) is a recording-over-limit finding. The evidence names the limit and its value in over_limit. The trial is judged and fails closed. It is not a truncated recording, and completeness does not report it. The check does not also emit missing-channel or other findings for that trial, because the read stopped. A present trial whose evidence says incomplete is still a malformed request at 1.2.0 unless over_limit is set. Version 1.2.0 requires not_checked, as 1.1.0 does. Version 1.1.0, which stays valid, does not emit recording-over-limit. Version 1.0.0, which stays valid, has no not_checked, judged a file with no valid footer and reported it as mcap-incomplete. Without media the check is not applicable. percentage is 100 times the number of judged recordings without a finding divided by the number of judged recordings. The check judges structure, channels, and time. It does not judge what the recorded motion means. The reader reports the channel facts, and the check compares them with the declared channels and limit. The result states the gap limit it used in limits.max_gap_seconds, equal to evidence.recording.max_gap_seconds, whenever the check is applicable. limits is omitted when the check is not applicable. Evidence for this check is evidence.recording.",
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["media_available", "trials"],
+      "properties": {
+        "media_available": {
+          "type": "boolean",
+          "description": "False when the run has no media job output, so there are no recordings or media.json to read."
+        },
+        "required_channels": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^/.+"}
+        },
+        "max_gap_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "The longest allowed gap between consecutive messages on a channel."
+        },
+        "trials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "required": ["id", "mcap", "media", "evidence_observation_sha256"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "mcap": {
+                "type": "object",
+                "unevaluatedProperties": false,
+                "required": ["state", "bytes", "sha256", "channels"],
+                "properties": {
+                  "state": {
+                    "enum": ["complete", "incomplete"],
+                    "description": "incomplete means the file does not open or has no valid footer and summary. Only version 1.0.0 judges it, as mcap-incomplete. From 1.1.0 such a file is completeness's (recording.state truncated). An entry here that says incomplete for a trial whose recording.state is present is inconsistent, so the request is malformed and is rejected, except from 1.2.0 when over_limit is set: the reader stopped, so the footer may be unknown."
+                  },
+                  "bytes": {"type": "integer", "minimum": 0},
+                  "sha256": {
+                    "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/sha256"
+                  },
+                  "channels": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "unevaluatedProperties": false,
+                      "required": ["topic", "message_count", "backward_steps", "max_gap_seconds"],
+                      "properties": {
+                        "topic": {"type": "string", "pattern": "^/.+"},
+                        "message_count": {"type": "integer", "minimum": 0},
+                        "backward_steps": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "The number of messages whose log time is earlier than the message before it on the channel, in file order."
+                        },
+                        "max_gap_seconds": {"type": "number", "minimum": 0, "description": "The longest gap between consecutive messages on the channel, in log-time order."}
+                      }
+                    }
+                  }
+                }
+              },
+              "media": {
+                "type": "object",
+                "unevaluatedProperties": false,
+                "required": ["mcap_bytes", "mcap_sha256", "observation_sha256"],
+                "properties": {
+                  "mcap_bytes": {"type": "integer", "minimum": 0},
+                  "mcap_sha256": {
+                    "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/sha256"
+                  },
+                  "observation_sha256": {
+                    "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/sha256"
+                  }
+                }
+              },
+              "evidence_observation_sha256": {
+                "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/sha256"
+              },
+              "over_limit": {
+                "type": "object",
+                "unevaluatedProperties": false,
+                "required": ["limit", "value"],
+                "description": "The reader stopped because a decompression cap was hit. From recording 1.2.0 this trial is judged and is a recording-over-limit finding. The file is still present; it is not a truncated recording.",
+                "properties": {
+                  "limit": {
+                    "enum": ["chunk-bytes", "total-bytes", "records", "chunks"],
+                    "description": "The cap that was hit. chunk-bytes is one decompressed chunk, total-bytes is all decompressed chunks, records is records inside chunks, and chunks is the number of chunks."
+                  },
+                  "value": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "description": "The cap that was applied, in bytes for chunk-bytes and total-bytes, otherwise a count."
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"media_available": {"const": true}},
+            "required": ["media_available"]
+          },
+          "then": {"required": ["required_channels", "max_gap_seconds"]}
+        },
+        {
+          "if": {
+            "properties": {"media_available": {"const": false}},
+            "required": ["media_available"]
+          },
+          "then": {"properties": {"trials": {"maxItems": 0}}}
+        }
+      ]
+    }
+  },
+  "unevaluatedProperties": false,
+  "allOf": [
+    {
+      "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/result.schema.json#/$defs/check"
+    },
+    {
+      "if": {
+        "properties": {"version": {"const": "1.0.0"}},
+        "required": ["version"]
+      },
+      "then": {
+        "properties": {
+          "not_checked": false,
+          "findings": {
+            "items": {
+              "properties": {"category": {"not": {"const": "recording-over-limit"}}}
+            }
+          }
+        }
+      },
+      "else": {
+        "required": ["not_checked"],
+        "properties": {
+          "findings": {
+            "items": {
+              "properties": {"category": {"not": {"const": "mcap-incomplete"}}}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"version": {"const": "1.1.0"}},
+        "required": ["version"]
+      },
+      "then": {
+        "properties": {
+          "findings": {
+            "items": {
+              "properties": {"category": {"not": {"const": "recording-over-limit"}}}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "id": {"const": "recording"},
+    "version": {"enum": ["1.0.0", "1.1.0", "1.2.0"]},
+    "not_checked": {
+      "items": {
+        "required": ["trial_id"],
+        "properties": {
+          "trial_id": {"type": "string", "minLength": 1},
+          "reason": {"enum": ["not-present", "not-recorded"]},
+          "subject": false
+        }
+      }
+    },
+    "findings": {
+      "items": {
+        "required": ["trial_id"],
+        "properties": {
+          "category": {
+            "enum": [
+              "mcap-incomplete",
+              "missing-channel",
+              "timestamps-backwards",
+              "message-gap-exceeded",
+              "media-file-mismatch",
+              "observation-link-mismatch",
+              "recording-over-limit"
+            ]
+          },
+          "classification": {"const": "test_system"},
+          "subject": false,
+          "trial_ids": false,
+          "check_run": false
+        }
+      }
+    }
+  }
+}

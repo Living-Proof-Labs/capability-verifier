@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/checks/ci-publisher.schema.json",
+  "title": "ci-publisher 1.0.0",
+  "description": "A check run left open after the publisher received HTTP 404 is a test-system finding. The result has no robot verdict. percentage is 100 times the number of check runs that are not in that state divided by the number of check runs. Evidence for this check is evidence['ci-publisher'].",
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["publisher_http_status", "check_runs"],
+      "properties": {
+        "publisher_http_status": {"type": "integer", "minimum": 100, "maximum": 599},
+        "check_runs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "required": ["name", "status"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "status": {"enum": ["queued", "in_progress", "completed"]},
+              "conclusion": {
+                "enum": [
+                  "success",
+                  "failure",
+                  "neutral",
+                  "cancelled",
+                  "skipped",
+                  "timed_out",
+                  "action_required",
+                  "stale"
+                ]
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {"status": {"const": "completed"}},
+                  "required": ["status"]
+                },
+                "then": {"required": ["conclusion"]}
+              },
+              {
+                "if": {
+                  "properties": {"status": {"enum": ["queued", "in_progress"]}},
+                  "required": ["status"]
+                },
+                "then": {"properties": {"conclusion": false}}
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/result.schema.json#/$defs/check"
+    }
+  ],
+  "unevaluatedProperties": false,
+  "properties": {
+    "id": {"const": "ci-publisher"},
+    "version": {"const": "1.0.0"},
+    "findings": {
+      "items": {
+        "required": ["check_run"],
+        "properties": {
+          "category": {"const": "check-run-left-open"},
+          "classification": {"const": "test_system"},
+          "trial_id": false,
+          "trial_ids": false,
+          "subject": false
+        }
+      }
+    }
+  }
+}

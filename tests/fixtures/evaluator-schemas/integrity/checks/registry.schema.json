@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/checks/registry.schema.json",
+  "title": "livingproof-run-integrity-checks/1.0.0",
+  "description": "Index of integrity checks. Adding a check appends one entry. Existing entries stay as they are. version is the current version of a check. previous_versions lists the earlier ones that stay valid.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["format", "checks"],
+  "properties": {
+    "format": {"const": "livingproof-run-integrity-checks/1.0.0"},
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "unevaluatedProperties": false,
+        "required": ["id", "version", "schema", "examples"],
+        "properties": {
+          "id": {
+            "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/slug"
+          },
+          "version": {
+            "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/semver"
+          },
+          "previous_versions": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/semver"
+            },
+            "description": "Earlier versions of this check that results may still carry. Their results stay valid against the one schema. A version is added here when a bump is additive, and is left out when a result at that version must be rejected."
+          },
+          "schema": {"type": "string", "minLength": 1},
+          "examples": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "recorded_run": {
+            "type": "string",
+            "minLength": 1,
+            "description": "URL of a real run that triggered this check. Example fixtures stay labeled as example data."
+          }
+        }
+      }
+    }
+  }
+}

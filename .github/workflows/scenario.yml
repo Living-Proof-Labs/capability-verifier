@@ -19,6 +19,16 @@
 # and the sha256 of the robot file it replaced, or that the robot commit has no lock. When the
 # input is empty and the robot commit has verification.lock.json, that file stays the only
 # source (the v1.18.0 path). Nothing is pinned in this file.
+# Optional input `evaluators` is newline-separated declaration lines
+# `<owner>/<repo>@<ref>/<path>.json`. `ref` is a release tag `vMAJOR.MINOR.PATCH`
+# (peeled to a commit; a branch of the same name is refused) or a 40-character
+# commit. One such line is
+# `Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json`.
+# Blank lines and lines starting with `#` are ignored. Empty, the
+# default, keeps the run-integrity job. When the input is set, that job is
+# skipped and the report does not treat the skipped job as a missing integrity
+# result. This workflow does not run the loader; the caller runs
+# `python -m capability_verifier.evaluators`.
 # Optional inputs verifier-commit, verifier-image, reporter-image and evaluator-commit
 # supply a commit or image ref the caller resolved from a release tag. Empty leaves
 # the lock field unchanged. A set input replaces that field after a strict check.
@@ -115,6 +125,17 @@ on:
           Media 1.0.0 names that trial by seed; media 2.0.0 names it by index.
         type: boolean
         default: true
+      evaluators:
+        description: >-
+          Newline-separated declaration lines, owner/repo@ref/path.json.
+          ref is a release tag vMAJOR.MINOR.PATCH or a 40-character hexadecimal
+          commit. One line is
+          Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json.
+          Blank lines and lines starting with # are ignored. Empty keeps
+          the run-integrity job. When set, that job is skipped and the caller
+          runs python -m capability_verifier.evaluators. This workflow does not.
+        type: string
+        default: ''
     outputs:
       configurations:
         description: JSON list of the configurations that ran
@@ -1256,7 +1277,9 @@ jobs:
           # Named in the failure when no result reaches this configuration's bundle.
           EVALUATOR_RESULTS_PATTERN: ${{ inputs.artifact-prefix }}evaluator-results-*-${{ matrix.configuration }}
           # A failed or refused run-integrity leaves no result; the report says so (#214).
-          RUN_INTEGRITY_RESULT: ${{ needs.run-integrity.result }}
+          # Empty when the caller passed evaluators: that job did not run, and this
+          # workflow does not record the skip as a missing integrity result.
+          RUN_INTEGRITY_RESULT: ${{ inputs.evaluators == '' && needs.run-integrity.result || '' }}
         run: |
           if [ ! -f verified/bundle/manifest.json ]; then
             exit 0
@@ -1681,13 +1704,24 @@ jobs:
               )
 
 
-          def _attach_not_run(bundle: dict, job_result: str, reason: str, refused: bool = False) -> None:
+          def _attach_not_run(
+              bundle: dict,
+              job_result: str,
+              reason: str,
+              refused: bool = False,
+              evaluator: str = NOT_RUN_ID,
+          ) -> None:
+              """Record a missing integrity result.
+
+              ``evaluator`` defaults to the historical run-integrity id so callers that
+              omit it keep today's record.
+              """
               assessment = bundle.get("assessment")
               if not isinstance(assessment, dict):
                   assessment = {}
                   bundle["assessment"] = assessment
               assessment["integrity_not_run"] = {
-                  "evaluator": NOT_RUN_ID,
+                  "evaluator": evaluator,
                   "job_result": job_result,
                   "reason": reason,
               }
@@ -2321,7 +2355,6 @@ jobs:
 
           if __name__ == "__main__":
               sys.exit(main())
-
           COLLECT
           python3 /tmp/collect_evaluator_results.py verified/bundle/manifest.json evaluator-results reports
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -2403,7 +2436,7 @@ jobs:
     # Tag-only pin: checkout the tag, never a commit. Plan defaults the
     # pin to livingproof-evaluator-run v1.5.0 when the lock omits it.
     needs: [plan, evidence, media]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && inputs.evaluators == '' }}
     runs-on: ubuntu-24.04
     container:
       image: ${{ needs.plan.outputs.verifier-image }}

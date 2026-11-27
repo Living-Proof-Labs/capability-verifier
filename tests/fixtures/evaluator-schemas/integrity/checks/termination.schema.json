@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/checks/termination.schema.json",
+  "title": "termination 1.1.0",
+  "description": "Every trial that ended on its own records a stop reason, and the reason is one the plan allows. The stop reasons are time-limit (the scenario's own time limit, a robot outcome and not a timeout), mission-done, left-world (the robot left the world), simulation-broken, and adapter-or-scenario-done. A missing reason, a reason outside that vocabulary, a reason the plan does not allow, and a trial record that disagrees with the manifest are test-system findings. completeness owns timeout and crash, which are trials that did not finish or produced no usable result. For a trial whose termination is timeout or crash this check raises no finding of its own. It lists the trial in referrals, pointing at the completeness category, so each ending is reported once. A referral is not a finding and does not change success or percentage. percentage is 100 times the number of trials without a finding divided by the number of trials that ended on their own. When no trial ended on its own, the check is not applicable. Version 1.1.0: simulation-broken is never an allowed stop reason, whatever the plan lists, so a trial that stopped with it is always a disallowed-stop-reason finding. Version 1.0.0, which stays valid, let a plan list it. Evidence for this check is evidence.termination.",
+  "$defs": {
+    "stop_reason": {
+      "enum": [
+        "time-limit",
+        "mission-done",
+        "left-world",
+        "simulation-broken",
+        "adapter-or-scenario-done"
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["allowed_stop_reasons", "trials"],
+      "properties": {
+        "allowed_stop_reasons": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/checks/termination.schema.json#/$defs/stop_reason"},
+          "description": "The stop reasons the run's plan allows. From termination 1.1.0, simulation-broken in this list is accepted and ignored: it is never allowed, whatever the plan lists. Version 1.0.0 honoured it."
+        },
+        "trials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "required": ["id"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "stop_reason": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The stop reason recorded for the trial. Any text is accepted here so that a value outside the vocabulary can be reported."
+              },
+              "manifest_stop_reason": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The stop reason the run manifest copies for the trial. Omitted when the manifest has none."
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/result.schema.json#/$defs/check"
+    }
+  ],
+  "unevaluatedProperties": false,
+  "properties": {
+    "id": {"const": "termination"},
+    "version": {"enum": ["1.0.0", "1.1.0"]},
+    "findings": {
+      "items": {
+        "required": ["trial_id"],
+        "properties": {
+          "category": {
+            "enum": [
+              "missing-stop-reason",
+              "unknown-stop-reason",
+              "disallowed-stop-reason",
+              "stop-reason-mismatch"
+            ]
+          },
+          "classification": {"const": "test_system"},
+          "subject": false,
+          "trial_ids": false,
+          "check_run": false
+        }
+      }
+    }
+  }
+}

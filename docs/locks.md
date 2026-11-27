@@ -279,6 +279,47 @@ at `v1.5.0`. An explicit lock pin still takes precedence. This default supports
 recording integrity via `--media`; applicability remains determined by the run’s
 declared recording limits, not by the evaluator version alone.
 
+## Evaluator declaration lines
+
+`scenario.yml` and `walk-hallway.yml` take an optional string input,
+`evaluators`. It is newline-separated declaration lines:
+
+```text
+<owner>/<repo>@<ref>/<path>.json
+Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json
+```
+
+`ref` is a release tag `vMAJOR.MINOR.PATCH` or a 40-character hexadecimal
+commit. A tag is peeled to the commit it names. A branch of the same name is
+refused, as are a short commit, `latest`, a missing ref, a URL, another host,
+a `.` or `..` path segment, and any other character outside the line grammar.
+Blank lines and lines that start with `#` are ignored. An input with no
+declaration lines is an error when the loader reads it.
+
+Empty, the default, keeps today's `run-integrity` job. When the input is
+non-empty, that job's `if` is false, so it is skipped, and the report's
+`RUN_INTEGRITY_RESULT` is empty, so the collector does not store
+`integrity_not_run` for the skipped job. The workflow does not run the loader.
+The caller runs `python -m capability_verifier.evaluators`: `check` resolves
+and validates each descriptor, and `run` installs that commit and executes it.
+Results are attached by kind. An `integrity` result is stored at
+`assessment.integrity_results[<id>]`.
+
+The loader maps each exit code from the descriptor:
+
+- Exit 0 means the result file is validated. Its `format` must equal the
+  descriptor's `result`, and the major must be one the loader supports
+  (major 1). A missing or invalid result is a failure.
+- A listed `refused` code means no result, plus a note with the evaluator's
+  last stderr line. An argparse usage error (`usage:` … `error:` on stderr)
+  is a failure instead of a refusal.
+- Any unlisted code, exit 1 included, is a failure with no result.
+- The loader command exits 1 on a refusal or a failure. Its own argparse
+  usage error exits 2.
+- Each package is installed with an unlocked `uv pip install`, and the
+  installed source commit is checked against `direct_url.json`.
+- Run the module with `PYTHONPATH=src`. This checkout has no build system.
+
 The assessing jobs fetch the specs commit the evidence lock declares with
 `tools/fetch_hallway_specs.py --from evidence/manifest.json`. Every file in
 `releases.specs.files` must match its declared sha256, `description.json` as well as

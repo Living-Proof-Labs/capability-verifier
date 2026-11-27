@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/descriptor.schema.json",
+  "title": "Evaluator descriptor",
+  "description": "Optional display object on livingproof-evaluator-result/1.1.0. It describes the evaluator for a generic report. It does not select the scenario or integrity payload. See docs/evaluator-descriptor.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tier"],
+  "properties": {
+    "title": {
+      "allOf": [{"$ref": "#/$defs/plain"}],
+      "maxLength": 80,
+      "description": "The evaluator's name, used exactly wherever a consumer shows that name. When present it is the same string as evaluator.display_name. Consumers do not append the word evaluator."
+    },
+    "short_title": {
+      "allOf": [{"$ref": "#/$defs/plain"}],
+      "maxLength": 40,
+      "description": "A mobile shortening of title that still reads as the same name. It keeps every word, and each word is the start of the matching title word. It is not a different label."
+    },
+    "icon": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "description": "Inline SVG. maxLength is 8192 characters. The validator also rejects a UTF-8 encoding longer than 8192 bytes, and enforces the SVG subset in docs/evaluator-descriptor.md. When present, the string equals evaluator.icon."
+    },
+    "icon_accessible_name": {
+      "allOf": [{"$ref": "#/$defs/plain"}],
+      "maxLength": 120,
+      "description": "Accessible name for the mark. Recommended when icon is present. Plain text, not an SVG title element."
+    },
+    "purpose": {
+      "allOf": [{"$ref": "#/$defs/plain"}],
+      "maxLength": 400,
+      "description": "One or two sentences on what this evaluator judges."
+    },
+    "version": {
+      "allOf": [{"$ref": "#/$defs/plain"}],
+      "maxLength": 64,
+      "description": "Evaluator version repeated for the details panel. When present it is the same string as evaluator.version."
+    },
+    "kind": {
+      "allOf": [{"$ref": "#/$defs/plain"}],
+      "maxLength": 40,
+      "description": "Display label for the kind of check, as the evaluator states it. Display only. The payload selector is evaluator.kind, which remains scenario or integrity."
+    },
+    "source": {
+      "allOf": [{"$ref": "#/$defs/plain"}],
+      "maxLength": 120,
+      "description": "Where the opinion came from, as the evaluator states it. Display only."
+    },
+    "tier": {
+      "$ref": "#/$defs/tier",
+      "description": "Default tier for this output. A finding may override it."
+    },
+    "success_copy": {
+      "allOf": [{"$ref": "#/$defs/plain"}],
+      "maxLength": 400,
+      "description": "Plain text for the details panel when this evaluator is satisfied."
+    },
+    "details_copy": {
+      "allOf": [{"$ref": "#/$defs/plain"}],
+      "maxLength": 1000,
+      "description": "Further plain text for the mark's details panel."
+    },
+    "grade": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Optional display percentage from 0 to 100. Strict validation rejects a float, including a zero fractional part such as 100.0. It is not a robot verdict, it does not fold scenario steps, and it is not integrity.run.percentage."
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 50,
+      "description": "Problem entries. Empty or omitted means this evaluator is satisfied for the summary. These are not integrity-check findings.",
+      "items": {"$ref": "#/$defs/finding"}
+    }
+  },
+  "$defs": {
+    "plain": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?=.*[^\\s\\u00AD\\u0600-\\u0605\\u061C\\u06DD\\u070F\\u0890-\\u0891\\u08E2\\u180E\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u206F\\uFEFF\\uFFF9-\\uFFFB\ud804\udcbd\ud804\udccd\ud80d\udc30-\ud80d\udc3f\ud82f\udca0-\ud82f\udca3\ud834\udd73-\ud834\udd7a\udb40\udc01\udb40\udc20-\udb40\udc7f])[^<>\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029]*$",
+      "description": "Plain text with at least one visible character. An ampersand is allowed, as in R&D, and is not an entity. Rejects <, >, ASCII and C1 controls, the Unicode line separators U+2028 and U+2029, whitespace-only values, and values made only of Unicode format characters (Cf), including U+FEFF and U+200B. A format character beside a visible character is allowed. Consumers must escape every text field, including &."
+    },
+    "tier": {
+      "enum": [
+        "verdict",
+        "health_finding",
+        "test_system_status",
+        "review",
+        "observation"
+      ],
+      "description": "Line order is verdict, then health_finding, then test_system_status, then review, then observation. Only a verdict finding may change the run verdict ring. This enum is not evaluator.kind."
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": {
+        "text": {
+          "allOf": [{"$ref": "#/$defs/plain"}],
+          "maxLength": 280,
+          "description": "The one-line problem statement."
+        },
+        "severity": {
+          "allOf": [{"$ref": "#/$defs/plain"}],
+          "maxLength": 40,
+          "description": "A plain-language severity word or short phrase."
+        },
+        "time": {
+          "allOf": [{"$ref": "#/$defs/plain"}],
+          "maxLength": 40,
+          "description": "When in the trial this was observed, as plain text, for example 12.4 s."
+        },
+        "trial": {
+          "description": "A trial reference: an integer from 0 to 999999, or a short plain-text reference.",
+          "oneOf": [
+            {"type": "integer", "minimum": 0, "maximum": 999999},
+            {
+              "allOf": [{"$ref": "#/$defs/plain"}],
+              "maxLength": 40
+            }
+          ]
+        },
+        "tier": {
+          "$ref": "#/$defs/tier",
+          "description": "Overrides the descriptor's tier for this finding only."
+        },
+        "reported_by": {
+          "allOf": [{"$ref": "#/$defs/plain"}],
+          "maxLength": 80,
+          "description": "Plain-text attribution for this finding. The report shows it as the attribution in front of text. Use a role name unless the evaluator output already contains a name."
+        }
+      }
+    }
+  }
+}

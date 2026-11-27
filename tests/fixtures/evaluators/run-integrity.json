@@ -1,0 +1,17 @@
+{
+  "format": "livingproof-evaluator-implementation/1",
+  "id": "livingproof-run-integrity",
+  "kind": "integrity",
+  "grading": "none",
+  "package": {"name": "livingproof-evaluator-run"},
+  "runtime": {"python": "3.12"},
+  "entrypoint": {"module": "livingproof_evaluator_run"},
+  "arguments": [
+    "{evidence_manifest}",
+    {"if": "media_dir", "then": ["--media", "{media_dir}"]},
+    "--out",
+    "{result}"
+  ],
+  "exit_codes": {"0": "result", "2": "refused"},
+  "result": "livingproof-evaluator-result/1.2.0"
+}

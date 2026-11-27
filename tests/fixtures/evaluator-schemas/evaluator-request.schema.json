@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/evaluator-request.schema.json",
+  "title": "livingproof-evaluator-request/1.0.0",
+  "description": "Shared request envelope for a scenario evaluator and an integrity evaluator. kind selects one payload. The other payload is rejected. A request does not carry a descriptor. The descriptor is result output.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "evaluator", "inputs", "timestamps"],
+  "properties": {
+    "format": {
+      "type": "string",
+      "pattern": "^livingproof-evaluator-request/1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "Major 1. A 1.0 consumer accepts any 1.minor document, ignores unknown kinds and unknown fields, and still validates the fields it knows. See docs/run-integrity.md."
+    },
+    "evaluator": {
+      "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/evaluator"
+    },
+    "inputs": {
+      "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/inputs"
+    },
+    "timestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested_at"],
+      "properties": {
+        "requested_at": {
+          "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/timestamp"
+        },
+        "started_at": false,
+        "completed_at": false
+      }
+    },
+    "scenario": {
+      "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/scenario/request.schema.json"
+    },
+    "integrity": {
+      "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/request.schema.json"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "evaluator": {
+            "properties": {"kind": {"const": "integrity"}},
+            "required": ["kind"]
+          }
+        },
+        "required": ["evaluator"]
+      },
+      "then": {
+        "required": ["integrity"],
+        "properties": {"scenario": false}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evaluator": {
+            "properties": {"kind": {"const": "scenario"}},
+            "required": ["kind"]
+          }
+        },
+        "required": ["evaluator"]
+      },
+      "then": {
+        "required": ["scenario"],
+        "properties": {"integrity": false}
+      }
+    }
+  ]
+}

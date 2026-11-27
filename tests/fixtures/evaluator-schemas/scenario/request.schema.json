@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/scenario/request.schema.json",
+  "title": "Scenario evaluator request payload",
+  "description": "One trial's scenario steps and the merged binding. The recording and the run manifest are named in the envelope inputs. known false is an unknown step. known true with bound false is an unbound observable.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["trial_id", "scenario", "binding"],
+  "properties": {
+    "trial_id": {"type": "string", "minLength": 1},
+    "scenario": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["id", "steps"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/step"}
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["bound_observables"],
+      "properties": {
+        "bound_observables": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "test_system_status": false,
+    "findings": false
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["id", "text", "known"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "text": {"type": "string", "minLength": 1},
+        "known": {"type": "boolean"},
+        "observable": {"type": "string", "minLength": 1},
+        "bound": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"known": {"const": false}},
+            "required": ["known"]
+          },
+          "then": {
+            "properties": {"observable": false, "bound": false}
+          }
+        },
+        {
+          "if": {
+            "properties": {"known": {"const": true}},
+            "required": ["known"]
+          },
+          "then": {"required": ["observable", "bound"]}
+        }
+      ]
+    }
+  }
+}

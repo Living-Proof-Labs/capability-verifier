@@ -120,7 +120,10 @@ def test_the_report_job_runs_whatever_run_integrity_did_and_is_told_what_it_did(
     condition = re.search(r"^    if: (.*)$", job, re.MULTILINE).group(1)
     assert "run-integrity" not in condition and "!cancelled()" in condition
     assert "needs: [plan, verify, scenario-evaluator, scenario-media, media, run-integrity]" in job
-    assert "RUN_INTEGRITY_RESULT: ${{ needs.run-integrity.result }}" in job
+    assert (
+        "RUN_INTEGRITY_RESULT: ${{ inputs.evaluators == '' && needs.run-integrity.result || '' }}"
+        in job
+    )
 
 
 def test_a_no_result_note_from_another_evaluator_is_not_the_integrity_reason(tmp_path):

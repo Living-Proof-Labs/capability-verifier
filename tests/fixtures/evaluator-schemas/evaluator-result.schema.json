@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/evaluator-result.schema.json",
+  "title": "livingproof-evaluator-result/1.2.0",
+  "description": "Shared result envelope. A scenario result carries step verdicts. An integrity result carries test-system status, success, percentage, and findings. An integrity result cannot include the scenario payload. Format 1.1.0 may add an optional descriptor. A 1.0 format must not include one. Format 1.2.0 reads a run with no applicable check as INCONCLUSIVE with no percentage; before 1.2.0 that run reads COMPLETED and 100, and the INCONCLUSIVE status is not allowed. Documents that already validated as 1.0.0 or 1.1.0 still validate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "evaluator", "inputs", "timestamps"],
+  "properties": {
+    "format": {
+      "type": "string",
+      "pattern": "^livingproof-evaluator-result/1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "Major 1. Format 1.0.0 is the merged envelope. Format 1.1.0 may include descriptor. A 1.0 consumer accepts any 1.minor document, drops unknown fields (including descriptor), ignores unknown kinds, and still validates the fields it knows. A 1.x minor version may add run statuses, and a consumer must treat any run status it does not recognise as not graded. See docs/run-integrity.md and docs/evaluator-descriptor.md."
+    },
+    "evaluator": {
+      "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/evaluator"
+    },
+    "inputs": {
+      "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/inputs"
+    },
+    "timestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["started_at", "completed_at"],
+      "properties": {
+        "requested_at": false,
+        "started_at": {
+          "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/timestamp"
+        },
+        "completed_at": {
+          "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/timestamp"
+        }
+      }
+    },
+    "descriptor": {
+      "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/descriptor.schema.json",
+      "description": "Optional on format 1.1.0 and later 1.minor results. Forbidden on format 1.0. Display copy only. descriptor.kind does not select the payload."
+    },
+    "scenario": {
+      "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/scenario/result.schema.json"
+    },
+    "integrity": {
+      "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/result.schema.json"
+    },
+    "verdict": false,
+    "grade": false
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "evaluator": {
+            "properties": {"kind": {"const": "integrity"}},
+            "required": ["kind"]
+          }
+        },
+        "required": ["evaluator"]
+      },
+      "then": {
+        "required": ["integrity"],
+        "properties": {"scenario": false}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evaluator": {
+            "properties": {"kind": {"const": "scenario"}},
+            "required": ["kind"]
+          }
+        },
+        "required": ["evaluator"]
+      },
+      "then": {
+        "required": ["scenario"],
+        "properties": {"integrity": false}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "format": {
+            "pattern": "^livingproof-evaluator-result/1\\.0\\.(0|[1-9][0-9]*)$"
+          }
+        },
+        "required": ["format"]
+      },
+      "then": {
+        "properties": {"descriptor": false}
+      }
+    },
+    {
+      "if": {
+        "properties": {"format": {"pattern": "^livingproof-evaluator-result/1\\.(0|1)\\.(0|[1-9][0-9]*)$"}},
+        "required": ["format"]
+      },
+      "then": {
+        "properties": {
+          "integrity": {
+            "properties": {
+              "run": {"properties": {"test_system_status": {"enum": ["COMPLETED", "ERROR"]}}}
+            }
+          }
+        }
+      },
+      "else": {
+        "if": {
+          "properties": {
+            "integrity": {
+              "properties": {
+                "checks": {
+                  "items": {
+                    "properties": {"applicable": {"const": false}},
+                    "required": ["applicable"]
+                  }
+                }
+              },
+              "required": ["checks"]
+            }
+          },
+          "required": ["integrity"]
+        },
+        "then": {
+          "properties": {
+            "integrity": {
+              "properties": {
+                "run": {"properties": {"test_system_status": {"const": "INCONCLUSIVE"}}}
+              }
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "integrity": {
+              "properties": {
+                "run": {"properties": {"test_system_status": {"enum": ["COMPLETED", "ERROR"]}}}
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

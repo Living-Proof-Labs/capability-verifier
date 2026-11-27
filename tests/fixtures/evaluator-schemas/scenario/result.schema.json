@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/scenario/result.schema.json",
+  "title": "Scenario evaluator result payload",
+  "description": "Robot results for one trial: one verdict per step. NOT_EVALUATED is the not-evaluated result for an unknown step, an unbound observable, or a limit the run manifest does not give. The reason is unknown_step, unbound_observable or missing_threshold. This payload has no test-system status. Folding step verdicts into a grade is deferred.",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["trial_id", "steps"],
+  "properties": {
+    "trial_id": {"type": "string", "minLength": 1},
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/step"}
+    },
+    "verdict": false,
+    "grade": false,
+    "success": false,
+    "percentage": false,
+    "test_system_status": false,
+    "conclusion": false,
+    "findings": false,
+    "checks": false
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["id", "verdict", "summary"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "verdict": {
+          "enum": ["PASS", "FAIL", "INCONCLUSIVE", "NOT_EVALUATED"],
+          "description": "PASS, FAIL, and INCONCLUSIVE are robot results. NOT_EVALUATED means the step was not evaluated."
+        },
+        "summary": {"type": "string", "minLength": 1},
+        "reason": {"enum": ["unknown_step", "unbound_observable", "missing_threshold"]},
+        "test_system_status": false,
+        "success": false,
+        "percentage": false
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"verdict": {"const": "NOT_EVALUATED"}},
+            "required": ["verdict"]
+          },
+          "then": {"required": ["reason"]}
+        },
+        {
+          "if": {
+            "properties": {"verdict": {"enum": ["PASS", "FAIL", "INCONCLUSIVE"]}},
+            "required": ["verdict"]
+          },
+          "then": {"properties": {"reason": false}}
+        }
+      ]
+    }
+  }
+}

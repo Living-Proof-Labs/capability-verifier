@@ -521,6 +521,18 @@ stale. The plan job records `verifier-commit-source`, `verifier-image-source`,
 The spelling rules and the failure text are in
 [Verification locks](docs/locks.md#resolved-pins).
 
+`evaluators` is an optional string of newline-separated declaration lines,
+`owner/repo@ref/path.json`. `ref` is a release tag `vMAJOR.MINOR.PATCH` or a
+40-character hexadecimal commit. A tag is peeled to its commit, and a branch
+of the same name is refused. Blank lines and lines starting with `#` are
+ignored. One line is
+`Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json`.
+Empty, the default, keeps the `run-integrity` job. When the input is
+set, that job is skipped and the report does not treat the skip as a missing
+integrity result. This workflow does not run the loader. The caller runs
+`python -m capability_verifier.evaluators`. The line format is also in
+[Verification locks](docs/locks.md#evaluator-declaration-lines).
+
 The robot repository provides the lock, `pins.json`, `tests/` and a `pyproject.toml` with
 the runner source and `[tool.livingproof] adapter = "<module>:ROBOT"`. The workflow runs
 lint, profile validation and the robot's tests (`check`, disable with `check: false`) and
