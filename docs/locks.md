@@ -313,11 +313,14 @@ record, with or without a result, is also stored at
 `integrity_results`, the integrity lines, or any run conclusion. When an
 advisory record's outcome is `failure` or `refused`,
 `assessment.advisory_not_run[<id>]` is `{"outcome": <outcome>, "reason": <note>}`.
-`reason` is the note the loader kept, the evaluator's last stderr line, or
-`"no result"` when that note is empty. A bundle with no advisory evaluator
-has none of `advisory_results`, `advisory_provenance`, or `advisory_not_run`.
-A cited `advisory.details_file` is copied
-next to the report after its sha256 is checked. A missing, altered, or
+`repo` is `owner/name`, `ref` is a `vX.Y.Z` tag or a 40-character commit,
+and `commit` is 40 lowercase hex. `reason` is the loader's note after `<`,
+`>`, and control characters are replaced: one non-empty line of at most 2000
+characters, or `"no result"` when that leaves nothing. The same id is never
+in both `advisory_results` and `advisory_not_run`. A bundle with no advisory
+evaluator has none of `advisory_results`, `advisory_provenance`, or
+`advisory_not_run`. A cited `advisory.details_file` is copied next to the
+report after its sha256 is checked. A missing, altered, or
 substituted file, or a path outside the contract, fails collection. The
 loader also refuses an advisory `trials` list that repeats an index, compared
 as numbers so `1` and `1.0` are the same index, and a result with a duplicate

@@ -54,6 +54,9 @@ from pathlib import Path, PurePosixPath
 
 RESULT_FORMAT = re.compile(r"^livingproof-evaluator-result/1\.\d+\.\d+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+# Characters the Reporter rejects in an advisory not-run reason.
+_BAD_REASON = re.compile(r"[<>\x00-\x1f\x7f-\x9f\u2028\u2029]")
+_REASON_LIMIT = 2000
 _THRESHOLDS_NAME = "thresholds.json"
 # Contract rule for advisory.details_file.uri. The schema states it; the
 # collector applies it again because a result file is not re-validated here.
@@ -529,6 +532,33 @@ def _attach_advisory(bundle: dict, documents: list[dict]) -> None:
         name = evaluator.get("id")
         key = name if isinstance(name, str) and name else "(no evaluator id)"
         stored[key] = document
+        _drop_advisory_id(bundle, "advisory_not_run", key)
+
+
+def _advisory_reason(note: str | None) -> str:
+    """Plain text the Reporter will accept, or ``no result`` when nothing remains.
+
+    ``<``, ``>``, and control characters, including newlines, are replaced.
+    The result is one line of at most 2000 characters.
+    """
+    text = "" if note is None else str(note)
+    text = _BAD_REASON.sub(" ", text).strip()
+    if len(text) > _REASON_LIMIT:
+        text = text[:_REASON_LIMIT].rstrip()
+    return text or "no result"
+
+
+def _drop_advisory_id(bundle: dict, field: str, key: str) -> None:
+    """Remove ``key`` from one advisory map, and the map when it is left empty."""
+    assessment = bundle.get("assessment")
+    if not isinstance(assessment, dict):
+        return
+    stored = assessment.get(field)
+    if not isinstance(stored, dict) or key not in stored:
+        return
+    del stored[key]
+    if not stored:
+        del assessment[field]
 
 
 def _advisory_key(evaluator: str) -> str:
@@ -557,10 +587,18 @@ def _attach_advisory_provenance(bundle: dict, evaluator: str, provenance: dict) 
 
 
 def _attach_advisory_not_run(bundle: dict, evaluator: str, outcome: str, reason: str) -> None:
-    """Record a missing advisory result. Does not touch integrity or conclusions."""
-    _advisory_map(bundle, "advisory_not_run")[_advisory_key(evaluator)] = {
+    """Record a missing advisory result. Does not touch integrity or conclusions.
+
+    The same id is removed from ``advisory_results``, so a result and a not-run
+    record are never stored together.
+    """
+    if outcome not in {"failure", "refused"}:
+        raise ValueError(f"advisory not-run outcome {outcome!r} is not failure or refused")
+    key = _advisory_key(evaluator)
+    _drop_advisory_id(bundle, "advisory_results", key)
+    _advisory_map(bundle, "advisory_not_run")[key] = {
         "outcome": outcome,
-        "reason": reason,
+        "reason": _advisory_reason(reason),
     }
 
 

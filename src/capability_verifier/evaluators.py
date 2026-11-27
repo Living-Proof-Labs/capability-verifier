@@ -44,6 +44,8 @@ LINE = re.compile(
     r"(?P<path>[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*\.json)$"
 )
 _SHA = re.compile(r"[0-9a-f]{40}")
+_PROVENANCE_REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+_PROVENANCE_TAG = re.compile(r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
 _TOKEN = re.compile(r"\{(evidence_manifest|media_dir|result)\}")
 DEFAULT_TIMEOUT = 30 * 60
 RESULT_SCHEMA = "evaluator-result.schema.json"
@@ -658,11 +660,28 @@ def _write_provenance(out: Path, records: list[Record]) -> None:
     )
 
 
+def _advisory_provenance(record: Record) -> dict:
+    """The record dict, refused when repo, ref, or commit would fail the Reporter."""
+    payload = record.as_dict()
+    repo, ref, commit = payload.get("repo"), payload.get("ref"), payload.get("commit")
+    if not isinstance(repo, str) or _PROVENANCE_REPO.fullmatch(repo) is None:
+        raise Refusal(f"advisory provenance repo {repo!r} is not owner/name")
+    if not isinstance(ref, str) or (
+        _PROVENANCE_TAG.fullmatch(ref) is None and _SHA.fullmatch(ref) is None
+    ):
+        raise Refusal(f"advisory provenance ref {ref!r} is not a tag or commit")
+    if not isinstance(commit, str) or _SHA.fullmatch(commit) is None:
+        raise Refusal(f"advisory provenance commit {commit!r} is not 40 lowercase hex")
+    return payload
+
+
 def _place(bundle_path: Path, records: list[Record]) -> None:
     bundle = load_object(bundle_path.read_text(encoding="utf-8"))
     for record in records:
         if record.kind == "advisory":
-            collect._attach_advisory_provenance(bundle, record.evaluator_id, record.as_dict())
+            collect._attach_advisory_provenance(
+                bundle, record.evaluator_id, _advisory_provenance(record)
+            )
         document = record.document
         if document is not None:
             placer = PLACERS.get(record.kind)

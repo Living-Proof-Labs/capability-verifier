@@ -1038,3 +1038,116 @@ def test_a_nested_duplicate_key_inside_advisory_is_refused(tmp_path):
     records = _run_advisory(tmp_path, 0, "", duplicated)
     assert records[0].outcome == "failure"
     assert "duplicate key 'summary'" in records[0].note
+
+
+def _advisory_record(**overrides) -> Record:
+    fields = {
+        "line": LINE,
+        "repo": "acme/widgets",
+        "ref": "v1.2.3",
+        "commit": COMMIT,
+        "descriptor_sha256": "ab",
+        "package_name": "pack-temperature",
+        "installed_version": "0.1.0",
+        "exit_code": 0,
+        "outcome": "result",
+        "evaluator_id": "pack-temperature",
+        "kind": "advisory",
+    }
+    fields.update(overrides)
+    return Record(**fields)
+
+
+def _bundle_file(tmp_path: Path) -> Path:
+    path = tmp_path / "manifest.json"
+    path.write_text(
+        json.dumps({"assessment": {"runs": [{"grade": "PASS", "conclusion": "PASS"}]}}) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("repo", "not-a-repo", "repo"),
+        ("ref", "latest", "ref"),
+        ("commit", "A" * 40, "commit"),
+    ],
+)
+def test_advisory_provenance_outside_the_reporter_rules_is_refused(tmp_path, field, value, match):
+    path = _bundle_file(tmp_path)
+    original = path.read_bytes()
+    with pytest.raises(Refusal, match=match):
+        _place(path, [_advisory_record(**{field: value})])
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    ("note", "reason"),
+    [
+        ("see <media>\nnext", "see  media  next"),
+        ("<>\n\x00", "no result"),
+        ("a" * 2001, "a" * 2000),
+    ],
+)
+def test_an_advisory_reason_is_bounded_plain_text(tmp_path, note, reason):
+    path = _bundle_file(tmp_path)
+    _place(
+        path,
+        [_advisory_record(outcome="refused", exit_code=2, note=note, document=None)],
+    )
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert stored["assessment"]["advisory_not_run"]["pack-temperature"] == {
+        "outcome": "refused",
+        "reason": reason,
+    }
+
+
+def test_a_refused_advisory_keeps_the_evaluator_stderr_line(tmp_path):
+    descriptor = _advisory_descriptor()
+    descriptor["id"] = "media-gap"
+    descriptor["package"] = {"name": "media-gap"}
+    bundle, directory = _bundle(tmp_path)
+    grades = _robot_grades(bundle)
+    conclusions = _conclusions(bundle)
+    manifest = directory / "manifest.json"
+    manifest.write_text(json.dumps(bundle), encoding="utf-8")
+    records = _run_advisory(
+        tmp_path,
+        2,
+        "Health was not run: media missing.\n",
+        None,
+        descriptor=descriptor,
+        bundle=manifest,
+    )
+    stored = json.loads(manifest.read_text(encoding="utf-8"))
+    assert records[0].outcome == "refused"
+    assert stored["assessment"]["advisory_not_run"]["media-gap"] == {
+        "outcome": "refused",
+        "reason": "Health was not run: media missing.",
+    }
+    assert "integrity_not_run" not in stored["assessment"]
+    assert "advisory_results" not in stored["assessment"]
+    assert _robot_grades(stored) == grades
+    assert _conclusions(stored) == conclusions
+
+
+def test_an_advisory_id_is_never_in_both_results_and_not_run(tmp_path):
+    document = json.loads((ADVISORY / "result.json").read_text(encoding="utf-8"))
+    document["evaluator"]["id"] = "pack-temperature"
+    success = _advisory_record(outcome="result", exit_code=0, document=document)
+    refused = _advisory_record(outcome="refused", exit_code=2, note="gone", document=None)
+    path = _bundle_file(tmp_path)
+    _place(path, [success, refused])
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert "advisory_results" not in stored["assessment"]
+    assert stored["assessment"]["advisory_not_run"]["pack-temperature"]["outcome"] == "refused"
+    _bundle_file(tmp_path)
+    _place(path, [refused, success])
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert "advisory_not_run" not in stored["assessment"]
+    assert (
+        stored["assessment"]["advisory_results"]["pack-temperature"]["evaluator"]["id"]
+        == "pack-temperature"
+    )
