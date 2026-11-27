@@ -536,13 +536,13 @@ def execute(
     label = descriptor["exit_codes"].get(str(code))
     if label == "result":
         if not result_path.is_file():
-            return _finish(base, code, "refused", "the result file is missing", out)
+            return _finish(base, code, "failure", "the result file is missing", out)
         try:
             document = load_object(result_path.read_bytes())
             _accept_result(document, descriptor, prepared.result_schema, prepared.registry)
         except Refusal as exc:
             _discard(result_path)
-            return _finish(base, code, "refused", str(exc), out)
+            return _finish(base, code, "failure", str(exc), out)
         return _finish(base, code, "result", None, out, document)
     _discard(result_path)
     if label == "refused":
@@ -707,7 +707,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     for record in records:
         print(f"{record.evaluator_id}: {record.outcome}")
-    if any(record.outcome == "failure" for record in records):
+    if any(record.outcome in {"failure", "refused"} for record in records):
         return 1
     return 0
 

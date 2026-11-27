@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import urllib.request
@@ -376,7 +375,6 @@ def test_workflow_and_docs_declare_the_released_evaluator_line():
         assert EVALUATOR_RUN_LINE in path.read_text(encoding="utf-8"), path
 
 
-@pytest.mark.skipif(not os.environ.get("LIVINGPROOF_NETWORK"), reason="set LIVINGPROOF_NETWORK=1")
 def test_evaluator_run_descriptor_matches_the_release():
     repository = "Living-Proof-Labs/livingproof-evaluator-run"
     commit = resolve_tag(repository, "v1.9.0")
@@ -386,7 +384,6 @@ def test_evaluator_run_descriptor_matches_the_release():
         assert response.read() == EVALUATOR_RUN_COPY.read_bytes()
 
 
-@pytest.mark.skipif(not os.environ.get("LIVINGPROOF_NETWORK"), reason="set LIVINGPROOF_NETWORK=1")
 def test_fixture_schemas_match_the_pin():
     pin = parse_lines(CONTRACT)[0]
     commit = (
@@ -535,14 +532,14 @@ def test_exit_zero_keeps_a_validated_result(tmp_path):
     )
 
 
-def test_a_refused_exit_keeps_a_note_and_the_command_exits_zero(tmp_path, monkeypatch):
+def test_a_refused_exit_keeps_a_note_and_the_command_exits_1(tmp_path, monkeypatch):
     records, _calls = _execute(tmp_path, 2, "first\nthe reason\n", b"{}")
     assert records[0].outcome == "refused"
     assert records[0].note == "the reason"
     assert records[0].exit_code == 2
     assert not (tmp_path / "out" / "example-integrity" / "result.json").exists()
     assert (tmp_path / "out" / "example-integrity" / "note.txt").read_text() == "the reason\n"
-    assert _cli(tmp_path, monkeypatch, 2, "the reason\n", None) == 0
+    assert _cli(tmp_path, monkeypatch, 2, "the reason\n", None) == 1
 
 
 def _cli(tmp_path, monkeypatch, code, stderr, payload) -> int:
@@ -595,9 +592,9 @@ def test_an_unlisted_exit_is_a_failure_with_a_note_and_a_non_zero_command(tmp_pa
     assert _cli(tmp_path, monkeypatch, 3, "boom\n", payload) != 0
 
 
-def test_a_missing_result_an_id_mismatch_and_an_invalid_result_are_refused(tmp_path):
+def test_a_missing_or_invalid_result_is_a_failure(tmp_path):
     missing, _calls = _execute(tmp_path, 0, "", None)
-    assert missing[0].outcome == "refused"
+    assert missing[0].outcome == "failure"
     assert "missing" in missing[0].note
 
     mismatch, _calls = _execute(
@@ -606,18 +603,18 @@ def test_a_missing_result_an_id_mismatch_and_an_invalid_result_are_refused(tmp_p
         "",
         json.dumps(_result(_declared_result(), evaluator_id="someone-else")).encode(),
     )
-    assert mismatch[0].outcome == "refused"
+    assert mismatch[0].outcome == "failure"
     assert "someone-else" in mismatch[0].note
 
     invalid, _calls = _execute(tmp_path / "bad", 0, "", b'{"format": "nope"}')
-    assert invalid[0].outcome == "refused"
+    assert invalid[0].outcome == "failure"
     assert "evaluator-result schema" in invalid[0].note
 
 
-def test_a_duplicate_key_in_the_result_is_refused(tmp_path):
+def test_a_duplicate_key_in_the_result_is_a_failure(tmp_path):
     raw = b'{"format": "a", "format": "b"}'
     records, _calls = _execute(tmp_path, 0, "", raw)
-    assert records[0].outcome == "refused"
+    assert records[0].outcome == "failure"
     assert "duplicate key" in records[0].note
 
 
@@ -642,7 +639,7 @@ def test_a_later_minor_than_the_descriptor_is_refused(tmp_path):
     if produced["format"] == _declared_result():
         produced["format"] = "livingproof-evaluator-result/1.3.0"
     records, _calls = _execute(tmp_path, 0, "", json.dumps(produced).encode())
-    assert records[0].outcome == "refused"
+    assert records[0].outcome == "failure"
     assert "not the declared" in records[0].note
 
 

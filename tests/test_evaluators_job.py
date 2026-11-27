@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """The loader runs a pinned evaluator on recorded evidence.
 
-The released descriptor is injected from the offline copy, so only that fetch
-is bypassed. Install, execution, and the schema pin use the network, as
-``test_run_integrity_job`` does.
+The loader fetches the released descriptor. Install, execution, and the
+schema pin use the network, as ``test_run_integrity_job`` does.
 """
 
 from __future__ import annotations
@@ -28,7 +27,6 @@ EVIDENCE = (
     / "manifest.json"
 )
 MEDIA = ROOT / "tests" / "fixtures" / "run-integrity-media"
-DESCRIPTOR = ROOT / "tests" / "fixtures" / "evaluators" / "run-integrity.json"
 LINE = "Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json"
 REPO = "https://github.com/Living-Proof-Labs/livingproof-evaluator-run.git"
 TAG = "v1.9.0"
@@ -110,7 +108,6 @@ def test_loader_matches_the_hardcoded_job(tmp_path, media):
         evidence=EVIDENCE,
         out=out,
         media_dir=media,
-        injected={LINE: DESCRIPTOR.read_bytes()},
     )
     assert records[0].outcome == "result", records[0].note
     produced = json.loads((out / records[0].evaluator_id / "result.json").read_text())

@@ -305,6 +305,21 @@ and validates each descriptor, and `run` installs that commit and executes it.
 Results are attached by kind. An `integrity` result is stored at
 `assessment.integrity_results[<id>]`.
 
+The loader maps each exit code from the descriptor:
+
+- Exit 0 means the result file is validated. Its `format` must equal the
+  descriptor's `result`, and the major must be one the loader supports
+  (major 1). A missing or invalid result is a failure.
+- A listed `refused` code means no result, plus a note with the evaluator's
+  last stderr line. An argparse usage error (`usage:` … `error:` on stderr)
+  is a failure instead of a refusal.
+- Any unlisted code, exit 1 included, is a failure with no result.
+- The loader command exits 1 on a refusal or a failure. Its own argparse
+  usage error exits 2.
+- Each package is installed with an unlocked `uv pip install`, and the
+  installed source commit is checked against `direct_url.json`.
+- Run the module with `PYTHONPATH=src`. This checkout has no build system.
+
 The assessing jobs fetch the specs commit the evidence lock declares with
 `tools/fetch_hallway_specs.py --from evidence/manifest.json`. Every file in
 `releases.specs.files` must match its declared sha256, `description.json` as well as
