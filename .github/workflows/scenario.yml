@@ -1287,16 +1287,16 @@ jobs:
           cat > /tmp/collect_evaluator_results.py <<'COLLECT'
           # SPDX-License-Identifier: Apache-2.0
           """Append evaluator result documents onto a bundle.
-          
+
           Each file whose ``format`` is ``livingproof-evaluator-result/1.*`` is appended
           whole to the trial named by ``scenario.trial_id``. Documents are not merged
           with each other. The report groups them by ``evaluator.id``.
-          
+
           A result whose ``evaluator.kind`` is ``integrity`` is run-level: it is stored
           on the assessment, keyed by ``evaluator.id``. More than one integrity
           evaluator per run is kept. A failed integrity result marks each assessment
           run ``INCONCLUSIVE`` and never changes the robot grade.
-          
+
           A result whose ``evaluator.kind`` is ``advisory`` is stored the same way, at
           ``assessment.advisory_results[<evaluator.id>]``. The value is that result
           document. Advisory results never grade, and they never change
@@ -1304,33 +1304,33 @@ jobs:
           also stores ``assessment.advisory_provenance[<id>]`` for each advisory record,
           and ``assessment.advisory_not_run[<id>]`` when that record failed or was
           refused. A bundle with no advisory evaluator has none of those three keys.
-          
+
           An advisory result may cite ``advisory.details_file``. The file at that
           relative path is copied into the report output, and its SHA-256 has to match
           the citation. A missing file, different bytes, a substituted path, or a path
           outside the contract fails the collection. The manifest is left unchanged
           when that happens.
-          
+
           When the run-integrity job's result is given (``RUN_INTEGRITY_RESULT``) and no integrity result
           was collected, whether the job failed, was refused by the evaluator (exit 2), was cancelled or
           skipped, or succeeded and left nothing, the run is not shown as clean: ``assessment.integrity_not_run``
           records the job result and the reason, every assessment run is ``INCONCLUSIVE``, and the report
           gets a "Run Integrity: NOT RUN" line (#214).
-          
+
           A result that cites ``thresholds.json`` keeps that input reference. The file
           at the cited path is copied into the report output, and its SHA-256 has to
           match the citation. A missing file, different bytes, or a different path
           fails the collection. The manifest is left unchanged when that happens.
-          
+
           The command prints, per evaluator, how many documents it appended and how many it
           skipped because their trial is not in this bundle (another configuration). A
           bundle with trials that ends up with no appended document fails, naming the
           artifact pattern in ``EVALUATOR_RESULTS_PATTERN``; a bundle with no trials (a
           "not supported" run) has nothing to append.
           """
-          
+
           from __future__ import annotations
-          
+
           import hashlib
           import html
           import json
@@ -1338,7 +1338,7 @@ jobs:
           import re
           import sys
           from pathlib import Path, PurePosixPath
-          
+
           RESULT_FORMAT = re.compile(r"^livingproof-evaluator-result/1\.\d+\.\d+$")
           _SHA256 = re.compile(r"^[0-9a-f]{64}$")
           # Characters the Reporter rejects in an advisory not-run reason.
@@ -1352,28 +1352,28 @@ jobs:
           _MEDIA_PREFIX = "media/"  # where the scenario media job cites its thresholds.json
           PROBLEMS_FILE = "evaluator-result-problems.txt"
           INTEGRITY_FILE = "integrity-lines.txt"
-          
-          
+
+
           class ThresholdCitationError(ValueError):
               """The cited thresholds.json is missing, altered, or a different path."""
-          
-          
+
+
           class ThresholdMissingError(ThresholdCitationError):
               """The cited thresholds.json is not among the results (``relative`` is the cited path)."""
-          
+
               def __init__(self, message: str, relative: str):
                   super().__init__(message)
                   self.relative = relative
-          
-          
+
+
           class DetailsCitationError(ValueError):
               """The cited advisory details file is missing, altered, or a different path."""
-          
-          
+
+
           class AdvisoryResultError(ValueError):
               """An advisory result breaks a rule the schema cannot express."""
-          
-          
+
+
           def collect(
               bundle: dict,
               directory: Path,
@@ -1382,26 +1382,26 @@ jobs:
               integrity_job: str | None = None,
           ) -> dict:
               """Append this bundle's result documents. ``bundle`` is updated.
-          
+
               A document whose ``scenario.trial_id`` is not one of this bundle's results
               belongs to another configuration. It is left untouched. Documents that do
               match are appended whole and are not merged with each other.
-          
+
               An integrity result has no trial id. It is kept on
               ``assessment.integrity_results``, keyed by ``evaluator.id``.
-          
+
               An advisory result is kept on ``assessment.advisory_results``, keyed by
               ``evaluator.id``. It does not grade. A cited ``advisory.details_file`` is
               checked against the file at that path, relative to the result file, and
               copied into ``report_dir`` when that directory is set.
-          
+
               Each appended document that cites ``thresholds.json`` is checked against
               the file at that URI, relative to the result file. When ``report_dir`` is
               set, the matching bytes are copied there under the cited relative path.
-          
+
               ``integrity_job`` is the run-integrity job's result (``success``, ``failure``, ``cancelled``,
               ``skipped``). Without it nothing about a missing integrity result is stored.
-          
+
               ``counts``, when given, is filled with ``{evaluator id: {"appended": n,
               "skipped": m}}``.
               """
@@ -1500,8 +1500,8 @@ jobs:
                   counts["_problems"] = problems
                   counts["_unusable"] = unusable
               return bundle
-          
-          
+
+
           def _note(unusable, problems, path, directory, evaluator, reason) -> None:
               """Record a result left off the report: which file, which evaluator (if known), and why."""
               where = path.relative_to(directory).as_posix()
@@ -1511,8 +1511,8 @@ jobs:
                   label = "unknown"
               unusable.append((label, where, reason))
               problems.append(f"{where} [evaluator {label}]: {reason}")
-          
-          
+
+
           def _citations(document: dict) -> list[dict]:
               inputs = document.get("inputs")
               if not isinstance(inputs, list):
@@ -1525,8 +1525,8 @@ jobs:
                   if item.get("role") == "thresholds" or _file_name(uri) == _THRESHOLDS_NAME:
                       cited.append(item)
               return cited
-          
-          
+
+
           def _file_name(uri) -> str | None:
               if not isinstance(uri, str) or not uri or "\\" in uri or "://" in uri or uri.startswith("/"):
                   return None
@@ -1534,8 +1534,8 @@ jobs:
               if not parts or any(part in ("", ".", "..") for part in parts):
                   return None
               return parts[-1]
-          
-          
+
+
           def _take_thresholds(result_path: Path, document: dict, results_root: Path, exports: dict) -> None:
               for item in _citations(document):
                   relative, data = _cited_file(result_path, item, results_root)
@@ -1545,8 +1545,8 @@ jobs:
                           f"substituted: {relative} is cited with two different sha256 values"
                       )
                   exports[relative] = data
-          
-          
+
+
           def _cited_file(result_path: Path, item: dict, results_root: Path) -> tuple[str, bytes]:
               uri = item.get("uri")
               where = result_path.name
@@ -1586,8 +1586,8 @@ jobs:
                       f"altered: {relative} sha256 is {digest}, not the cited {cited!r}"
                   )
               return relative, data
-          
-          
+
+
           def _details_citation(document: dict) -> dict | None:
               payload = document.get("advisory")
               if not isinstance(payload, dict) or "details_file" not in payload:
@@ -1596,8 +1596,8 @@ jobs:
               if not isinstance(item, dict):
                   raise DetailsCitationError("substituted: advisory.details_file is not an object")
               return item
-          
-          
+
+
           def _take_details_file(
               result_path: Path, document: dict, results_root: Path, exports: dict
           ) -> None:
@@ -1611,8 +1611,8 @@ jobs:
                       f"substituted: {relative} is cited with two different sha256 values"
                   )
               exports[relative] = data
-          
-          
+
+
           def _cited_details(result_path: Path, item: dict, results_root: Path) -> tuple[str, bytes]:
               uri = item.get("uri")
               where = result_path.name
@@ -1650,11 +1650,11 @@ jobs:
                       f"altered: {relative} sha256 is {digest}, not the cited {cited!r}"
                   )
               return relative, data
-          
-          
+
+
           def _symlink_at_or_below(path: Path, root: Path) -> bool:
               """True when ``path`` or a directory under ``root`` is a symlink.
-          
+
               Ancestors of ``root`` are not checked. A symlink at ``/tmp`` must not make
               a regular file inside a results directory look substituted.
               """
@@ -1668,8 +1668,8 @@ jobs:
                   if parent == current:
                       return True
                   current = parent
-          
-          
+
+
           def _write_thresholds(report_dir: Path, exports: dict[str, bytes]) -> None:
               planned = []
               for relative, data in exports.items():
@@ -1688,21 +1688,21 @@ jobs:
                       continue
                   dest.parent.mkdir(parents=True, exist_ok=True)
                   dest.write_bytes(data)
-          
-          
+
+
           def _is_integrity(document: dict) -> bool:
               evaluator = document.get("evaluator")
               return isinstance(evaluator, dict) and evaluator.get("kind") == "integrity"
-          
-          
+
+
           def _is_advisory(document: dict) -> bool:
               evaluator = document.get("evaluator")
               return isinstance(evaluator, dict) and evaluator.get("kind") == "advisory"
-          
-          
+
+
           def _whole_index(value: object) -> int | None:
               """The integer a trial index counts as. A whole-number float is that integer.
-          
+
               JSON Schema's integer type accepts ``1.0``. ``json.loads`` parses that token
               as a float, so ``1`` and ``1.0`` have to compare as the same index.
               """
@@ -1711,11 +1711,11 @@ jobs:
               if isinstance(value, float) and not value.is_integer():
                   return None
               return int(value)
-          
-          
+
+
           def repeated_advisory_index(document: dict) -> str | None:
               """An error when an advisory result repeats a trial index, else None.
-          
+
               The schema's ``uniqueItems`` rejects an identical entry. It cannot require
               the index values to be unique when the hashes differ, so the loader does.
               """
@@ -1740,14 +1740,14 @@ jobs:
                       continue
                   return f"advisory/trials/{position}/index: repeats advisory/trials/{previous}/index"
               return None
-          
-          
+
+
           _GRADED_STATUSES = frozenset({"COMPLETED", "ERROR"})
-          
-          
+
+
           def _integrity_failed(document: dict) -> bool:
               """True only when the integrity run was judged and failed.
-          
+
               A 1.2.0 INCONCLUSIVE run (no check applied) and any run status this
               collector does not recognise are not graded, so neither is a failure
               (livingproof-evaluator#38: a 1.x minor may add run statuses).
@@ -1760,8 +1760,8 @@ jobs:
               if run.get("success") is False or run.get("conclusion") == "INCONCLUSIVE":
                   return True
               return isinstance(status, str) and status != "COMPLETED"
-          
-          
+
+
           def _attach_integrity(bundle: dict, documents: list[dict]) -> None:
               if not documents:
                   return
@@ -1789,11 +1789,11 @@ jobs:
               for run in runs:
                   if isinstance(run, dict):
                       run["conclusion"] = "INCONCLUSIVE"
-          
-          
+
+
           def _attach_advisory(bundle: dict, documents: list[dict]) -> None:
               """Store advisory results. They do not grade and they do not touch integrity.
-          
+
               Each document is stored at ``assessment.advisory_results[<evaluator.id>]``,
               the same one-document-per-id shape as ``integrity_results``. Nothing is
               written when ``documents`` is empty, so a bundle with no advisory result
@@ -1820,11 +1820,11 @@ jobs:
                   key = name if isinstance(name, str) and name else "(no evaluator id)"
                   stored[key] = document
                   _drop_advisory_id(bundle, "advisory_not_run", key)
-          
-          
+
+
           def _advisory_reason(note: str | None) -> str:
               """Plain text the Reporter will accept, or ``no result`` when nothing remains.
-          
+
               ``<``, ``>``, and control characters, including newlines, are replaced.
               The result is one line of at most 2000 characters.
               """
@@ -1833,8 +1833,8 @@ jobs:
               if len(text) > _REASON_LIMIT:
                   text = text[:_REASON_LIMIT].rstrip()
               return text or "no result"
-          
-          
+
+
           def _drop_advisory_id(bundle: dict, field: str, key: str) -> None:
               """Remove ``key`` from one advisory map, and the map when it is left empty."""
               assessment = bundle.get("assessment")
@@ -1846,14 +1846,14 @@ jobs:
               del stored[key]
               if not stored:
                   del assessment[field]
-          
-          
+
+
           def _advisory_key(evaluator: str) -> str:
               if isinstance(evaluator, str) and evaluator.strip():
                   return evaluator
               return "(no evaluator id)"
-          
-          
+
+
           def _advisory_map(bundle: dict, field: str) -> dict:
               assessment = bundle.get("assessment")
               if not isinstance(assessment, dict):
@@ -1866,16 +1866,16 @@ jobs:
               if not isinstance(stored, dict):
                   raise TypeError(f"assessment {field} is not a mapping")
               return stored
-          
-          
+
+
           def _attach_advisory_provenance(bundle: dict, evaluator: str, provenance: dict) -> None:
               """Store one advisory record's provenance. It does not grade."""
               _advisory_map(bundle, "advisory_provenance")[_advisory_key(evaluator)] = provenance
-          
-          
+
+
           def _attach_advisory_not_run(bundle: dict, evaluator: str, outcome: str, reason: str) -> None:
               """Record a missing advisory result. Does not touch integrity or conclusions.
-          
+
               The same id is removed from ``advisory_results``, so a result and a not-run
               record are never stored together.
               """
@@ -1887,40 +1887,40 @@ jobs:
                   "outcome": outcome,
                   "reason": _advisory_reason(reason),
               }
-          
-          
+
+
           NOT_RUN_ID = "livingproof-run-integrity"
-          
-          
+
+
           REFUSED_FILE = "refused.txt"
           _MESSAGE_CAP = 500
           _INTEGRITY_ARTIFACT = re.compile(
               rf"(?:{re.escape(NOT_RUN_ID)}|(?:.*-)?evaluator-results-{re.escape(NOT_RUN_ID)}-[^/]+)"
           )
-          
-          
+
+
           def _is_integrity_artifact(directory: Path) -> bool:
               """True for the run-integrity job's own artifact: its inner directory, or the artifact name
               ``[<prefix>-]evaluator-results-livingproof-run-integrity-<configuration>``, not a lookalike."""
               return _INTEGRITY_ARTIFACT.fullmatch(directory.name) is not None
-          
-          
+
+
           def _cap(text: str) -> str:
               return text if len(text) <= _MESSAGE_CAP else text[: _MESSAGE_CAP - 3].rstrip() + "..."
-          
-          
+
+
           def _sentence(text: str) -> str:
               """``text`` ended with a full stop (none added when it already ends one), so a sentence can follow."""
               text = text.rstrip()
               return text if text.endswith((".", "!", "?")) else text + "."
-          
-          
+
+
           _REFUSED_DEFAULT = "the evaluator refused the run (exit 2) and wrote no result"
-          
-          
+
+
           def _refusal(directory: Path) -> str | None:
               """The evaluator's refusal message when the run-integrity step left ``refused.txt``, else None.
-          
+
               The step writes it only when the evaluator exits 2, so its presence is what makes a missing
               result a refusal and not a check that never ran. Only the run-integrity artifact counts.
               """
@@ -1935,8 +1935,8 @@ jobs:
                       text = ""
                   return _cap(text.splitlines()[0].strip()) if text else _REFUSED_DEFAULT
               return None
-          
-          
+
+
           def _not_run_reason(directory: Path, job_result: str) -> str:
               """Why there is no integrity result: the job's own note when it wrote one, else its result."""
               notes = sorted(Path(directory).rglob("no-result.txt")) if Path(directory).is_dir() else []
@@ -1955,8 +1955,8 @@ jobs:
                   f"the run-integrity job ended {job_result} and left no result "
                   "(see its log; an evaluator that refuses a run exits 2 and writes none)"
               )
-          
-          
+
+
           def _attach_not_run(
               bundle: dict,
               job_result: str,
@@ -1965,7 +1965,7 @@ jobs:
               evaluator: str = NOT_RUN_ID,
           ) -> None:
               """Record a missing integrity result.
-          
+
               ``evaluator`` defaults to the historical run-integrity id so callers that
               omit it keep today's record.
               """
@@ -1984,18 +1984,18 @@ jobs:
               for run in runs:
                   if isinstance(run, dict):
                       run["conclusion"] = "INCONCLUSIVE"
-          
-          
+
+
           def _label(document: dict, status: str) -> str:
               """The word the report shows: PASS or FAILED, else the stored status as it is.
-          
+
               Display only: the stored result keeps COMPLETED, ERROR and the rest.
               """
               if _integrity_failed(document):
                   return "FAILED"
               return "PASS" if status == "COMPLETED" else status
-          
-          
+
+
           def integrity_report_lines(bundle: dict) -> list[str]:
               """Plain report lines for each stored run-level integrity result."""
               assessment = bundle.get("assessment") if isinstance(bundle.get("assessment"), dict) else {}
@@ -2027,16 +2027,16 @@ jobs:
                       status = "UNKNOWN"
                   lines.append(f"{name}: {_label(document, status)}")
               return lines
-          
-          
+
+
           def _write_integrity_lines(report_dir: Path, bundle: dict) -> None:
               lines = integrity_report_lines(bundle)
               if not lines:
                   return
               report_dir.mkdir(parents=True, exist_ok=True)
               (report_dir / INTEGRITY_FILE).write_text("\n".join(lines) + "\n", encoding="utf-8")
-          
-          
+
+
           _VERDICT = re.compile(r"[:;] overall [A-Z][A-Za-z_ ]*\.(?:\s.*)?$")
           _HTML_VERDICT = re.compile(r"<p class=(['\"])stored-status\1>[^<]*</p>")
           # cmark-gfm extended autolinks. www. only counts at the start of a line, after
@@ -2048,8 +2048,8 @@ jobs:
           # and 0x20 space. 0x0B VT and 0x0C FF are class 0. autolink.c uses this for the
           # byte before "www." and for the end of an extended autolink.
           _CMARK_SPACE = frozenset("\t\n\r ")
-          
-          
+
+
           # cmark_utf8proc_is_punctuation, src/utf8.c of cmark-gfm 0.29.0.gfm.13 (the
           # library vendored by cmarkgfm 2025.10.22). ASCII uses cmark_ispunct. The rest
           # is that function's explicit list, which is not Unicode general category P.
@@ -2204,8 +2204,8 @@ jobs:
           _CMARK_PUNCT = frozenset(
               code for start, stop in _CMARK_PUNCT_RANGES for code in range(start, stop + 1)
           )
-          
-          
+
+
           def _cmark_utf8_punct(code: int) -> bool:
               """True when cmark_utf8proc_is_punctuation accepts this code point."""
               if code < 128:
@@ -2217,21 +2217,21 @@ jobs:
                       or 0x7B <= code <= 0x7E
                   )
               return code in _CMARK_PUNCT
-          
-          
+
+
           def _cmark_utf8_space(ch: str) -> bool:
               """cmark_utf8proc_is_space, src/utf8.c: Zs plus TAB, LF, FF and CR.
-          
+
               NBSP (160), U+2000-U+200A (including em space U+2003) and U+3000 are spaces.
               U+2028 and U+2029 are not. is_valid_hostchar rejects this set.
               """
               code = ord(ch)
               return code in (9, 10, 12, 13, 32, 160, 5760, 8239, 8287, 12288) or 8192 <= code <= 8202
-          
-          
+
+
           def _is_host_char(ch: str) -> bool:
               """True when cmark-gfm's is_valid_hostchar would keep this in a host label.
-          
+
               Space is cmark_utf8proc_is_space. Non-ASCII punctuation is
               cmark_utf8proc_is_punctuation's list, not Unicode category P.
               """
@@ -2241,11 +2241,11 @@ jobs:
               if code < 128:
                   return ch.isalnum()
               return not _cmark_utf8_punct(code)
-          
-          
+
+
           def _check_domain(text: str, *, allow_short: bool) -> int:
               """0 when cmark-gfm's check_domain rejects the host, and non-zero when it accepts.
-          
+
               cmark walks UTF-8 bytes and returns a byte length. ``_url_span`` and ``_www_span`` use
               only the zero test, then scan the rest of the address by code point, so this returns a
               code-point index solely as that accept/reject flag. A non-ASCII first character makes
@@ -2287,19 +2287,19 @@ jobs:
               if allow_short:
                   return i
               return i if dots else 0
-          
-          
+
+
           def _autolink_end(text: str, start: int) -> int:
               end = start
               size = len(text)
               while end < size and text[end] not in _CMARK_SPACE and text[end] != "<":
                   end += 1
               return end
-          
-          
+
+
           def _autolink_delim(text: str) -> int:
               """Exclusive end of the link cmark-gfm keeps. The rest is trailing punctuation.
-          
+
               Same rules as cmark's ``autolink_delim``: trim ``?!.,:*_~'"``, drop an unbalanced
               ``)``, and drop a trailing ``&name;``. Those characters are not part of the link, so
               leaving ``*``, ``_`` or ``~`` raw lets them emphasise or strike the words that follow.
@@ -2335,15 +2335,15 @@ jobs:
                   else:
                       return link_end
               return link_end
-          
-          
+
+
           _TAIL_MARKS = frozenset("*_~")
-          
-          
+
+
           def _tail_can_mark(text: str) -> bool:
               return any(ch in _TAIL_MARKS for ch in text)
-          
-          
+
+
           def _span_can_be_angle_autolink(span: str) -> bool:
               """A raw ``<...>`` is safe only for a span that cannot itself open or close a tag."""
               if not span:
@@ -2352,15 +2352,15 @@ jobs:
                   if ch in "<>" or ch.isspace() or ord(ch) < 32 or ord(ch) == 127:
                       return False
               return True
-          
-          
+
+
           def _scheme_address(span: str) -> bool:
               return span.lower().startswith(("http://", "https://", "ftp://"))
-          
-          
+
+
           def _escape_trimmed_tail(text: str, *, keep_ampersand: bool) -> str:
               """Escape a trimmed tail. ``*``, ``_`` and ``~`` become ``\\*``, ``\\_`` and ``\\~``.
-          
+
               A trailing ``&name;`` is left with a raw ``&`` when the tail is not shielded: ``\\&`` would
               be swallowed into the href, and cmark then decodes the entity to text. After an angle
               autolink the backslash is outside the link, so ``&`` is escaped normally.
@@ -2369,11 +2369,11 @@ jobs:
               if keep_ampersand:
                   return escaped.replace("\\&", "&")
               return escaped
-          
-          
+
+
           def _shield_address(kept: str, tail: str) -> str:
               """Keep a trimmed ``*``, ``_`` or ``~`` from emphasising the words after the address.
-          
+
               A scheme address is wrapped in a CommonMark angle autolink, ``<https://e.com/a>``, and only
               when the tail needs it. ``www.`` is not a scheme, so it cannot be an angle autolink: the dot
               is escaped and the rest of the span is escaped, which leaves the characters visible and
@@ -2396,8 +2396,8 @@ jobs:
                   scheme = kept.lower().find("://")
                   return kept[:scheme] + ":\\/\\/" + _md_escape_text(kept[scheme + 3 :] + tail)
               return _md_escape_text(kept + tail)
-          
-          
+
+
           def _url_span(line: str, index: int) -> tuple[int, int] | None:
               if not line.startswith("://", index):
                   return None
@@ -2422,8 +2422,8 @@ jobs:
               if end <= scheme:
                   return None
               return scheme, end
-          
-          
+
+
           def _www_span(line: str, index: int) -> tuple[int, int] | None:
               if not line.startswith("www.", index):
                   return None
@@ -2435,8 +2435,8 @@ jobs:
               if end <= index:
                   return None
               return index, end
-          
-          
+
+
           def _autolink_spans(line: str) -> list[tuple[int, int]]:
               spans: list[tuple[int, int]] = []
               index = 0
@@ -2448,11 +2448,11 @@ jobs:
                   spans.append(found)
                   index = found[1]
               return spans
-          
-          
+
+
           def _md_escape(line: str) -> str:
               """Backslash-escape what Markdown would act on, so an evaluator's message stays plain text.
-          
+
               Only the span cmark-gfm will actually auto-link is copied through, after the same
               trailing-punctuation trim cmark applies. When that trimmed tail contains ``*``, ``_`` or
               ``~``, a scheme address is written as an angle autolink (``<https://e.com/a>\\~``) so the
@@ -2475,17 +2475,17 @@ jobs:
                   cursor = end
               parts.append(_md_escape_text(line[cursor:]))
               return "".join(parts)
-          
-          
+
+
           def _md_escape_text(text: str) -> str:
               pieces: list[str] = []
               pending: list[str] = []
-          
+
               def flush() -> None:
                   if pending:
                       pieces.append(re.sub(r"([\\`*_~&\[\]|])", r"\\\1", "".join(pending)))
                       pending.clear()
-          
+
               for ch in text:
                   if ch == "<":
                       flush()
@@ -2500,11 +2500,11 @@ jobs:
               # backslash in front of a following mark (autolink.c url_match / www_match).
               escaped = "".join(pieces)
               return escaped.replace("://", ":\\/\\/").replace("www.", "www\\.")
-          
-          
+
+
           def place_integrity_lines(report_dir: Path) -> bool:
               """Put the run-integrity lines next to the verdict in report.md, report.txt and report.html.
-          
+
               The reporter does not know the integrity result, so the lines the collector wrote are placed
               after rendering: in Markdown and text right after each ``... overall <GRADE>.`` line, in HTML
               right after each stored-status paragraph, so no format shows a verdict without the state.
@@ -2545,8 +2545,8 @@ jobs:
                       text = text.replace("<main class='wrap'>", "<main class='wrap'>" + shown, 1)
                   page.write_text(text, encoding="utf-8")
               return True
-          
-          
+
+
           def main(argv: list[str] | None = None) -> int:
               args = list(sys.argv[1:] if argv is None else argv)
               if len(args) == 2 and args[0] == "--place-integrity":
@@ -2604,8 +2604,8 @@ jobs:
                   return 1
               manifest.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
               return 0
-          
-          
+
+
           if __name__ == "__main__":
               sys.exit(main())
           COLLECT

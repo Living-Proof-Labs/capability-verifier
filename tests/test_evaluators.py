@@ -857,14 +857,14 @@ def _advisory_runner(code, stderr, payload, calls, package):
     return run
 
 
-def _run_advisory(tmp_path, code, stderr, payload, *, descriptor=None, bundle=None):
+def _run_advisory(tmp_path, code, stderr, payload, *, descriptor=None, bundle=None, work=None):
     document = _advisory_descriptor() if descriptor is None else descriptor
     return run_lines(
         LINE + "\n",
         evidence=tmp_path / "evidence.json",
         out=tmp_path / "out",
         bundle=bundle,
-        work=tmp_path / "work",
+        work=work or (tmp_path / "work"),
         fetch=lambda url: _schema_fetch(url),
         resolve=_resolve,
         run=_advisory_runner(code, stderr, payload, [], document["package"]["name"]),
@@ -1151,3 +1151,132 @@ def test_an_advisory_id_is_never_in_both_results_and_not_run(tmp_path):
         stored["assessment"]["advisory_results"]["pack-temperature"]["evaluator"]["id"]
         == "pack-temperature"
     )
+
+
+def _result_citing(filename: str, details: bytes) -> bytes:
+    document = json.loads((ADVISORY / "result.json").read_text(encoding="utf-8"))
+    document["advisory"]["details_file"] = {
+        "uri": filename,
+        "sha256": hashlib.sha256(details).hexdigest(),
+    }
+    return json.dumps(document).encode()
+
+
+def _exclusive_details_runner(payload: bytes, filename: str, details: bytes):
+    def run(command, **kwargs):
+        if command[:2] == ["git", "ls-remote"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[0] == "uv" and command[1] == "pip":
+            _plant(Path(command[4]), "battery-thermal", "0.1.0", COMMIT)
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[0] == "uv":
+            return subprocess.CompletedProcess(command, 0, "", "")
+        dest = Path(command[command.index("--out") + 1])
+        try:
+            with (dest.parent / filename).open("xb") as handle:
+                handle.write(details)
+        except FileExistsError:
+            return subprocess.CompletedProcess(command, 1, "", "details file exists\n")
+        dest.write_bytes(payload)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    return run
+
+
+def test_a_run_replaces_a_stale_details_file_and_note(tmp_path):
+    fresh = b"fresh observation\n"
+    payload = _result_citing("health.json", fresh)
+    directory = tmp_path / "out" / "battery-thermal"
+    directory.mkdir(parents=True)
+    (directory / "health.json").write_bytes(b"stale observation\n")
+    (directory / "note.txt").write_text("stale note\n", encoding="utf-8")
+    records = run_lines(
+        LINE + "\n",
+        evidence=tmp_path / "evidence.json",
+        out=tmp_path / "out",
+        work=tmp_path / "work",
+        fetch=lambda url: _schema_fetch(url),
+        resolve=_resolve,
+        run=_exclusive_details_runner(payload, "health.json", fresh),
+        injected={LINE: json.dumps(_advisory_descriptor()).encode()},
+    )
+    assert records[0].outcome == "result"
+    assert (directory / "health.json").read_bytes() == fresh
+    assert (
+        json.loads((directory / "result.json").read_text(encoding="utf-8"))["advisory"][
+            "details_file"
+        ]["uri"]
+        == "health.json"
+    )
+    assert not (directory / "note.txt").exists()
+    assert b"stale" not in (directory / "health.json").read_bytes()
+
+
+def test_a_later_success_leaves_no_note_from_the_failed_run(tmp_path):
+    failed = _run_advisory(tmp_path, 1, "boom\n", None)
+    note = tmp_path / "out" / "battery-thermal" / "note.txt"
+    assert failed[0].outcome == "failure"
+    assert note.read_text(encoding="utf-8") == "boom\n"
+    payload = (ADVISORY / "result.json").read_bytes()
+    succeeded = _run_advisory(tmp_path, 0, "", payload, work=tmp_path / "work-2")
+    assert succeeded[0].outcome == "result"
+    assert not note.exists()
+    stored = json.loads((tmp_path / "out" / "battery-thermal" / "result.json").read_text())
+    assert stored["evaluator"]["id"] == "battery-thermal"
+
+
+def test_a_fresh_directory_leaves_other_output_in_place(tmp_path):
+    out = tmp_path / "out"
+    other = out / "other-evaluator"
+    other.mkdir(parents=True)
+    (other / "keep.txt").write_text("keep\n", encoding="utf-8")
+    provenance = out / "evaluators-provenance.json"
+    provenance.write_text('[{"kept": true}]\n', encoding="utf-8")
+    seen = {}
+
+    def run(command, **kwargs):
+        if command[:2] == ["git", "ls-remote"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[0] == "uv" and command[1] == "pip":
+            _plant(Path(command[4]), "battery-thermal", "0.1.0", COMMIT)
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[0] == "uv":
+            return subprocess.CompletedProcess(command, 0, "", "")
+        seen["provenance"] = provenance.read_text(encoding="utf-8")
+        seen["other"] = (other / "keep.txt").read_text(encoding="utf-8")
+        dest = Path(command[command.index("--out") + 1])
+        dest.write_bytes((ADVISORY / "result.json").read_bytes())
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    records = run_lines(
+        LINE + "\n",
+        evidence=tmp_path / "evidence.json",
+        out=out,
+        work=tmp_path / "work",
+        fetch=lambda url: _schema_fetch(url),
+        resolve=_resolve,
+        run=run,
+        injected={LINE: json.dumps(_advisory_descriptor()).encode()},
+    )
+    assert records[0].outcome == "result"
+    assert seen == {"provenance": '[{"kept": true}]\n', "other": "keep\n"}
+    assert (other / "keep.txt").read_text(encoding="utf-8") == "keep\n"
+    assert provenance.is_file()
+    written = json.loads(provenance.read_text(encoding="utf-8"))
+    assert written[0]["outcome"] == "result"
+
+
+def test_a_symlinked_output_directory_is_replaced_and_the_target_is_kept(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("keep\n", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "battery-thermal").symlink_to(outside, target_is_directory=True)
+    records = _run_advisory(tmp_path, 0, "", (ADVISORY / "result.json").read_bytes())
+    replaced = out / "battery-thermal"
+    assert records[0].outcome == "result"
+    assert not replaced.is_symlink()
+    assert (replaced / "result.json").is_file()
+    assert (outside / "secret.txt").read_text(encoding="utf-8") == "keep\n"
+    assert list(outside.iterdir()) == [outside / "secret.txt"]

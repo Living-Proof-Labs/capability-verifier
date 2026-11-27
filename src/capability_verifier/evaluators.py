@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -529,9 +530,7 @@ def execute(
     run = subprocess.run if run is None else run
     descriptor = prepared.document
     version = install(prepared, work, run)
-    result_path = out / descriptor["id"] / "result.json"
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    _discard(result_path)
+    result_path = _fresh_output(out, descriptor["id"]) / "result.json"
     values = _given(evidence, media_dir, result_path)
     command = [
         str(work / descriptor["id"] / ".venv" / "bin" / "python"),
@@ -611,6 +610,40 @@ def _finish(
 def _discard(path: Path) -> None:
     if path.is_file():
         path.unlink()
+
+
+def _fresh_output(out: Path, evaluator_id: str) -> Path:
+    """Replace ``out/<id>`` with an empty directory before one evaluator runs.
+
+    ``id`` is the descriptor's slug, one path segment. A symlink at that path
+    is unlinked and not followed. A real directory is removed. The path is
+    refused unless it is directly under ``out``.
+    """
+    if (
+        not isinstance(evaluator_id, str)
+        or evaluator_id in {"", ".", ".."}
+        or "/" in evaluator_id
+        or "\\" in evaluator_id
+        or "\x00" in evaluator_id
+    ):
+        raise Refusal(f"{evaluator_id!r} is not a directory directly under the output")
+    out.mkdir(parents=True, exist_ok=True)
+    root = out.resolve()
+    target = out / evaluator_id
+    if target.parent.resolve() != root:
+        raise Refusal(f"{evaluator_id!r} is not a directory directly under the output")
+    if target.is_symlink():
+        target.unlink()
+    elif target.is_dir():
+        if target.resolve().parent != root:
+            raise Refusal(f"{evaluator_id!r} is not a directory directly under the output")
+        shutil.rmtree(target)
+    elif target.exists():
+        target.unlink()
+    target.mkdir()
+    if target.is_symlink() or target.resolve().parent != root:
+        raise Refusal(f"{evaluator_id!r} is not a directory directly under the output")
+    return target
 
 
 def run_lines(
