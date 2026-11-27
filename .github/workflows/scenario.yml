@@ -22,7 +22,9 @@
 # Optional input `evaluators` is newline-separated declaration lines
 # `<owner>/<repo>@<ref>/<path>.json`. `ref` is a release tag `vMAJOR.MINOR.PATCH`
 # (peeled to a commit; a branch of the same name is refused) or a 40-character
-# commit. Blank lines and lines starting with `#` are ignored. Empty, the
+# commit. One such line is
+# `Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json`.
+# Blank lines and lines starting with `#` are ignored. Empty, the
 # default, keeps the run-integrity job. When the input is set, that job is
 # skipped and the report does not treat the skipped job as a missing integrity
 # result. This workflow does not run the loader; the caller runs
@@ -127,7 +129,9 @@ on:
         description: >-
           Newline-separated declaration lines, owner/repo@ref/path.json.
           ref is a release tag vMAJOR.MINOR.PATCH or a 40-character hexadecimal
-          commit. Blank lines and lines starting with # are ignored. Empty keeps
+          commit. One line is
+          Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json.
+          Blank lines and lines starting with # are ignored. Empty keeps
           the run-integrity job. When set, that job is skipped and the caller
           runs python -m capability_verifier.evaluators. This workflow does not.
         type: string

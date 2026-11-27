@@ -487,6 +487,17 @@ def _last_line(stderr: str) -> str:
     return lines[-1] if lines else "the evaluator wrote no result"
 
 
+def _argparse_usage(stderr: str) -> bool:
+    """True when stderr is an argparse usage error (``usage:`` … ``error:``).
+
+    A mapped refusal must not swallow that. Argparse exits 2 for a bad argument,
+    and a descriptor may map 2 to refused.
+    """
+    text = stderr or ""
+    usage = text.find("usage:")
+    return usage >= 0 and "error:" in text[usage:]
+
+
 def execute(
     prepared: Prepared,
     *,
@@ -535,6 +546,8 @@ def execute(
         return _finish(base, code, "result", None, out, document)
     _discard(result_path)
     if label == "refused":
+        if _argparse_usage(stderr):
+            return _finish(base, code, "failure", _last_line(stderr), out)
         return _finish(base, code, "refused", _last_line(stderr), out)
     return _finish(base, code, "failure", _last_line(stderr), out)
 

@@ -286,6 +286,7 @@ declared recording limits, not by the evaluator version alone.
 
 ```text
 <owner>/<repo>@<ref>/<path>.json
+Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json
 ```
 
 `ref` is a release tag `vMAJOR.MINOR.PATCH` or a 40-character hexadecimal

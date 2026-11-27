@@ -362,6 +362,30 @@ def test_a_missing_descriptor_is_refused():
         prepare(LINE + "\n", fetch=fetch, resolve=_resolve, run=_no_branch)
 
 
+EVALUATOR_RUN_LINE = "Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json"
+EVALUATOR_RUN_COPY = ROOT / "tests" / "fixtures" / "evaluators" / "run-integrity.json"
+
+
+def test_workflow_and_docs_declare_the_released_evaluator_line():
+    for path in (
+        ROOT / ".github" / "workflows" / "scenario.yml",
+        ROOT / ".github" / "workflows" / "walk-hallway.yml",
+        ROOT / "README.md",
+        ROOT / "docs" / "locks.md",
+    ):
+        assert EVALUATOR_RUN_LINE in path.read_text(encoding="utf-8"), path
+
+
+@pytest.mark.skipif(not os.environ.get("LIVINGPROOF_NETWORK"), reason="set LIVINGPROOF_NETWORK=1")
+def test_evaluator_run_descriptor_matches_the_release():
+    repository = "Living-Proof-Labs/livingproof-evaluator-run"
+    commit = resolve_tag(repository, "v1.9.0")
+    assert commit == "73176b6bf92067d805aaaa52b947cb5817976788"
+    url = f"https://raw.githubusercontent.com/{repository}/{commit}/livingproof-evaluator.json"
+    with urllib.request.urlopen(url, timeout=60) as response:
+        assert response.read() == EVALUATOR_RUN_COPY.read_bytes()
+
+
 @pytest.mark.skipif(not os.environ.get("LIVINGPROOF_NETWORK"), reason="set LIVINGPROOF_NETWORK=1")
 def test_fixture_schemas_match_the_pin():
     pin = parse_lines(CONTRACT)[0]
@@ -547,6 +571,19 @@ def _cli(tmp_path, monkeypatch, code, stderr, payload) -> int:
             str(tmp_path / "cli"),
         ]
     )
+
+
+def test_an_argparse_usage_error_on_exit_2_is_a_failure_not_a_refusal(tmp_path):
+    stderr = "usage: example [-h]\nexample: error: unrecognized arguments: --nope\n"
+    records, _calls = _execute(tmp_path, 2, stderr, None)
+    assert records[0].exit_code == 2
+    assert records[0].outcome == "failure"
+
+
+def test_exit_1_is_an_unlisted_failure(tmp_path):
+    records, _calls = _execute(tmp_path, 1, "boom\n", None)
+    assert records[0].exit_code == 1
+    assert records[0].outcome == "failure"
 
 
 def test_an_unlisted_exit_is_a_failure_with_a_note_and_a_non_zero_command(tmp_path, monkeypatch):
