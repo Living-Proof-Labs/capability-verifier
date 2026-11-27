@@ -17,7 +17,9 @@ from capability_verifier.collect import _attach_not_run, collect
 from capability_verifier.evaluator_contract import CONTRACT
 from capability_verifier.evaluators import (
     NotFound,
+    Record,
     Refusal,
+    _place,
     accept_result_format,
     install,
     main,
@@ -138,6 +140,8 @@ def _no_branch(command, **kwargs):
 
 
 def _resolve(repository, tag):
+    if (repository, tag) == ("Living-Proof-Labs/livingproof-evaluator", "v1.9.0"):
+        return "cbd05d59e2badc1a53cbb39ca0a15ec9070baa24"
     return COMMIT
 
 
@@ -592,6 +596,16 @@ def test_an_unlisted_exit_is_a_failure_with_a_note_and_a_non_zero_command(tmp_pa
     assert _cli(tmp_path, monkeypatch, 3, "boom\n", payload) != 0
 
 
+def test_a_leftover_result_from_an_earlier_run_is_a_failure(tmp_path):
+    planted = tmp_path / "out" / "example-integrity" / "result.json"
+    planted.parent.mkdir(parents=True)
+    planted.write_bytes(json.dumps(_result(_declared_result())).encode())
+    records, _calls = _execute(tmp_path, 0, "", None)
+    assert records[0].outcome == "failure"
+    assert records[0].note == "the result file is missing"
+    assert not planted.is_file()
+
+
 def test_a_missing_or_invalid_result_is_a_failure(tmp_path):
     missing, _calls = _execute(tmp_path, 0, "", None)
     assert missing[0].outcome == "failure"
@@ -687,6 +701,44 @@ def test_media_is_passed_only_when_media_json_is_present(tmp_path):
     )
     launched = next(item for item in calls if "-m" in item)
     assert "--media" not in launched
+
+
+def test_a_moved_contract_tag_is_refused():
+    def resolve(repository, tag):
+        if (repository, tag) == ("Living-Proof-Labs/livingproof-evaluator", "v1.9.0"):
+            return "b" * 40
+        return COMMIT
+
+    with pytest.raises(Refusal, match="cbd05d59e2badc1a53cbb39ca0a15ec9070baa24"):
+        prepare(
+            LINE + "\n",
+            fetch=lambda url: _schema_fetch(url),
+            resolve=resolve,
+            run=_no_branch,
+            injected={LINE: json.dumps(_descriptor()).encode()},
+        )
+
+
+def test_place_refuses_an_unknown_kind(tmp_path):
+    bundle = tmp_path / "manifest.json"
+    bundle.write_text('{"assessment": {"runs": []}}\n', encoding="utf-8")
+    record = Record(
+        line=LINE,
+        repo="acme/widgets",
+        ref="v1.2.3",
+        commit=COMMIT,
+        descriptor_sha256="ab",
+        package_name="example-integrity",
+        installed_version="1.2.3",
+        exit_code=0,
+        outcome="result",
+        evaluator_id="example-integrity",
+        kind="other",
+        document=_result(_declared_result()),
+    )
+    with pytest.raises(Refusal, match="unknown kind"):
+        _place(bundle, [record])
+    assert "integrity_results" not in json.loads(bundle.read_text())
 
 
 def test_a_result_is_stored_by_id_and_grades_stay(tmp_path):

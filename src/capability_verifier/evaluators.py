@@ -50,6 +50,8 @@ RESULT_SCHEMA = "evaluator-result.schema.json"
 # Placement knows these kinds. A descriptor kind outside the map is refused.
 PLACERS = {"integrity": collect._attach_integrity}
 SUPPORTED_MAJORS = {1}
+# The contract tag must still peel to this commit. A moved tag is refused.
+_PINNED_CONTRACT = ("v1.9.0", "cbd05d59e2badc1a53cbb39ca0a15ec9070baa24")
 
 
 class Refusal(Exception):
@@ -100,6 +102,7 @@ class Record:
     outcome: str
     note: str | None = None
     evaluator_id: str = ""
+    kind: str = ""
     document: dict | None = None
 
     def as_dict(self) -> dict:
@@ -338,6 +341,9 @@ def prepare(
     declarations = parse_lines(text)
     pin = _contract()
     commit = resolve_ref(pin, resolve=resolve, run=run)
+    pinned_tag, pinned_commit = _PINNED_CONTRACT
+    if pin.ref == pinned_tag and commit != pinned_commit:
+        raise Refusal(f"{pin.repository} tag {pin.ref} is {commit}, not {pinned_commit}")
     registry = _registry(pin.owner, pin.repo, commit, fetch)
     implementation = _read_schema(pin.owner, pin.repo, commit, _schema_relative(pin.path), fetch)
     result_schema = _read_schema(pin.owner, pin.repo, commit, RESULT_SCHEMA, fetch)
@@ -514,6 +520,7 @@ def execute(
     version = install(prepared, work, run)
     result_path = out / descriptor["id"] / "result.json"
     result_path.parent.mkdir(parents=True, exist_ok=True)
+    _discard(result_path)
     values = _given(evidence, media_dir, result_path)
     command = [
         str(work / descriptor["id"] / ".venv" / "bin" / "python"),
@@ -565,6 +572,9 @@ def _record(prepared: Prepared, version: str | None, code: int | None, outcome: 
         exit_code=code,
         outcome=outcome,
         evaluator_id=prepared.document["id"],
+        kind=prepared.document.get("kind")
+        if isinstance(prepared.document.get("kind"), str)
+        else "",
     )
 
 
@@ -641,10 +651,14 @@ def _write_provenance(out: Path, records: list[Record]) -> None:
 
 def _place(bundle_path: Path, records: list[Record]) -> None:
     bundle = load_object(bundle_path.read_text(encoding="utf-8"))
-    documents = [record.document for record in records if record.document is not None]
-    if documents:
-        collect._attach_integrity(bundle, documents)
     for record in records:
+        document = record.document
+        if document is not None:
+            placer = PLACERS.get(record.kind)
+            if placer is None:
+                raise Refusal(f"unknown kind {record.kind!r}")
+            placer(bundle, [document])
+            continue
         if record.outcome not in {"refused", "failure"}:
             continue
         collect._attach_not_run(
