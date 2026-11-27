@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -13,7 +14,12 @@ import pytest
 import yaml
 from test_collect_integrity import _bundle, _robot_grades
 
-from capability_verifier.collect import _attach_not_run, collect
+from capability_verifier.collect import (
+    _attach_not_run,
+    advisory_report_lines,
+    collect,
+    integrity_report_lines,
+)
 from capability_verifier.evaluator_contract import CONTRACT
 from capability_verifier.evaluators import (
     NotFound,
@@ -140,8 +146,8 @@ def _no_branch(command, **kwargs):
 
 
 def _resolve(repository, tag):
-    if (repository, tag) == ("Living-Proof-Labs/livingproof-evaluator", "v1.9.0"):
-        return "cbd05d59e2badc1a53cbb39ca0a15ec9070baa24"
+    if (repository, tag) == ("Living-Proof-Labs/livingproof-evaluator", "v1.10.0"):
+        return "d46062a9300611e32ad76749e67a8f035489ebce"
     return COMMIT
 
 
@@ -217,9 +223,9 @@ def test_a_tag_without_a_same_name_branch_resolves_and_a_commit_is_used_as_is():
 
 def test_the_contract_tag_resolves_to_the_released_commit():
     pin = parse_lines(CONTRACT)[0]
-    assert pin.ref == "v1.9.0"
+    assert pin.ref == "v1.10.0"
     assert pin.repository == "Living-Proof-Labs/livingproof-evaluator"
-    assert resolve_tag(pin.repository, pin.ref) == "cbd05d59e2badc1a53cbb39ca0a15ec9070baa24"
+    assert resolve_tag(pin.repository, pin.ref) == "d46062a9300611e32ad76749e67a8f035489ebce"
 
 
 def test_the_loader_reads_the_format_from_the_schema():
@@ -705,11 +711,11 @@ def test_media_is_passed_only_when_media_json_is_present(tmp_path):
 
 def test_a_moved_contract_tag_is_refused():
     def resolve(repository, tag):
-        if (repository, tag) == ("Living-Proof-Labs/livingproof-evaluator", "v1.9.0"):
+        if (repository, tag) == ("Living-Proof-Labs/livingproof-evaluator", "v1.10.0"):
             return "b" * 40
         return COMMIT
 
-    with pytest.raises(Refusal, match="cbd05d59e2badc1a53cbb39ca0a15ec9070baa24"):
+    with pytest.raises(Refusal, match="d46062a9300611e32ad76749e67a8f035489ebce"):
         prepare(
             LINE + "\n",
             fetch=lambda url: _schema_fetch(url),
@@ -818,3 +824,188 @@ def test_run_integrity_is_skipped_when_evaluators_are_set_and_the_wrapper_forwar
     assert "evaluators" in wrapper[True]["workflow_call"]["inputs"]
     assert wrapper["jobs"]["scenario"]["with"]["evaluators"] == "${{ inputs.evaluators }}"
     assert wrapper[True]["workflow_call"]["inputs"]["evaluators"]["default"] == ""
+
+
+ADVISORY = ROOT / "tests" / "fixtures" / "advisory" / "battery-thermal"
+NOTES_SHA256 = "672452afe3c3af41a8580455addb04c6e6696ce19e3117e4446a962fb448d7bc"
+RESULT_SHA256 = "b1d66c7c005d471972857c9716377d9303245b1a7ff3394ba2758d509898c3e5"
+IMPLEMENTATION_SHA256 = "146a7ab7b52feba7a2f3985ad294655d34ef74ff55826dd00979451f98e90770"
+# No pre-existing case-insensitive "health" hit under src/capability_verifier.
+_HEALTH_HITS: frozenset[str] = frozenset()
+
+
+def _advisory_descriptor() -> dict:
+    return json.loads((ADVISORY / "implementation.json").read_text(encoding="utf-8"))
+
+
+def _advisory_runner(code, stderr, payload, calls, package):
+    def run(command, **kwargs):
+        calls.append(list(command))
+        if command[:2] == ["git", "ls-remote"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[0] == "uv" and command[1] == "pip":
+            _plant(Path(command[4]), package, "0.1.0", COMMIT)
+        if command[0] != "uv" and payload is not None and "--out" in command:
+            out = command[command.index("--out") + 1]
+            Path(out).parent.mkdir(parents=True, exist_ok=True)
+            Path(out).write_bytes(payload)
+        status = 0 if command[0] in {"uv", "git"} else code
+        return subprocess.CompletedProcess(command, status, "", stderr)
+
+    return run
+
+
+def _run_advisory(tmp_path, code, stderr, payload, *, descriptor=None, bundle=None):
+    document = _advisory_descriptor() if descriptor is None else descriptor
+    return run_lines(
+        LINE + "\n",
+        evidence=tmp_path / "evidence.json",
+        out=tmp_path / "out",
+        bundle=bundle,
+        work=tmp_path / "work",
+        fetch=lambda url: _schema_fetch(url),
+        resolve=_resolve,
+        run=_advisory_runner(code, stderr, payload, [], document["package"]["name"]),
+        injected={LINE: json.dumps(document).encode()},
+    )
+
+
+def _conclusions(bundle):
+    return [run.get("conclusion") for run in bundle["assessment"]["runs"]]
+
+
+def test_battery_thermal_fixture_matches_the_contract_example():
+    commit = "d46062a9300611e32ad76749e67a8f035489ebce"
+    files = {
+        "result.json": (
+            RESULT_SHA256,
+            f"https://raw.githubusercontent.com/Living-Proof-Labs/livingproof-evaluator/{commit}/examples/advisory/battery-thermal/result.json",
+        ),
+        "notes.txt": (
+            NOTES_SHA256,
+            f"https://raw.githubusercontent.com/Living-Proof-Labs/livingproof-evaluator/{commit}/examples/advisory/battery-thermal/notes.txt",
+        ),
+        "implementation.json": (
+            IMPLEMENTATION_SHA256,
+            f"https://raw.githubusercontent.com/Living-Proof-Labs/livingproof-evaluator/{commit}/examples/implementation/battery-thermal.json",
+        ),
+    }
+    for name, (digest, url) in files.items():
+        data = (ADVISORY / name).read_bytes()
+        assert hashlib.sha256(data).hexdigest() == digest
+        with urllib.request.urlopen(url, timeout=60) as response:
+            assert response.read() == data, name
+
+
+def test_source_does_not_name_health():
+    root = ROOT / "src" / "capability_verifier"
+    hits = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for number, line in enumerate(text.splitlines(), 1):
+            if "health" not in line.lower():
+                continue
+            rel = f"{path.relative_to(root).as_posix()}:{number}"
+            if rel not in _HEALTH_HITS:
+                hits.append(f"{rel}:{line.strip()}")
+    assert hits == []
+
+
+def test_an_advisory_result_is_stored_by_id_and_leaves_grade_and_integrity(tmp_path):
+    bundle, directory = _bundle(tmp_path)
+    grades = _robot_grades(bundle)
+    lines = integrity_report_lines(bundle)
+    conclusions = _conclusions(bundle)
+    integrity = bundle["assessment"].get("integrity_results")
+    manifest = directory / "manifest.json"
+    manifest.write_text(json.dumps(bundle), encoding="utf-8")
+    records = _run_advisory(
+        tmp_path, 0, "", (ADVISORY / "result.json").read_bytes(), bundle=manifest
+    )
+    stored = json.loads(manifest.read_text(encoding="utf-8"))
+    assert records[0].outcome == "result"
+    placed = stored["assessment"]["advisory_results"]["battery-thermal"]
+    assert isinstance(placed, dict)
+    assert placed["evaluator"]["id"] == "battery-thermal"
+    assert placed["evaluator"]["kind"] == "advisory"
+    assert placed["advisory"]["summary"]
+    assert "advisory_not_run" not in stored["assessment"]
+    assert _robot_grades(stored) == grades
+    assert stored["assessment"].get("integrity_results") == integrity
+    assert integrity_report_lines(stored) == lines
+    assert _conclusions(stored) == conclusions
+
+
+def test_an_advisory_failure_writes_a_not_run_note_without_grading(tmp_path):
+    descriptor = _advisory_descriptor()
+    descriptor["id"] = "pack-temperature"
+    descriptor["package"] = {"name": "pack-temperature"}
+    bundle, directory = _bundle(tmp_path)
+    grades = _robot_grades(bundle)
+    lines = integrity_report_lines(bundle)
+    conclusions = _conclusions(bundle)
+    manifest = directory / "manifest.json"
+    manifest.write_text(json.dumps(bundle), encoding="utf-8")
+    records = _run_advisory(
+        tmp_path, 1, "no pack sample\n", None, descriptor=descriptor, bundle=manifest
+    )
+    stored = json.loads(manifest.read_text(encoding="utf-8"))
+    assert records[0].outcome == "failure"
+    missing = stored["assessment"]["advisory_not_run"]["pack-temperature"]
+    assert missing["evaluator"] == "pack-temperature"
+    assert missing["job_result"] == "failure"
+    assert missing["reason"] == "no pack sample"
+    assert missing["note"] == "pack-temperature: NOT RUN (failure): no pack sample."
+    assert advisory_report_lines(stored) == [missing["note"]]
+    assert "INCONCLUSIVE" not in missing["note"]
+    assert "advisory_results" not in stored["assessment"]
+    assert "integrity_not_run" not in stored["assessment"]
+    assert "integrity_results" not in stored["assessment"]
+    assert _robot_grades(stored) == grades
+    assert integrity_report_lines(stored) == lines
+    assert _conclusions(stored) == conclusions
+
+
+def _advisory_trials(indexes) -> bytes:
+    document = json.loads((ADVISORY / "result.json").read_text(encoding="utf-8"))
+    document["advisory"]["trials"] = [
+        {"index": index, "observation_sha256": f"{position:064x}"}
+        for position, index in enumerate(indexes)
+    ]
+    return json.dumps(document).encode()
+
+
+def test_a_repeated_advisory_trial_index_is_refused(tmp_path):
+    records = _run_advisory(tmp_path, 0, "", _advisory_trials([1, 2, 1]))
+    assert records[0].outcome == "failure"
+    assert "repeats" in records[0].note
+    assert not (tmp_path / "out" / "battery-thermal" / "result.json").exists()
+
+
+def test_a_whole_number_float_repeats_an_advisory_trial_index(tmp_path):
+    raw = _advisory_trials([1, 1.0])
+    assert b"1.0" in raw
+    records = _run_advisory(tmp_path, 0, "", raw)
+    assert records[0].outcome == "failure"
+    assert "repeats" in records[0].note
+
+
+def test_a_duplicate_key_in_an_advisory_result_is_refused(tmp_path):
+    raw = (ADVISORY / "result.json").read_bytes()
+    duplicated = raw.replace(
+        b'"format":', b'"format": "livingproof-evaluator-result/1.3.0", "format":', 1
+    )
+    records = _run_advisory(tmp_path, 0, "", duplicated)
+    assert records[0].outcome == "failure"
+    assert "duplicate key" in records[0].note
+    assert not (tmp_path / "out" / "battery-thermal" / "result.json").exists()
+
+
+def test_a_nested_duplicate_key_inside_advisory_is_refused(tmp_path):
+    raw = (ADVISORY / "result.json").read_bytes()
+    duplicated = raw.replace(b'"summary":', b'"summary": "Pack stayed in range.", "summary":', 1)
+    records = _run_advisory(tmp_path, 0, "", duplicated)
+    assert records[0].outcome == "failure"
+    assert "duplicate key 'summary'" in records[0].note

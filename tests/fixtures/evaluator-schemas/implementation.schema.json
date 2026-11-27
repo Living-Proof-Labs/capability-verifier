@@ -27,12 +27,12 @@
       "description": "The evaluator.id this implementation writes on its results."
     },
     "kind": {
-      "enum": ["integrity"],
-      "description": "integrity only. A later minor version widens this enum additively. A consumer MUST refuse a kind it does not know."
+      "enum": ["integrity", "advisory"],
+      "description": "integrity or advisory. A later minor version widens this enum additively. A consumer MUST refuse a kind it does not know."
     },
     "grading": {
-      "enum": ["none"],
-      "description": "none only in this version. This implementation does not grade."
+      "type": "string",
+      "description": "none only in this version. This implementation does not grade. advisory requires none."
     },
     "package": {
       "type": "object",
@@ -106,9 +106,42 @@
     "result": {
       "type": "string",
       "pattern": "^livingproof-evaluator-result/1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?!\\n)$",
-      "description": "`result` is `livingproof-evaluator-result/1.<minor>.<patch>`. Another major is refused. Consumers must check that the produced result's format equals the declared value and that its major is one they support."
+      "description": "`result` is `livingproof-evaluator-result/1.<minor>.<patch>`. Another major is refused. advisory names minor 1.3 or any later 1.x minor. A descriptor names the one version it writes. Consumers must check that the produced result's format equals the declared value and that its major is one they support."
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"kind": {"const": "integrity"}},
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {"grading": {"const": "none"}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "advisory"}},
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {"grading": {"const": "none"}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "advisory"}},
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "pattern": "^livingproof-evaluator-result/1\\.([3-9]|[1-9][0-9]+)\\.(0|[1-9][0-9]*)(?!\\n)$"
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "argument": {
       "type": "string",

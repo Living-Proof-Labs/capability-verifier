@@ -48,10 +48,13 @@ _TOKEN = re.compile(r"\{(evidence_manifest|media_dir|result)\}")
 DEFAULT_TIMEOUT = 30 * 60
 RESULT_SCHEMA = "evaluator-result.schema.json"
 # Placement knows these kinds. A descriptor kind outside the map is refused.
-PLACERS = {"integrity": collect._attach_integrity}
+PLACERS = {
+    "integrity": collect._attach_integrity,
+    "advisory": collect._attach_advisory,
+}
 SUPPORTED_MAJORS = {1}
 # The contract tag must still peel to this commit. A moved tag is refused.
-_PINNED_CONTRACT = ("v1.9.0", "cbd05d59e2badc1a53cbb39ca0a15ec9070baa24")
+_PINNED_CONTRACT = ("v1.10.0", "d46062a9300611e32ad76749e67a8f035489ebce")
 
 
 class Refusal(Exception):
@@ -314,6 +317,12 @@ def _accept_result(document: dict, descriptor: dict, schema: dict, registry: Reg
             f"result evaluator kind {evaluator.get('kind')!r} is not {descriptor['kind']!r}"
         )
     accept_result_format(descriptor.get("result"), document.get("format"))
+    # The schema cannot require unique trial indexes, or reject 1 and 1.0 as the
+    # same index. The loader refuses both. Duplicate object keys are refused by
+    # load_object, which is what reads this result.
+    repeated = collect.repeated_advisory_index(document)
+    if repeated:
+        raise Refusal(repeated)
 
 
 @dataclass
@@ -660,6 +669,15 @@ def _place(bundle_path: Path, records: list[Record]) -> None:
             placer(bundle, [document])
             continue
         if record.outcome not in {"refused", "failure"}:
+            continue
+        if record.kind == "advisory":
+            collect._attach_advisory_not_run(
+                bundle,
+                "failure",
+                record.note or "no result",
+                refused=record.outcome == "refused",
+                evaluator=record.evaluator_id,
+            )
             continue
         collect._attach_not_run(
             bundle,

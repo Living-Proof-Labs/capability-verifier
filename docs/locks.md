@@ -303,7 +303,20 @@ non-empty, that job's `if` is false, so it is skipped, and the report's
 The caller runs `python -m capability_verifier.evaluators`: `check` resolves
 and validates each descriptor, and `run` installs that commit and executes it.
 Results are attached by kind. An `integrity` result is stored at
-`assessment.integrity_results[<id>]`.
+`assessment.integrity_results[<id>]`. An `advisory` result is stored at
+`assessment.advisory_results[<id>]`. The value is the result document, one
+per evaluator id, the same shape as an integrity result. Advisory results
+do not grade and do not change `integrity_results` or the integrity lines.
+A bundle with no advisory result has no `advisory_results` key. When an
+advisory evaluator fails, `assessment.advisory_not_run[<id>]` holds
+`evaluator` (the descriptor id), `job_result`, `reason`, and `note`. The
+note is `<id>: NOT RUN (<job result>): <reason>.`, or `<id>: REFUSED: <reason>.`
+when the evaluator refused the run. A cited `advisory.details_file` is copied
+next to the report after its sha256 is checked. A missing, altered, or
+substituted file, or a path outside the contract, fails collection. The
+loader also refuses an advisory `trials` list that repeats an index, compared
+as numbers so `1` and `1.0` are the same index, and a result with a duplicate
+JSON object key at any depth.
 
 The loader maps each exit code from the descriptor:
 
