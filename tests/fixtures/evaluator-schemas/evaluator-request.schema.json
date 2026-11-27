@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/evaluator-request.schema.json",
   "title": "livingproof-evaluator-request/1.0.0",
-  "description": "Shared request envelope for a scenario evaluator and an integrity evaluator. kind selects one payload. The other payload is rejected. A request does not carry a descriptor. The descriptor is result output.",
+  "description": "Shared request envelope for a scenario evaluator and an integrity evaluator. kind selects one payload. The other payload is rejected. kind advisory is not a request. A request does not carry a descriptor. The descriptor is result output.",
   "type": "object",
   "additionalProperties": false,
   "required": ["format", "evaluator", "inputs", "timestamps"],
@@ -66,6 +66,13 @@
       "then": {
         "required": ["scenario"],
         "properties": {"integrity": false}
+      }
+    },
+    {
+      "properties": {
+        "evaluator": {
+          "properties": {"kind": {"enum": ["scenario", "integrity"]}}
+        }
       }
     }
   ]

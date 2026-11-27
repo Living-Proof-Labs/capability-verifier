@@ -41,7 +41,7 @@
     "kind": {
       "allOf": [{"$ref": "#/$defs/plain"}],
       "maxLength": 40,
-      "description": "Display label for the kind of check, as the evaluator states it. Display only. The payload selector is evaluator.kind, which remains scenario or integrity."
+      "description": "Display label for the kind of check, as the evaluator states it. Display only. The payload selector is evaluator.kind."
     },
     "source": {
       "allOf": [{"$ref": "#/$defs/plain"}],

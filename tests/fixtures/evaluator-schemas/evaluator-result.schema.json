@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/evaluator-result.schema.json",
-  "title": "livingproof-evaluator-result/1.2.0",
-  "description": "Shared result envelope. A scenario result carries step verdicts. An integrity result carries test-system status, success, percentage, and findings. An integrity result cannot include the scenario payload. Format 1.1.0 may add an optional descriptor. A 1.0 format must not include one. Format 1.2.0 reads a run with no applicable check as INCONCLUSIVE with no percentage; before 1.2.0 that run reads COMPLETED and 100, and the INCONCLUSIVE status is not allowed. Documents that already validated as 1.0.0 or 1.1.0 still validate.",
+  "title": "livingproof-evaluator-result/1.3.0",
+  "description": "Shared result envelope. A scenario result carries step verdicts. An integrity result carries test-system status, success, percentage, and findings. An integrity result cannot include the scenario payload, and neither payload can include advisory. Format 1.1.0 may add an optional descriptor. A 1.0 format must not include one. Format 1.2.0 reads a run with no applicable check as INCONCLUSIVE with no percentage; before 1.2.0 that run reads COMPLETED and 100, and the INCONCLUSIVE status is not allowed. Format 1.3.0 adds an advisory payload. advisory never grades and produces no robot result or test-system status. An advisory result requires a descriptor whose tier is observation, and it cannot include scenario or integrity. Documents that already validated as 1.0.0, 1.1.0, or 1.2.0 still validate. A 1.2 reader that projects known fields ignores the unknown kind. A 1.2 consumer that validates against the v1.9.1 schema refuses the document at `evaluator/kind`. Both fail closed.",
   "type": "object",
   "additionalProperties": false,
   "required": ["format", "evaluator", "inputs", "timestamps"],
@@ -10,7 +10,7 @@
     "format": {
       "type": "string",
       "pattern": "^livingproof-evaluator-result/1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
-      "description": "Major 1. Format 1.0.0 is the merged envelope. Format 1.1.0 may include descriptor. A 1.0 consumer accepts any 1.minor document, drops unknown fields (including descriptor), ignores unknown kinds, and still validates the fields it knows. A 1.x minor version may add run statuses, and a consumer must treat any run status it does not recognise as not graded. See docs/run-integrity.md and docs/evaluator-descriptor.md."
+      "description": "Major 1. Format 1.0.0 is the merged envelope. Format 1.1.0 may include descriptor. Format 1.3.0 may include advisory. A 1.0 consumer accepts any 1.minor document, drops unknown fields (including descriptor), ignores unknown kinds, and still validates the fields it knows. A 1.2 reader that projects known fields ignores the unknown kind. A 1.2 consumer that validates against the v1.9.1 schema refuses the document at `evaluator/kind`. Both fail closed. A 1.x minor version may add run statuses, and a consumer must treat any run status it does not recognise as not graded. See docs/run-integrity.md, docs/evaluator-descriptor.md, and docs/advisory.md."
     },
     "evaluator": {
       "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/evaluator"
@@ -42,6 +42,7 @@
     "integrity": {
       "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/integrity/result.schema.json"
     },
+    "advisory": {"$ref": "#/$defs/advisory"},
     "verdict": false,
     "grade": false
   },
@@ -58,7 +59,7 @@
       },
       "then": {
         "required": ["integrity"],
-        "properties": {"scenario": false}
+        "properties": {"scenario": false, "advisory": false}
       }
     },
     {
@@ -73,7 +74,7 @@
       },
       "then": {
         "required": ["scenario"],
-        "properties": {"integrity": false}
+        "properties": {"integrity": false, "advisory": false}
       }
     },
     {
@@ -139,6 +140,157 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "evaluator": {
+            "properties": {"kind": {"const": "advisory"}},
+            "required": ["kind"]
+          }
+        },
+        "required": ["evaluator"]
+      },
+      "then": {"required": ["advisory"]}
+    },
+    {
+      "if": {
+        "properties": {
+          "evaluator": {
+            "properties": {"kind": {"const": "advisory"}},
+            "required": ["kind"]
+          }
+        },
+        "required": ["evaluator"]
+      },
+      "then": {"properties": {"scenario": false}}
+    },
+    {
+      "if": {
+        "properties": {
+          "evaluator": {
+            "properties": {"kind": {"const": "advisory"}},
+            "required": ["kind"]
+          }
+        },
+        "required": ["evaluator"]
+      },
+      "then": {"properties": {"integrity": false}}
+    },
+    {
+      "if": {
+        "properties": {
+          "evaluator": {
+            "properties": {"kind": {"const": "advisory"}},
+            "required": ["kind"]
+          }
+        },
+        "required": ["evaluator"]
+      },
+      "then": {"required": ["descriptor"]}
+    },
+    {
+      "if": {
+        "properties": {
+          "evaluator": {
+            "properties": {"kind": {"const": "advisory"}},
+            "required": ["kind"]
+          }
+        },
+        "required": ["evaluator"]
+      },
+      "then": {
+        "properties": {
+          "descriptor": {
+            "properties": {"tier": {"const": "observation"}},
+            "required": ["tier"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evaluator": {
+            "properties": {"kind": {"const": "advisory"}},
+            "required": ["kind"]
+          }
+        },
+        "required": ["evaluator"]
+      },
+      "then": {
+        "properties": {
+          "format": {
+            "pattern": "^livingproof-evaluator-result/1\\.(?:[3-9]|[1-9][0-9]+)\\.(0|[1-9][0-9]*)(?!\\n)$"
+          }
+        }
+      }
     }
-  ]
+  ],
+  "$defs": {
+    "advisory_text": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?=.*[^\\s\\u200C\\u200D])[^<>\\u0000-\\u001F\\u007F-\\u009F\\u180E\\u200B\\u200E\\u200F\\u2028-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uD800-\\uDFFF\\uFEFF]*(?!\\n)$",
+      "description": "Plain text. Rejects <, >, and control characters, including newlines, plus C1 controls, U+180E, U+FEFF, lone surrogates U+D800 through U+DFFF, U+200B, U+200E and U+200F, the line and bidi separators U+2028 through U+202E, and U+2060 through U+2064 and U+2066 through U+2069. ZWJ (U+200D) and ZWNJ (U+200C) are allowed inside text. An ampersand is allowed. A value that is only whitespace, or only those joiners, is rejected."
+    },
+    "advisory": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "An observation. It never grades and it carries no robot result or test-system status. Title, purpose, and version come from descriptor.",
+      "required": ["summary", "details"],
+      "properties": {
+        "summary": {
+          "allOf": [{"$ref": "#/$defs/advisory_text"}],
+          "maxLength": 400,
+          "description": "Plain text, 1 to 400 characters."
+        },
+        "details": {
+          "allOf": [{"$ref": "#/$defs/advisory_text"}],
+          "maxLength": 2000,
+          "description": "Plain text, 1 to 2000 characters."
+        },
+        "details_file": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["uri", "sha256"],
+          "description": "A local JSON or text file and the sha256 of its bytes.",
+          "properties": {
+            "uri": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*\\.(?:json|txt)(?!\\n)$",
+              "description": "A relative .json or .txt path. No scheme, traversal, query, or fragment."
+            },
+            "sha256": {
+              "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/sha256"
+            }
+          }
+        },
+        "trials": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "The observations this result read. When present, at least one entry, and the entries are unique. The schema cannot require unique index values; a consumer MUST refuse a repeated index (tools/validate_contract.py does). An index is at most 9007199254740991 (2^53-1).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["index", "observation_sha256"],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "description": "Trial index the evaluator was given. At most 9007199254740991 (2^53-1)."
+              },
+              "observation_sha256": {
+                "$ref": "https://github.com/Living-Proof-Labs/livingproof-evaluator/schema/defs.schema.json#/$defs/sha256"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }

@@ -303,7 +303,36 @@ non-empty, that job's `if` is false, so it is skipped, and the report's
 The caller runs `python -m capability_verifier.evaluators`: `check` resolves
 and validates each descriptor, and `run` installs that commit and executes it.
 Results are attached by kind. An `integrity` result is stored at
-`assessment.integrity_results[<id>]`.
+`assessment.integrity_results[<id>]`. An `advisory` result is stored at
+`assessment.advisory_results[<id>]`. The value is the result document, one
+per evaluator id, the same shape as an integrity result. Each advisory
+record, with or without a result, is also stored at
+`assessment.advisory_provenance[<id>]` as the loader record: `line`, `repo`,
+`ref`, `commit`, `descriptor_sha256`, `package_name`, `installed_version`,
+`exit_code`, and `outcome`. Advisory results do not grade and do not change
+`integrity_results`, the integrity lines, or any run conclusion. When an
+advisory record's outcome is `failure` or `refused`,
+`assessment.advisory_not_run[<id>]` is `{"outcome": <outcome>, "reason": <note>}`.
+`repo` is `owner/name`, `ref` is a `vX.Y.Z` tag or a 40-character commit,
+and `commit` is 40 lowercase hex. `reason` is the loader's note after `<`,
+`>`, and control characters are replaced: one non-empty line of at most 2000
+characters, or `"no result"` when that leaves nothing. The same id is never
+in both `advisory_results` and `advisory_not_run`. A bundle with no advisory
+evaluator has none of `advisory_results`, `advisory_provenance`, or
+`advisory_not_run`. `evaluators run --report-dir DIR` copies a verified `advisory.details_file`
+byte-for-byte into `DIR`, under the cited relative path. Without
+`--report-dir` the file stays only in `out/<id>/`. A copy that would replace
+a different file, or follow a symlink, refuses that evaluator the same way
+and leaves earlier copies in place. A missing, altered,
+unreadable, or substituted file, or a path outside the contract, refuses
+that evaluator alone: `advisory_not_run[<id>]` is
+`{"outcome": "refused", "reason": "<file and problem>"}`, and that id is
+omitted from `advisory_results` and `advisory_provenance`. The grade,
+conclusions, and integrity results are unchanged, and the command keeps
+going. The same check during result collection still fails that collection.
+The loader also refuses an advisory `trials` list that repeats an index, compared
+as numbers so `1` and `1.0` are the same index, and a result with a duplicate
+JSON object key at any depth.
 
 The loader maps each exit code from the descriptor:
 

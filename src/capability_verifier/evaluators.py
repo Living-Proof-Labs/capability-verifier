@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -44,14 +45,19 @@ LINE = re.compile(
     r"(?P<path>[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*\.json)$"
 )
 _SHA = re.compile(r"[0-9a-f]{40}")
+_PROVENANCE_REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+_PROVENANCE_TAG = re.compile(r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
 _TOKEN = re.compile(r"\{(evidence_manifest|media_dir|result)\}")
 DEFAULT_TIMEOUT = 30 * 60
 RESULT_SCHEMA = "evaluator-result.schema.json"
 # Placement knows these kinds. A descriptor kind outside the map is refused.
-PLACERS = {"integrity": collect._attach_integrity}
+PLACERS = {
+    "integrity": collect._attach_integrity,
+    "advisory": collect._attach_advisory,
+}
 SUPPORTED_MAJORS = {1}
 # The contract tag must still peel to this commit. A moved tag is refused.
-_PINNED_CONTRACT = ("v1.9.0", "cbd05d59e2badc1a53cbb39ca0a15ec9070baa24")
+_PINNED_CONTRACT = ("v1.10.0", "d46062a9300611e32ad76749e67a8f035489ebce")
 
 
 class Refusal(Exception):
@@ -104,6 +110,7 @@ class Record:
     evaluator_id: str = ""
     kind: str = ""
     document: dict | None = None
+    record_provenance: bool = True
 
     def as_dict(self) -> dict:
         return {
@@ -314,6 +321,12 @@ def _accept_result(document: dict, descriptor: dict, schema: dict, registry: Reg
             f"result evaluator kind {evaluator.get('kind')!r} is not {descriptor['kind']!r}"
         )
     accept_result_format(descriptor.get("result"), document.get("format"))
+    # The schema cannot require unique trial indexes, or reject 1 and 1.0 as the
+    # same index. The loader refuses both. Duplicate object keys are refused by
+    # load_object, which is what reads this result.
+    repeated = collect.repeated_advisory_index(document)
+    if repeated:
+        raise Refusal(repeated)
 
 
 @dataclass
@@ -504,6 +517,29 @@ def _argparse_usage(stderr: str) -> bool:
     return usage >= 0 and "error:" in text[usage:]
 
 
+def _cited_advisory_details(document: dict, result_path: Path, report_dir: Path | None) -> None:
+    """Check an advisory details file under ``out/<id>`` and copy it when asked.
+
+    A bad or missing file is a refusal of this evaluator only. The message names
+    the file. A good file is copied byte-for-byte when ``report_dir`` is set.
+    """
+    evaluator = document.get("evaluator")
+    if not isinstance(evaluator, dict) or evaluator.get("kind") != "advisory":
+        return
+    cited = collect._details_citation(document)
+    uri = cited.get("uri") if isinstance(cited, dict) else None
+    name = uri if isinstance(uri, str) and uri else "details file"
+    exports: dict[str, bytes] = {}
+    try:
+        collect._take_details_file(result_path, document, result_path.parent, exports)
+        if report_dir is not None and exports:
+            collect._write_thresholds(report_dir, exports)
+    except OSError as exc:
+        raise collect.DetailsCitationError(f"unreadable: {name} ({exc.strerror or exc})") from exc
+    except collect.ThresholdCitationError as exc:
+        raise collect.DetailsCitationError(str(exc)) from exc
+
+
 def execute(
     prepared: Prepared,
     *,
@@ -513,14 +549,13 @@ def execute(
     work: Path,
     timeout: float,
     run=None,
+    report_dir: Path | None = None,
 ) -> Record:
     """Install and run one prepared descriptor. Returns its provenance record."""
     run = subprocess.run if run is None else run
     descriptor = prepared.document
     version = install(prepared, work, run)
-    result_path = out / descriptor["id"] / "result.json"
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    _discard(result_path)
+    result_path = _fresh_output(out, descriptor["id"]) / "result.json"
     values = _given(evidence, media_dir, result_path)
     command = [
         str(work / descriptor["id"] / ".venv" / "bin" / "python"),
@@ -547,6 +582,12 @@ def execute(
         try:
             document = load_object(result_path.read_bytes())
             _accept_result(document, descriptor, prepared.result_schema, prepared.registry)
+            _cited_advisory_details(document, result_path, report_dir)
+        except collect.DetailsCitationError as exc:
+            _discard(result_path)
+            refused = _finish(base, code, "refused", collect._advisory_reason(str(exc)), out)
+            refused.record_provenance = False
+            return refused
         except Refusal as exc:
             _discard(result_path)
             return _finish(base, code, "failure", str(exc), out)
@@ -602,6 +643,40 @@ def _discard(path: Path) -> None:
         path.unlink()
 
 
+def _fresh_output(out: Path, evaluator_id: str) -> Path:
+    """Replace ``out/<id>`` with an empty directory before one evaluator runs.
+
+    ``id`` is the descriptor's slug, one path segment. A symlink at that path
+    is unlinked and not followed. A real directory is removed. The path is
+    refused unless it is directly under ``out``.
+    """
+    if (
+        not isinstance(evaluator_id, str)
+        or evaluator_id in {"", ".", ".."}
+        or "/" in evaluator_id
+        or "\\" in evaluator_id
+        or "\x00" in evaluator_id
+    ):
+        raise Refusal(f"{evaluator_id!r} is not a directory directly under the output")
+    out.mkdir(parents=True, exist_ok=True)
+    root = out.resolve()
+    target = out / evaluator_id
+    if target.parent.resolve() != root:
+        raise Refusal(f"{evaluator_id!r} is not a directory directly under the output")
+    if target.is_symlink():
+        target.unlink()
+    elif target.is_dir():
+        if target.resolve().parent != root:
+            raise Refusal(f"{evaluator_id!r} is not a directory directly under the output")
+        shutil.rmtree(target)
+    elif target.exists():
+        target.unlink()
+    target.mkdir()
+    if target.is_symlink() or target.resolve().parent != root:
+        raise Refusal(f"{evaluator_id!r} is not a directory directly under the output")
+    return target
+
+
 def run_lines(
     text: str,
     *,
@@ -609,6 +684,7 @@ def run_lines(
     out: Path,
     media_dir: Path | None = None,
     bundle: Path | None = None,
+    report_dir: Path | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     work: Path | None = None,
     fetch=None,
@@ -634,6 +710,7 @@ def run_lines(
                 work=workspace,
                 timeout=timeout,
                 run=run,
+                report_dir=report_dir,
             )
         )
     _write_provenance(out, records)
@@ -649,9 +726,28 @@ def _write_provenance(out: Path, records: list[Record]) -> None:
     )
 
 
+def _advisory_provenance(record: Record) -> dict:
+    """The record dict, refused when repo, ref, or commit would fail the Reporter."""
+    payload = record.as_dict()
+    repo, ref, commit = payload.get("repo"), payload.get("ref"), payload.get("commit")
+    if not isinstance(repo, str) or _PROVENANCE_REPO.fullmatch(repo) is None:
+        raise Refusal(f"advisory provenance repo {repo!r} is not owner/name")
+    if not isinstance(ref, str) or (
+        _PROVENANCE_TAG.fullmatch(ref) is None and _SHA.fullmatch(ref) is None
+    ):
+        raise Refusal(f"advisory provenance ref {ref!r} is not a tag or commit")
+    if not isinstance(commit, str) or _SHA.fullmatch(commit) is None:
+        raise Refusal(f"advisory provenance commit {commit!r} is not 40 lowercase hex")
+    return payload
+
+
 def _place(bundle_path: Path, records: list[Record]) -> None:
     bundle = load_object(bundle_path.read_text(encoding="utf-8"))
     for record in records:
+        if record.kind == "advisory" and record.record_provenance:
+            collect._attach_advisory_provenance(
+                bundle, record.evaluator_id, _advisory_provenance(record)
+            )
         document = record.document
         if document is not None:
             placer = PLACERS.get(record.kind)
@@ -660,6 +756,15 @@ def _place(bundle_path: Path, records: list[Record]) -> None:
             placer(bundle, [document])
             continue
         if record.outcome not in {"refused", "failure"}:
+            continue
+        if record.kind == "advisory":
+            # note is the last non-empty stderr line the loader kept, if any.
+            collect._attach_advisory_not_run(
+                bundle,
+                record.evaluator_id,
+                record.outcome,
+                record.note or "no result",
+            )
             continue
         collect._attach_not_run(
             bundle,
@@ -693,6 +798,11 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--out", type=Path, required=True)
     run.add_argument("--bundle", type=Path, help="verified bundle manifest to attach results to")
     run.add_argument(
+        "--report-dir",
+        type=Path,
+        help="copy each verified advisory details file next to the report",
+    )
+    run.add_argument(
         "--timeout",
         type=float,
         default=DEFAULT_TIMEOUT,
@@ -711,6 +821,7 @@ def main(argv: list[str] | None = None) -> int:
             out=args.out,
             media_dir=args.media_dir,
             bundle=args.bundle,
+            report_dir=args.report_dir,
             timeout=args.timeout,
         )
     except Refusal as exc:
@@ -721,7 +832,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     for record in records:
         print(f"{record.evaluator_id}: {record.outcome}")
-    if any(record.outcome in {"failure", "refused"} for record in records):
+    if any(
+        record.outcome in {"failure", "refused"} and record.record_provenance for record in records
+    ):
         return 1
     return 0
 

@@ -1,0 +1,49 @@
+{
+  "format": "livingproof-evaluator-result/1.3.0",
+  "evaluator": {
+    "id": "battery-thermal",
+    "version": "0.1.0",
+    "kind": "advisory",
+    "execution": "deterministic",
+    "display_name": "Battery thermal",
+    "publisher": "Living Proof Labs",
+    "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><rect width=\"16\" height=\"16\" fill=\"none\"/></svg>"
+  },
+  "inputs": [
+    {
+      "role": "evidence-manifest",
+      "uri": "evidence/manifest.json",
+      "sha256": "b324aa783208399983b969f28924729519e55fc929525a06619cc015a3753261"
+    }
+  ],
+  "timestamps": {
+    "started_at": "2026-11-20T15:00:00Z",
+    "completed_at": "2026-11-20T15:00:01Z"
+  },
+  "descriptor": {
+    "title": "Battery thermal",
+    "purpose": "Reports pack temperature observations. It does not grade the robot.",
+    "version": "0.1.0",
+    "tier": "observation",
+    "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><rect width=\"16\" height=\"16\" fill=\"none\"/></svg>",
+    "icon_accessible_name": "Battery thermal"
+  },
+  "advisory": {
+    "summary": "Pack & cell temperatures stayed within the recorded range.",
+    "details": "The notes file lists the peak temperature observed on trial 1. Nothing here is a robot grade.",
+    "details_file": {
+      "uri": "notes.txt",
+      "sha256": "672452afe3c3af41a8580455addb04c6e6696ce19e3117e4446a962fb448d7bc"
+    },
+    "trials": [
+      {
+        "index": 0,
+        "observation_sha256": "ea42828923da31ad350b0dba88ab6d0ebcf8df407a10252cc5b45b53bfaae78c"
+      },
+      {
+        "index": 1,
+        "observation_sha256": "b87b6ef17cc133aeca49ac3428d49b4283a44940546931b39de9d58679381135"
+      }
+    ]
+  }
+}

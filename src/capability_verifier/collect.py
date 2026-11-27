@@ -10,6 +10,20 @@ on the assessment, keyed by ``evaluator.id``. More than one integrity
 evaluator per run is kept. A failed integrity result marks each assessment
 run ``INCONCLUSIVE`` and never changes the robot grade.
 
+A result whose ``evaluator.kind`` is ``advisory`` is stored the same way, at
+``assessment.advisory_results[<evaluator.id>]``. The value is that result
+document. Advisory results never grade, and they never change
+``integrity_results``, the integrity lines, or any run conclusion. The loader
+also stores ``assessment.advisory_provenance[<id>]`` for each advisory record,
+and ``assessment.advisory_not_run[<id>]`` when that record failed or was
+refused. A bundle with no advisory evaluator has none of those three keys.
+
+An advisory result may cite ``advisory.details_file``. The file at that
+relative path is copied into the report output, and its SHA-256 has to match
+the citation. A missing file, different bytes, a substituted path, or a path
+outside the contract fails the collection. The manifest is left unchanged
+when that happens.
+
 When the run-integrity job's result is given (``RUN_INTEGRITY_RESULT``) and no integrity result
 was collected, whether the job failed, was refused by the evaluator (exit 2), was cancelled or
 skipped, or succeeded and left nothing, the run is not shown as clean: ``assessment.integrity_not_run``
@@ -40,7 +54,14 @@ from pathlib import Path, PurePosixPath
 
 RESULT_FORMAT = re.compile(r"^livingproof-evaluator-result/1\.\d+\.\d+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+# Characters the Reporter rejects in an advisory not-run reason.
+_BAD_REASON = re.compile(r"[<>\x00-\x1f\x7f-\x9f\u2028\u2029]")
+_REASON_LIMIT = 2000
 _THRESHOLDS_NAME = "thresholds.json"
+# Contract rule for advisory.details_file.uri. The schema states it; the
+# collector applies it again because a result file is not re-validated here.
+_DETAILS_URI = re.compile(r"^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*\.(?:json|txt)$")
+_DETAILS_URI_MAX = 256
 _MEDIA_PREFIX = "media/"  # where the scenario media job cites its thresholds.json
 PROBLEMS_FILE = "evaluator-result-problems.txt"
 INTEGRITY_FILE = "integrity-lines.txt"
@@ -58,6 +79,14 @@ class ThresholdMissingError(ThresholdCitationError):
         self.relative = relative
 
 
+class DetailsCitationError(ValueError):
+    """The cited advisory details file is missing, altered, or a different path."""
+
+
+class AdvisoryResultError(ValueError):
+    """An advisory result breaks a rule the schema cannot express."""
+
+
 def collect(
     bundle: dict,
     directory: Path,
@@ -73,6 +102,11 @@ def collect(
 
     An integrity result has no trial id. It is kept on
     ``assessment.integrity_results``, keyed by ``evaluator.id``.
+
+    An advisory result is kept on ``assessment.advisory_results``, keyed by
+    ``evaluator.id``. It does not grade. A cited ``advisory.details_file`` is
+    checked against the file at that path, relative to the result file, and
+    copied into ``report_dir`` when that directory is set.
 
     Each appended document that cites ``thresholds.json`` is checked against
     the file at that URI, relative to the result file. When ``report_dir`` is
@@ -111,6 +145,7 @@ def collect(
             by_id[result["id"]] = result
     matched = []
     integrity_docs: list[dict] = []
+    advisory_docs: list[dict] = []
     trial_appended = 0
     exports: dict[str, bytes] = {}
     for path, document in found:
@@ -123,6 +158,14 @@ def collect(
         if _is_integrity(document):
             tally["appended"] += 1
             integrity_docs.append(document)
+            continue
+        if _is_advisory(document):
+            problem = repeated_advisory_index(document)
+            if problem:
+                raise AdvisoryResultError(problem)
+            _take_details_file(path, document, directory, exports)
+            tally["appended"] += 1
+            advisory_docs.append(document)
             continue
         scenario = document.get("scenario")
         trial_id = scenario.get("trial_id") if isinstance(scenario, dict) else None
@@ -151,6 +194,7 @@ def collect(
             raise TypeError(f"result {trial_id!r} evaluator_results is not a list")
         entries.append(document)
     _attach_integrity(bundle, integrity_docs)
+    _attach_advisory(bundle, advisory_docs)
     if integrity_job and not integrity_docs:
         refusal = _refusal(directory)
         _attach_not_run(
@@ -257,6 +301,70 @@ def _cited_file(result_path: Path, item: dict, results_root: Path) -> tuple[str,
     return relative, data
 
 
+def _details_citation(document: dict) -> dict | None:
+    payload = document.get("advisory")
+    if not isinstance(payload, dict) or "details_file" not in payload:
+        return None
+    item = payload.get("details_file")
+    if not isinstance(item, dict):
+        raise DetailsCitationError("substituted: advisory.details_file is not an object")
+    return item
+
+
+def _take_details_file(
+    result_path: Path, document: dict, results_root: Path, exports: dict
+) -> None:
+    item = _details_citation(document)
+    if item is None:
+        return
+    relative, data = _cited_details(result_path, item, results_root)
+    previous = exports.get(relative)
+    if previous is not None and previous != data:
+        raise DetailsCitationError(
+            f"substituted: {relative} is cited with two different sha256 values"
+        )
+    exports[relative] = data
+
+
+def _cited_details(result_path: Path, item: dict, results_root: Path) -> tuple[str, bytes]:
+    uri = item.get("uri")
+    where = result_path.name
+    if (
+        not isinstance(uri, str)
+        or len(uri) > _DETAILS_URI_MAX
+        or _DETAILS_URI.fullmatch(uri) is None
+    ):
+        raise DetailsCitationError(f"substituted: {where} cites {uri!r}, outside the contract")
+    relative = uri
+    parts = PurePosixPath(uri).parts
+    candidate = result_path.parent.joinpath(*parts)
+    try:
+        candidate.relative_to(results_root)
+    except ValueError:
+        raise DetailsCitationError(
+            f"substituted: {where} cites {relative}, outside the results directory"
+        ) from None
+    if _symlink_at_or_below(candidate, results_root):
+        raise DetailsCitationError(
+            f"substituted: {where} cites {relative}, which is a different path"
+        )
+    got = candidate.relative_to(result_path.parent).as_posix()
+    if got != relative:
+        raise DetailsCitationError(f"substituted: {where} cites {relative}, but the file is {got}")
+    if not candidate.is_file():
+        raise DetailsCitationError(
+            f"missing: {where} cites {relative}, and that file is not in the results"
+        )
+    data = candidate.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    cited = item.get("sha256")
+    if not isinstance(cited, str) or _SHA256.fullmatch(cited) is None or digest != cited:
+        raise DetailsCitationError(
+            f"altered: {relative} sha256 is {digest}, not the cited {cited!r}"
+        )
+    return relative, data
+
+
 def _symlink_at_or_below(path: Path, root: Path) -> bool:
     """True when ``path`` or a directory under ``root`` is a symlink.
 
@@ -298,6 +406,53 @@ def _write_thresholds(report_dir: Path, exports: dict[str, bytes]) -> None:
 def _is_integrity(document: dict) -> bool:
     evaluator = document.get("evaluator")
     return isinstance(evaluator, dict) and evaluator.get("kind") == "integrity"
+
+
+def _is_advisory(document: dict) -> bool:
+    evaluator = document.get("evaluator")
+    return isinstance(evaluator, dict) and evaluator.get("kind") == "advisory"
+
+
+def _whole_index(value: object) -> int | None:
+    """The integer a trial index counts as. A whole-number float is that integer.
+
+    JSON Schema's integer type accepts ``1.0``. ``json.loads`` parses that token
+    as a float, so ``1`` and ``1.0`` have to compare as the same index.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    return int(value)
+
+
+def repeated_advisory_index(document: dict) -> str | None:
+    """An error when an advisory result repeats a trial index, else None.
+
+    The schema's ``uniqueItems`` rejects an identical entry. It cannot require
+    the index values to be unique when the hashes differ, so the loader does.
+    """
+    if not _is_advisory(document):
+        return None
+    payload = document.get("advisory")
+    if not isinstance(payload, dict):
+        return None
+    trials = payload.get("trials")
+    if not isinstance(trials, list):
+        return None
+    seen: dict[int, int] = {}
+    for position, trial in enumerate(trials):
+        if not isinstance(trial, dict):
+            continue
+        index = _whole_index(trial.get("index"))
+        if index is None:
+            continue
+        previous = seen.get(index)
+        if previous is None:
+            seen[index] = position
+            continue
+        return f"advisory/trials/{position}/index: repeats advisory/trials/{previous}/index"
+    return None
 
 
 _GRADED_STATUSES = frozenset({"COMPLETED", "ERROR"})
@@ -347,6 +502,104 @@ def _attach_integrity(bundle: dict, documents: list[dict]) -> None:
     for run in runs:
         if isinstance(run, dict):
             run["conclusion"] = "INCONCLUSIVE"
+
+
+def _attach_advisory(bundle: dict, documents: list[dict]) -> None:
+    """Store advisory results. They do not grade and they do not touch integrity.
+
+    Each document is stored at ``assessment.advisory_results[<evaluator.id>]``,
+    the same one-document-per-id shape as ``integrity_results``. Nothing is
+    written when ``documents`` is empty, so a bundle with no advisory result
+    has no ``advisory_results`` key.
+    """
+    if not documents:
+        return
+    assessment = bundle.get("assessment")
+    if not isinstance(assessment, dict):
+        assessment = {}
+        bundle["assessment"] = assessment
+    stored = assessment.get("advisory_results")
+    if stored is None:
+        stored = {}
+        assessment["advisory_results"] = stored
+    if not isinstance(stored, dict):
+        raise TypeError("assessment advisory_results is not a mapping")
+    for document in documents:
+        problem = repeated_advisory_index(document)
+        if problem:
+            raise AdvisoryResultError(problem)
+        evaluator = document.get("evaluator") if isinstance(document.get("evaluator"), dict) else {}
+        name = evaluator.get("id")
+        key = name if isinstance(name, str) and name else "(no evaluator id)"
+        stored[key] = document
+        _drop_advisory_id(bundle, "advisory_not_run", key)
+
+
+def _advisory_reason(note: str | None) -> str:
+    """Plain text the Reporter will accept, or ``no result`` when nothing remains.
+
+    ``<``, ``>``, and control characters, including newlines, are replaced.
+    The result is one line of at most 2000 characters.
+    """
+    text = "" if note is None else str(note)
+    text = _BAD_REASON.sub(" ", text).strip()
+    if len(text) > _REASON_LIMIT:
+        text = text[:_REASON_LIMIT].rstrip()
+    return text or "no result"
+
+
+def _drop_advisory_id(bundle: dict, field: str, key: str) -> None:
+    """Remove ``key`` from one advisory map, and the map when it is left empty."""
+    assessment = bundle.get("assessment")
+    if not isinstance(assessment, dict):
+        return
+    stored = assessment.get(field)
+    if not isinstance(stored, dict) or key not in stored:
+        return
+    del stored[key]
+    if not stored:
+        del assessment[field]
+
+
+def _advisory_key(evaluator: str) -> str:
+    if isinstance(evaluator, str) and evaluator.strip():
+        return evaluator
+    return "(no evaluator id)"
+
+
+def _advisory_map(bundle: dict, field: str) -> dict:
+    assessment = bundle.get("assessment")
+    if not isinstance(assessment, dict):
+        assessment = {}
+        bundle["assessment"] = assessment
+    stored = assessment.get(field)
+    if stored is None:
+        stored = {}
+        assessment[field] = stored
+    if not isinstance(stored, dict):
+        raise TypeError(f"assessment {field} is not a mapping")
+    return stored
+
+
+def _attach_advisory_provenance(bundle: dict, evaluator: str, provenance: dict) -> None:
+    """Store one advisory record's provenance. It does not grade."""
+    _advisory_map(bundle, "advisory_provenance")[_advisory_key(evaluator)] = provenance
+
+
+def _attach_advisory_not_run(bundle: dict, evaluator: str, outcome: str, reason: str) -> None:
+    """Record a missing advisory result. Does not touch integrity or conclusions.
+
+    The same id is removed from ``advisory_results``, so a result and a not-run
+    record are never stored together.
+    """
+    if outcome not in {"failure", "refused"}:
+        raise ValueError(f"advisory not-run outcome {outcome!r} is not failure or refused")
+    key = _advisory_key(evaluator)
+    _drop_advisory_id(bundle, "advisory_results", key)
+    _advisory_map(bundle, "advisory_not_run")[key] = {
+        "outcome": outcome,
+        "reason": _advisory_reason(reason),
+    }
 
 
 NOT_RUN_ID = "livingproof-run-integrity"
@@ -1030,7 +1283,7 @@ def main(argv: list[str] | None = None) -> int:
             counts,
             integrity_job=os.environ.get("RUN_INTEGRITY_RESULT") or None,
         )
-    except ThresholdCitationError as exc:
+    except (ThresholdCitationError, DetailsCitationError, AdvisoryResultError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     trial_appended = counts.pop("_trial_appended", 0)

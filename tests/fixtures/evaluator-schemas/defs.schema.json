@@ -41,8 +41,8 @@
           "description": "Version of the evaluator that produced, or is asked to produce, this document."
         },
         "kind": {
-          "enum": ["scenario", "integrity"],
-          "description": "Selects the payload. scenario grades one trial's steps and produces robot results. integrity judges whether the run and the test system can be trusted and produces a test-system status and findings."
+          "enum": ["scenario", "integrity", "advisory"],
+          "description": "Selects the payload. scenario grades one trial's steps and produces robot results. integrity judges whether the run and the test system can be trusted and produces a test-system status and findings. advisory never grades and produces no robot result or test-system status."
         },
         "execution": {
           "enum": ["deterministic", "agentic"],

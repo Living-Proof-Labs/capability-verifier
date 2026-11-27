@@ -1,0 +1,32 @@
+{
+  "format": "livingproof-evaluator-implementation/1",
+  "id": "battery-thermal",
+  "kind": "advisory",
+  "grading": "none",
+  "package": {
+    "name": "battery-thermal"
+  },
+  "runtime": {
+    "python": "3.12"
+  },
+  "entrypoint": {
+    "module": "battery_thermal"
+  },
+  "arguments": [
+    "{evidence_manifest}",
+    {
+      "if": "media_dir",
+      "then": [
+        "--media",
+        "{media_dir}"
+      ]
+    },
+    "--out",
+    "{result}"
+  ],
+  "exit_codes": {
+    "0": "result",
+    "2": "refused"
+  },
+  "result": "livingproof-evaluator-result/1.3.0"
+}
