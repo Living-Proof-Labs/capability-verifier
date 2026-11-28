@@ -304,7 +304,9 @@ never used on a scenario. The media run starts only when the loader has both
 a media directory and a world document; walk-hallway has no world document,
 so it writes no media result. Both jobs pass `--specs-root .specs-hallway`,
 the catalog the job fetched, because the loader package is the `workflow-src`
-checkout and would otherwise look for the parameter file there. A world-graded
+checkout and would otherwise look for the parameter file there. A relative
+`--specs-root` is read against the current working directory, not the imported
+package. The option is used only when a scenario line runs. A world-graded
 scenario, including walk-corner,
 keeps the hardcoded tools. At most one line may have `grading: robot`. Two
 are refused before anything is installed, and the error names both lines.
