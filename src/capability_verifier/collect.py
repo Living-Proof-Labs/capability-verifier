@@ -686,6 +686,11 @@ def _take_scenario_provenance(path: Path, document: dict, taken: dict[str, dict]
     name = evaluator.get("id") if isinstance(evaluator, dict) else None
     if not isinstance(name, str) or _EVALUATOR_ID.fullmatch(name) is None:
         raise ScenarioProvenanceError(f"{where}: evaluator id {name!r} is not valid")
+    expected = name + SCENARIO_PROVENANCE_SUFFIX
+    if path.name != expected:
+        raise ScenarioProvenanceError(
+            f"{where}: evaluator id {name!r} does not match the filename {expected!r}"
+        )
     record = scenario_provenance_record(document.get("provenance"), f"{where} ({name})")
     if name in taken and taken[name] != record:
         raise ScenarioProvenanceError(
