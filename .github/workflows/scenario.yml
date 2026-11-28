@@ -1476,6 +1476,7 @@ jobs:
           RESULT_FORMAT = re.compile(r"^livingproof-evaluator-result/1\.\d+\.\d+$")
           _SHA256 = re.compile(r"^[0-9a-f]{64}$")
           SCENARIO_PROVENANCE_FORMAT = "livingproof-scenario-provenance/1.0.0"
+          _SCENARIO_PROVENANCE_FAMILY = "livingproof-scenario-provenance/"
           SCENARIO_PROVENANCE_SUFFIX = ".scenario-provenance.json"
           _EVALUATOR_ID = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
           _REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -1584,7 +1585,18 @@ jobs:
                       except ValueError as exc:  # truncated, invalid JSON or not UTF-8
                           _note(unusable, problems, path, directory, None, f"not valid JSON ({exc})")
                           continue
-                      if isinstance(document, dict) and document.get("format") == SCENARIO_PROVENANCE_FORMAT:
+                      fmt = document.get("format") if isinstance(document, dict) else None
+                      if isinstance(fmt, str) and fmt.startswith(_SCENARIO_PROVENANCE_FAMILY):
+                          if fmt != SCENARIO_PROVENANCE_FORMAT:
+                              _note(
+                                  unusable,
+                                  problems,
+                                  path,
+                                  directory,
+                                  document.get("evaluator"),
+                                  f"unrecognised scenario provenance format {fmt!r}",
+                              )
+                              continue
                           _take_scenario_provenance(path, document, scenario_provenance)
                           continue
                       if (
