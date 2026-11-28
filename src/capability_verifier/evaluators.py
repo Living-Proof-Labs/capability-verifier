@@ -135,6 +135,15 @@ class Record:
         }
 
 
+# Appended to a refusal of the evaluators file. The grammar sentence names the
+# expected input; the example and the check command are the next useful move.
+_LINE_HINT = (
+    "Expected <owner>/<repo>@<vX.Y.Z-or-commit>/<path>.json, "
+    "for example acme/widgets@v1.2.3/evaluator.json. "
+    "Next: python -m capability_verifier.evaluators check --lines FILE"
+)
+
+
 def parse_lines(text: str) -> list[Declaration]:
     """Declaration lines in ``text``. Blank lines and ``#`` comments are ignored."""
     found = []
@@ -145,11 +154,14 @@ def parse_lines(text: str) -> list[Declaration]:
         match = LINE.fullmatch(line)
         if match is None or any(part in {".", ".."} for part in match["path"].split("/")):
             raise Refusal(
-                f"{line!r} is not a declaration line <owner>/<repo>@<vX.Y.Z-or-commit>/<path>.json"
+                f"{line!r} is not a declaration line "
+                "<owner>/<repo>@<vX.Y.Z-or-commit>/<path>.json. " + _LINE_HINT
             )
         found.append(Declaration(line=line, **match.groupdict()))
     if not found:
-        raise Refusal("no declaration lines (blank lines and # comments do not count)")
+        raise Refusal(
+            "no declaration lines (blank lines and # comments do not count). " + _LINE_HINT
+        )
     return found
 
 
