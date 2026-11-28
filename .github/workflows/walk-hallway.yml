@@ -82,8 +82,11 @@ on:
           ref is a release tag vMAJOR.MINOR.PATCH or a 40-character hexadecimal
           commit. Blank lines and lines starting with # are ignored. Empty,
           the default, runs no evaluators in this workflow and writes no Run
-          Integrity card. When set, the caller runs
-          python -m capability_verifier.evaluators. This workflow does not.
+          Integrity card. When a line declares a scenario evaluator and the
+          evidence is walk-hallway, this workflow runs that line through
+          python -m capability_verifier.evaluators and does not run the
+          hardcoded scenario tools. A world-graded scenario keeps those tools.
+          Other kinds are still run by the caller.
         type: string
         default: ''
     outputs:

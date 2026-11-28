@@ -527,10 +527,14 @@ The spelling rules and the failure text are in
 of the same name is refused. Blank lines and lines starting with `#` are
 ignored. One line is
 `Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json`.
+The scenario line is
+`Living-Proof-Labs/livingproof-evaluator-scenario@v1.6.0/livingproof-evaluator.json`.
 Empty, the default, runs no evaluators in this workflow and writes no Run
-Integrity card. When the input is set, the caller runs
-`python -m capability_verifier.evaluators`. This workflow does not. The line
-format is also in
+Integrity card. When a line declares a scenario evaluator and the evidence is
+walk-hallway, this workflow runs that line through
+`python -m capability_verifier.evaluators` and does not run the hardcoded
+scenario tools. A world-graded scenario keeps those tools. Other kinds are
+still run by the caller. The line format is also in
 [Verification locks](docs/locks.md#evaluator-declaration-lines).
 
 The robot repository provides the lock, `pins.json`, `tests/` and a `pyproject.toml` with

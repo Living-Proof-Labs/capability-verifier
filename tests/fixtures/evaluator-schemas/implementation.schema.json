@@ -20,19 +20,19 @@
   "properties": {
     "format": {
       "const": "livingproof-evaluator-implementation/1",
-      "description": "The format stays /1. New kinds widen the kind enum additively in a later minor version of this contract. A consumer MUST refuse a kind it does not know."
+      "description": "The format stays /1. This version's kinds are integrity, advisory, and scenario. A later minor version widens the kind enum additively. A consumer MUST refuse a kind it does not know."
     },
     "id": {
       "$ref": "defs.schema.json#/$defs/slug",
       "description": "The evaluator.id this implementation writes on its results."
     },
     "kind": {
-      "enum": ["integrity", "advisory"],
-      "description": "integrity or advisory. A later minor version widens this enum additively. A consumer MUST refuse a kind it does not know."
+      "enum": ["integrity", "advisory", "scenario"],
+      "description": "integrity, advisory, or scenario. A later minor version widens this enum additively. A consumer MUST refuse a kind it does not know."
     },
     "grading": {
       "type": "string",
-      "description": "none only in this version. This implementation does not grade. advisory requires none."
+      "description": "integrity and advisory require none. scenario requires robot. Every other combination is rejected. At most one evaluator in a run may grade the robot. A descriptor is one evaluator, so the descriptor cannot state that rule. A consumer that loads a list of descriptors MUST refuse a list with two `grading` values of `robot`."
     },
     "package": {
       "type": "object",
@@ -74,7 +74,7 @@
     "arguments": {
       "type": "array",
       "minItems": 1,
-      "description": "Ordered arguments. A top-level string may contain {evidence_manifest} and {result}, and may not contain {media_dir}. {media_dir} may appear only in a conditional whose if is media_dir. {evidence_manifest} and {result} must each appear in a top-level string. Conditionals do not nest.",
+      "description": "Ordered arguments of the trial run. A top-level string may contain {evidence_manifest} and {result}, and may not contain {media_dir}, {world}, or {identity}. {result} is the path of one result file. integrity and advisory write that file. It is not a directory. {result_dir} is a directory a scenario run writes into. The per-trial result files in that directory are the results, and each one carries the declared result format. thresholds.json and any other file in the directory are not results. {result_dir} and {thresholds} may appear in a trial argument, including inside then, only when kind is scenario. integrity and advisory reject them. {media_dir} may appear only in a conditional whose if is media_dir, or in media.arguments. {world} and {identity} may appear only in media.arguments. {evidence_manifest} must appear in a top-level string. integrity and advisory must also include {result} there. scenario must include {result_dir} there. Conditionals do not nest.",
       "items": {
         "oneOf": [
           {"$ref": "#/$defs/argument_without_media_dir"},
@@ -82,9 +82,31 @@
         ]
       },
       "allOf": [
-        {"contains": {"type": "string", "pattern": "\\{evidence_manifest\\}"}},
-        {"contains": {"type": "string", "pattern": "\\{result\\}"}}
+        {"contains": {"type": "string", "pattern": "\\{evidence_manifest\\}"}}
       ]
+    },
+    "media": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The media run: a second process, used when this implementation grades recordings. integrity and advisory reject this key. A consumer runs the media run only when it has both a media directory and a world document; otherwise it runs no media process and writes no media result. The consumer substitutes {result_dir} separately from the trial run. `{result_dir}` is a directory a scenario run writes into. The per-trial result files in that directory are the results, and each one carries the declared result format. `thresholds.json` and any other file in the directory are not results. arguments is a flat list of strings. {evidence_manifest}, {media_dir}, and {result_dir} must each appear. {world} and {identity} may appear here. {identity} is the --identity string the media CLI records, stored as the evaluator input URI. Today's value is git+https://github.com/<owner>/<repo>@<commit>; the flag also accepts a commit or an image digest. Conditionals are not used: this object is already the media run.",
+      "required": ["module", "arguments"],
+      "properties": {
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?!\\n)$",
+          "description": "Python module a loader runs with python -m for the media run."
+        },
+        "arguments": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/media_argument"},
+          "allOf": [
+            {"contains": {"type": "string", "pattern": "\\{evidence_manifest\\}"}},
+            {"contains": {"type": "string", "pattern": "\\{media_dir\\}"}},
+            {"contains": {"type": "string", "pattern": "\\{result_dir\\}"}}
+          ]
+        }
+      }
     },
     "exit_codes": {
       "type": "object",
@@ -140,18 +162,205 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "scenario"}},
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {"grading": {"const": "robot"}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "integrity"}},
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "media": {
+            "description": "integrity has no media run.",
+            "not": {}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "advisory"}},
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "media": {
+            "description": "advisory has no media run.",
+            "not": {}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "integrity"}},
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "arguments": {"$ref": "#/$defs/no_thresholds"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "advisory"}},
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "arguments": {"$ref": "#/$defs/no_thresholds"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "integrity"}},
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "arguments": {"contains": {"type": "string", "pattern": "\\{result\\}"}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "advisory"}},
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "arguments": {"contains": {"type": "string", "pattern": "\\{result\\}"}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "scenario"}},
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "arguments": {"contains": {"type": "string", "pattern": "\\{result_dir\\}"}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "integrity"}},
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "arguments": {"$ref": "#/$defs/no_result_dir"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "advisory"}},
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "arguments": {"$ref": "#/$defs/no_result_dir"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "scenario"}},
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "arguments": {"$ref": "#/$defs/no_result"}
+        }
+      }
     }
   ],
   "$defs": {
     "argument": {
       "type": "string",
-      "pattern": "^(?:[^{}\\u0000]|\\{(?:evidence_manifest|media_dir|result)\\})*(?!\\n)$",
-      "description": "An argument string. The only brace tokens it may contain are {evidence_manifest}, {media_dir}, and {result}. NUL is rejected. A newline is allowed."
+      "pattern": "^(?:[^{}\\u0000]|\\{(?:evidence_manifest|media_dir|result|result_dir|thresholds)\\})*(?!\\n)$",
+      "description": "An argument string inside a conditional whose if is media_dir. The brace tokens it may contain are {evidence_manifest}, {media_dir}, {result}, {result_dir}, and {thresholds}. integrity and advisory reject {thresholds} and {result_dir}. scenario rejects {result}. NUL is rejected. A newline is allowed."
     },
     "argument_without_media_dir": {
       "type": "string",
-      "pattern": "^(?:[^{}\\u0000]|\\{(?:evidence_manifest|result)\\})*(?!\\n)$",
-      "description": "A top-level argument, or an argument in a conditional whose if is not media_dir. It may not contain {media_dir}."
+      "pattern": "^(?:[^{}\\u0000]|\\{(?:evidence_manifest|result|result_dir|thresholds)\\})*(?!\\n)$",
+      "description": "A top-level argument, or an argument in a conditional whose if is not media_dir. The brace tokens it may contain are {evidence_manifest}, {result}, {result_dir}, and {thresholds}. integrity and advisory reject {thresholds} and {result_dir}. scenario rejects {result}. It may not contain {media_dir}, {world}, or {identity}."
+    },
+    "media_argument": {
+      "type": "string",
+      "pattern": "^(?:[^{}\\u0000]|\\{(?:evidence_manifest|media_dir|result_dir|world|identity)\\})*(?!\\n)$",
+      "description": "An argument of the media run. The brace tokens it may contain are {evidence_manifest}, {media_dir}, {result_dir}, {world}, and {identity}. It may not contain {result}. NUL is rejected. A newline is allowed."
+    },
+    "no_result": {
+      "description": "scenario rejects {result} in a top-level argument and inside then. {result} is the integrity and advisory result file.",
+      "items": {
+        "not": {
+          "anyOf": [
+            {"type": "string", "pattern": "\\{result\\}"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["then"],
+              "properties": {
+                "if": {},
+                "then": {"contains": {"type": "string", "pattern": "\\{result\\}"}}
+              }
+            }
+          ]
+        }
+      }
+    },
+    "no_result_dir": {
+      "description": "integrity and advisory reject {result_dir} in a top-level argument and inside then. {result} stays the path of one result file.",
+      "items": {
+        "not": {
+          "anyOf": [
+            {"type": "string", "pattern": "\\{result_dir\\}"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["then"],
+              "properties": {
+                "if": {},
+                "then": {"contains": {"type": "string", "pattern": "\\{result_dir\\}"}}
+              }
+            }
+          ]
+        }
+      }
+    },
+    "no_thresholds": {
+      "description": "integrity and advisory reject {thresholds} in a top-level argument and inside then.",
+      "items": {
+        "not": {
+          "anyOf": [
+            {"type": "string", "pattern": "\\{thresholds\\}"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["then"],
+              "properties": {
+                "if": {},
+                "then": {"contains": {"type": "string", "pattern": "\\{thresholds\\}"}}
+              }
+            }
+          ]
+        }
+      }
     },
     "conditional": {
       "type": "object",

@@ -10,8 +10,10 @@ of the same name is refused. Blank lines and ``#`` comments are ignored.
         --evidence-manifest MANIFEST --out DIR [--media-dir DIR] [--bundle MANIFEST]
 
 ``check`` resolves each line and validates the descriptor. ``run`` then
-installs the package from that commit and executes it. This module does not
-name a particular evaluator.
+installs the package from that commit and executes it. A scenario run writes
+its trial files into ``{result_dir}``, a directory. ``{result}`` is one file
+and is never used on a scenario. This module does not name a particular
+evaluator.
 """
 
 from __future__ import annotations
@@ -47,17 +49,23 @@ LINE = re.compile(
 _SHA = re.compile(r"[0-9a-f]{40}")
 _PROVENANCE_REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 _PROVENANCE_TAG = re.compile(r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
-_TOKEN = re.compile(r"\{(evidence_manifest|media_dir|result)\}")
+# Longer names first so {result_dir} is not read as {result}.
+_TOKEN = re.compile(
+    r"\{(evidence_manifest|media_dir|result_dir|thresholds|world|identity|result)\}"
+)
+_RESULT_FORMAT = re.compile(r"^livingproof-evaluator-result/1\.\d+\.\d+$")
 DEFAULT_TIMEOUT = 30 * 60
 RESULT_SCHEMA = "evaluator-result.schema.json"
 # Placement knows these kinds. A descriptor kind outside the map is refused.
+# The scenario placer is assigned after it is defined.
 PLACERS = {
     "integrity": collect._attach_integrity,
     "advisory": collect._attach_advisory,
 }
 SUPPORTED_MAJORS = {1}
 # The contract tag must still peel to this commit. A moved tag is refused.
-_PINNED_CONTRACT = ("v1.10.0", "d46062a9300611e32ad76749e67a8f035489ebce")
+_PINNED_CONTRACT = ("v1.11.0", "474dda56311fad6a03715fdba4cd957dc510d459")
+PHASES = ("trial", "media", "both")
 
 
 class Refusal(Exception):
@@ -110,6 +118,7 @@ class Record:
     evaluator_id: str = ""
     kind: str = ""
     document: dict | None = None
+    documents: list[dict] | None = None
     record_provenance: bool = True
 
     def as_dict(self) -> dict:
@@ -376,7 +385,17 @@ def prepare(
                 result_schema=result_schema,
             )
         )
+    _refuse_two_graders(prepared)
     return prepared
+
+
+def _refuse_two_graders(prepared: list[Prepared]) -> None:
+    """At most one ``grading: robot`` descriptor. Nothing has been installed."""
+    graders = [item for item in prepared if item.document.get("grading") == "robot"]
+    if len(graders) < 2:
+        return
+    lines = "; ".join(item.declaration.line for item in graders)
+    raise Refusal(f"at most one grading evaluator per run: {lines}")
 
 
 def _descriptor_bytes(declaration: Declaration, commit: str, fetch, injected) -> bytes:
@@ -677,6 +696,309 @@ def _fresh_output(out: Path, evaluator_id: str) -> Path:
     return target
 
 
+def _uses_world(manifest: dict) -> bool:
+    from capability_verifier.scenario_parameters import uses_world
+
+    return uses_world(manifest)
+
+
+def _hallway_thresholds(manifest: dict) -> dict:
+    """The walk-hallway limits the trial run reads. The caller writes this file."""
+    from capability_verifier.hallway import ManifestError
+    from capability_verifier.hallway import thresholds as hallway_thresholds
+    from capability_verifier.scenario_parameters import ScenarioParameterError
+
+    try:
+        return hallway_thresholds(manifest)
+    except (
+        ManifestError,
+        ScenarioParameterError,
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise Refusal(f"could not write hallway thresholds: {exc}") from exc
+
+
+def _world_file(manifest: dict, destination: Path) -> Path | None:
+    """The world document for a media run, or None when the scenario has none.
+
+    Walk-hallway has no world document. World-graded scenarios are refused
+    before this is asked to grade them; the file exists so a media run that
+    does have a world document can be invoked.
+    """
+    if not _uses_world(manifest):
+        return None
+    from capability_verifier.hallway import grading_inputs
+
+    world, _parameters = grading_inputs(manifest)
+    if world is None:
+        return None
+    destination.mkdir(parents=True, exist_ok=True)
+    path = destination / "world.json"
+    path.write_text(json.dumps(world) + "\n", encoding="utf-8")
+    return path
+
+
+def _refuse_result_token(arguments) -> None:
+    """``{result}`` is one file. A scenario run never receives it."""
+    for item in arguments or []:
+        texts = [item] if isinstance(item, str) else list(item.get("then") or [])
+        for text in texts:
+            if isinstance(text, str) and re.search(r"\{result\}", text):
+                raise Refusal("{result} is never used on a scenario")
+
+
+def _scenario_values(
+    evidence: Path, result_dir: Path, **extra: str | None
+) -> dict[str, str | None]:
+    values: dict[str, str | None] = {
+        "evidence_manifest": str(evidence),
+        "result_dir": str(result_dir),
+        "result": None,
+        "media_dir": None,
+        "thresholds": None,
+        "world": None,
+        "identity": None,
+    }
+    values.update(extra)
+    return values
+
+
+def _scenario_results(directory: Path) -> list[tuple[Path, dict]]:
+    """Per-trial result files. ``thresholds.json`` and other files are not results."""
+    found = []
+    if not directory.is_dir():
+        return found
+    for path in sorted(directory.rglob("*.json")):
+        if path.name == "thresholds.json" or not path.is_file() or path.is_symlink():
+            continue
+        document = load_object(path.read_bytes())
+        fmt = document.get("format")
+        if isinstance(fmt, str) and _RESULT_FORMAT.fullmatch(fmt):
+            found.append((path, document))
+    return found
+
+
+def _run_process(
+    prepared: Prepared,
+    command: list[str],
+    result_dir: Path,
+    *,
+    timeout: float,
+    run,
+    out: Path,
+    version: str,
+) -> Record:
+    """Run one scenario process and validate every result file it wrote."""
+    descriptor = prepared.document
+    base = _record(prepared, version, None, "failure")
+    try:
+        completed = run(command, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        stderr = exc.stderr or ""
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        note = _last_line(stderr) if stderr else f"timed out after {timeout:g} seconds"
+        return _finish(base, None, "failure", note, out)
+    code = completed.returncode
+    stderr = completed.stderr or ""
+    label = descriptor["exit_codes"].get(str(code))
+    if label == "result":
+        try:
+            found = _scenario_results(result_dir)
+            if not found:
+                return _finish(base, code, "failure", "the result file is missing", out)
+            documents = []
+            for _path, document in found:
+                _accept_result(document, descriptor, prepared.result_schema, prepared.registry)
+                documents.append(document)
+        except Refusal as exc:
+            return _finish(base, code, "failure", str(exc), out)
+        record = _finish(base, code, "result", None, out)
+        record.documents = documents
+        record.document = documents[0]
+        return record
+    if label == "refused":
+        if _argparse_usage(stderr):
+            return _finish(base, code, "failure", _last_line(stderr), out)
+        return _finish(base, code, "refused", _last_line(stderr), out)
+    return _finish(base, code, "failure", _last_line(stderr), out)
+
+
+def _media_ready(descriptor: dict, media_dir: Path | None, world: Path | None) -> bool:
+    return (
+        isinstance(descriptor.get("media"), dict)
+        and media_dir is not None
+        and (media_dir / "media.json").is_file()
+        and world is not None
+    )
+
+
+def _execute_scenario(
+    prepared: Prepared,
+    *,
+    evidence: Path,
+    media_dir: Path | None,
+    out: Path,
+    work: Path,
+    timeout: float,
+    run,
+    phase: str,
+) -> Record:
+    """Install and run a scenario descriptor's trial, its media run, or both.
+
+    ``{result_dir}`` is the directory that phase writes. The trial directory is
+    ``out/<id>`` and the media directory is ``out/<id>-media``. Walk-hallway has
+    no world document, so the media process is not started. A world-graded
+    scenario is refused: it stays on the existing wrapper.
+    """
+    if phase not in PHASES:
+        raise Refusal(f"scenario phase {phase!r} is not trial, media, or both")
+    manifest = load_object(evidence.read_text(encoding="utf-8"))
+    if _uses_world(manifest):
+        raise Refusal("a world-graded scenario stays on the capability-verifier wrapper")
+    descriptor = prepared.document
+    _refuse_result_token(descriptor.get("arguments"))
+    media = descriptor.get("media")
+    if isinstance(media, dict):
+        _refuse_result_token(media.get("arguments"))
+    version = None
+    if phase in {"trial", "both"}:
+        version = install(prepared, work, run)
+        result_dir = _fresh_output(out, descriptor["id"])
+        thresholds_path = work / descriptor["id"] / "thresholds.json"
+        thresholds_path.parent.mkdir(parents=True, exist_ok=True)
+        thresholds_path.write_text(
+            json.dumps(_hallway_thresholds(manifest)) + "\n", encoding="utf-8"
+        )
+        command = [
+            str(work / descriptor["id"] / ".venv" / "bin" / "python"),
+            "-m",
+            descriptor["entrypoint"]["module"],
+            *_expand(
+                descriptor["arguments"],
+                _scenario_values(
+                    evidence,
+                    result_dir,
+                    thresholds=str(thresholds_path),
+                ),
+            ),
+        ]
+        trial = _run_process(
+            prepared,
+            command,
+            result_dir,
+            timeout=timeout,
+            run=run,
+            out=out,
+            version=version,
+        )
+        if phase == "trial" or trial.outcome != "result":
+            return trial
+    else:
+        trial = None
+    world = _world_file(manifest, work / descriptor["id"])
+    if not _media_ready(descriptor, media_dir, world):
+        if trial is not None:
+            return trial
+        skipped = _record(prepared, version, None, "skipped")
+        return _finish(
+            skipped,
+            None,
+            "skipped",
+            "no world document, so no media run",
+            out,
+        )
+    if version is None:
+        version = install(prepared, work, run)
+    media_dir_out = _fresh_output(out, f"{descriptor['id']}-media")
+    media_spec = descriptor["media"]
+    command = [
+        str(work / descriptor["id"] / ".venv" / "bin" / "python"),
+        "-m",
+        media_spec["module"],
+        *_expand(
+            media_spec["arguments"],
+            _scenario_values(
+                evidence,
+                media_dir_out,
+                media_dir=str(media_dir),
+                world=str(world),
+                identity=(
+                    f"git+https://github.com/{prepared.declaration.repository}@{prepared.commit}"
+                ),
+            ),
+        ),
+    ]
+    media_record = _run_process(
+        prepared,
+        command,
+        media_dir_out,
+        timeout=timeout,
+        run=run,
+        out=out,
+        version=version,
+    )
+    if trial is None:
+        return media_record
+    if media_record.outcome != "result":
+        return media_record
+    trial.documents = (trial.documents or []) + (media_record.documents or [])
+    return trial
+
+
+def _attach_scenario(bundle: dict, documents: list[dict]) -> None:
+    """Append scenario results to the trial the report already reads them on."""
+    if not isinstance(bundle.get("results"), list):
+        raise Refusal("bundle is missing results")
+    by_id = {
+        result["id"]: result
+        for result in bundle["results"]
+        if isinstance(result, dict) and isinstance(result.get("id"), str)
+    }
+    for document in documents:
+        scenario = document.get("scenario") if isinstance(document, dict) else None
+        trial_id = scenario.get("trial_id") if isinstance(scenario, dict) else None
+        result = by_id.get(trial_id)
+        if result is None:
+            continue
+        entries = result.get("evaluator_results")
+        if entries is None:
+            entries = []
+            result["evaluator_results"] = entries
+        if not isinstance(entries, list):
+            raise Refusal(f"result {trial_id!r} evaluator_results is not a list")
+        entries.append(document)
+
+
+PLACERS["scenario"] = _attach_scenario
+
+
+def route_lines(
+    text: str,
+    evidence: Path,
+    *,
+    fetch=None,
+    resolve=None,
+    run=None,
+    injected: dict[str, bytes] | None = None,
+) -> str:
+    """``declared`` when a scenario line grades walk-hallway, else ``wrapper``.
+
+    World-graded scenarios keep the existing wrapper. Two ``grading: robot``
+    lines are refused here, before anything is installed.
+    """
+    prepared = prepare(text, fetch=fetch, resolve=resolve, run=run, injected=injected)
+    manifest = load_object(evidence.read_text(encoding="utf-8"))
+    if any(item.document.get("kind") == "scenario" for item in prepared) and not _uses_world(
+        manifest
+    ):
+        return "declared"
+    return "wrapper"
+
+
 def run_lines(
     text: str,
     *,
@@ -691,16 +1013,43 @@ def run_lines(
     resolve=None,
     run=None,
     injected: dict[str, bytes] | None = None,
+    kind: str | None = None,
+    phase: str = "both",
 ) -> list[Record]:
-    """Validate, install, and run every line. Writes provenance under ``out``."""
+    """Validate, install, and run every selected line. Writes provenance under ``out``.
+
+    ``kind`` limits which descriptors are executed. The one-grading check still
+    sees the whole list, and it runs before anything is installed.
+    """
+    if phase not in PHASES:
+        raise Refusal(f"scenario phase {phase!r} is not trial, media, or both")
+    if kind is not None and kind not in PLACERS:
+        raise Refusal(f"unknown kind {kind!r}")
     fetch = fetch_bytes if fetch is None else fetch
     resolve = resolve_tag if resolve is None else resolve
     run = subprocess.run if run is None else run
     prepared = prepare(text, fetch=fetch, resolve=resolve, run=run, injected=injected)
+    selected = [item for item in prepared if kind is None or item.document.get("kind") == kind]
     out.mkdir(parents=True, exist_ok=True)
     workspace = work or (out / "work")
     records = []
-    for item in prepared:
+    for item in selected:
+        if item.document.get("kind") == "scenario":
+            records.append(
+                _execute_scenario(
+                    item,
+                    evidence=evidence,
+                    media_dir=media_dir,
+                    out=out,
+                    work=workspace,
+                    timeout=timeout,
+                    run=run,
+                    phase=phase,
+                )
+            )
+            continue
+        if phase == "media":
+            continue
         records.append(
             execute(
                 item,
@@ -744,6 +1093,12 @@ def _advisory_provenance(record: Record) -> dict:
 def _place(bundle_path: Path, records: list[Record]) -> None:
     bundle = load_object(bundle_path.read_text(encoding="utf-8"))
     for record in records:
+        if record.kind == "scenario":
+            # Scenario files are what the report reads. A failure here must not
+            # invent an integrity card.
+            if record.documents:
+                _attach_scenario(bundle, record.documents)
+            continue
         if record.kind == "advisory" and record.record_provenance:
             collect._attach_advisory_provenance(
                 bundle, record.evaluator_id, _advisory_provenance(record)
@@ -787,15 +1142,37 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     check = commands.add_parser("check", help="resolve and validate; do not install")
     check.add_argument("--lines", type=Path, required=True, help="declaration lines")
+    route = commands.add_parser(
+        "route",
+        help="print declared or wrapper for a walk-hallway scenario line; do not install",
+    )
+    route.add_argument("--lines", type=Path, required=True, help="declaration lines")
+    route.add_argument("--evidence-manifest", type=Path, required=True)
     run = commands.add_parser("run", help="validate, install, and run")
     run.add_argument("--lines", type=Path, required=True, help="declaration lines")
     run.add_argument("--evidence-manifest", type=Path, required=True)
+    run.add_argument(
+        "--kind",
+        choices=sorted(PLACERS),
+        help="execute only descriptors of this kind; the grading check still sees every line",
+    )
+    run.add_argument(
+        "--phase",
+        choices=PHASES,
+        default="both",
+        help="scenario trial, media, or both (default both)",
+    )
     run.add_argument(
         "--media-dir",
         type=Path,
         help="used only when this directory contains media.json",
     )
     run.add_argument("--out", type=Path, required=True)
+    run.add_argument(
+        "--work",
+        type=Path,
+        help="scratch directory for the install and the thresholds file (default: OUT/work)",
+    )
     run.add_argument("--bundle", type=Path, help="verified bundle manifest to attach results to")
     run.add_argument(
         "--report-dir",
@@ -815,6 +1192,9 @@ def main(argv: list[str] | None = None) -> int:
             found = prepare(text)
             print(f"{len(found)} declaration(s) validated")
             return 0
+        if args.command == "route":
+            print(route_lines(text, args.evidence_manifest))
+            return 0
         records = run_lines(
             text,
             evidence=args.evidence_manifest,
@@ -823,6 +1203,9 @@ def main(argv: list[str] | None = None) -> int:
             bundle=args.bundle,
             report_dir=args.report_dir,
             timeout=args.timeout,
+            work=args.work,
+            kind=args.kind,
+            phase=args.phase,
         )
     except Refusal as exc:
         print(f"refused: {exc}", file=sys.stderr)
