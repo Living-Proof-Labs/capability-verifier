@@ -18,11 +18,13 @@ from pathlib import Path
 
 import pytest
 import yaml
-from test_scenario_loader import HALLWAY, _manifest, _run_step
+from test_scenario_loader import _run_step
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "scenario.yml"
 CATALOG = ROOT / ".specs-hallway"
+# A real walk-hallway evidence manifest, so the thresholds come from the real parameter file.
+EVIDENCE = ROOT / "tests" / "fixtures" / "hallway" / "review-g1" / "agree" / "manifest.json"
 
 # Runs in the primary checkout with the package imported from workflow-src/src.
 DRIVER = r"""
@@ -66,7 +68,7 @@ def _layout(base: Path) -> Path:
     loader package under ``workflow-src/src``."""
     primary = base / "primary"
     (primary / "evidence").mkdir(parents=True)
-    _manifest(primary / "evidence" / "manifest.json", HALLWAY)
+    shutil.copy(EVIDENCE, primary / "evidence" / "manifest.json")
     shutil.copytree(CATALOG, primary / ".specs-hallway")
     package = base / "primary" / "workflow-src" / "src"
     package.mkdir(parents=True)
@@ -139,3 +141,33 @@ def test_both_declared_branches_pass_the_fetched_catalog(tmp_path, job, name, ph
     steps = document["jobs"][job]["steps"]
     fetch = [s for s in steps if "fetch_hallway_specs.py" in (s.get("run") or "")]
     assert fetch and "working-directory" not in fetch[0]
+
+
+def test_the_command_line_takes_the_catalog_path(tmp_path, monkeypatch):
+    """``evaluators run --specs-root`` reaches ``run_lines``."""
+    from capability_verifier import evaluators
+
+    seen = {}
+
+    def fake(text, **kwargs):
+        seen.update(kwargs)
+        return []
+
+    monkeypatch.setattr(evaluators, "run_lines", fake)
+    lines = tmp_path / "lines.txt"
+    lines.write_text("a/b@v1.0.0/c.json\n", encoding="utf-8")
+    code = evaluators.main(
+        [
+            "run",
+            "--lines",
+            str(lines),
+            "--evidence-manifest",
+            str(tmp_path / "m.json"),
+            "--out",
+            str(tmp_path / "out"),
+            "--specs-root",
+            ".specs-hallway",
+        ]
+    )
+    assert code == 0
+    assert seen["specs_root"] == Path(".specs-hallway")
