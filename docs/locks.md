@@ -284,6 +284,7 @@ declaration line and runs `python -m capability_verifier.evaluators`.
 ```text
 <owner>/<repo>@<ref>/<path>.json
 Living-Proof-Labs/livingproof-evaluator-run@v1.9.0/livingproof-evaluator.json
+Living-Proof-Labs/livingproof-evaluator-scenario@v1.6.0/livingproof-evaluator.json
 ```
 
 `ref` is a release tag `vMAJOR.MINOR.PATCH` or a 40-character hexadecimal
@@ -295,11 +296,22 @@ declaration lines is an error when the loader reads it.
 
 Empty, the default, runs no evaluators in this workflow and writes no Run
 Integrity card. The collector does not invent `integrity_not_run` when no
-integrity result was collected. The workflow does not run the loader. When
-the input is set, the caller runs `python -m capability_verifier.evaluators`:
+integrity result was collected. When a line declares a scenario evaluator
+and the evidence is walk-hallway, `scenario-evaluator` and `scenario-media`
+run that line through the loader and do not run the hardcoded tools. The
+trial writes one result file per trial into `{result_dir}`. `{result}` is
+never used on a scenario. The media run starts only when the loader has both
+a media directory and a world document; walk-hallway has no world document,
+so it writes no media result. A world-graded scenario, including walk-corner,
+keeps the hardcoded tools. At most one line may have `grading: robot`. Two
+are refused before anything is installed, and the error names both lines.
+Other kinds are still run by the caller with
+`python -m capability_verifier.evaluators`:
 `check` resolves
 and validates each descriptor, and `run` installs that commit and executes it.
-Results are attached by kind. An `integrity` result is stored at
+Results are attached by kind. A scenario trial's results are the per-trial
+files in `{result_dir}`, which the report job collects from the same
+artifact pattern as the hardcoded scenario job. An `integrity` result is stored at
 `assessment.integrity_results[<id>]`. An `advisory` result is stored at
 `assessment.advisory_results[<id>]`. The value is the result document, one
 per evaluator id, the same shape as an integrity result. Each advisory
@@ -333,7 +345,9 @@ JSON object key at any depth.
 
 The loader maps each exit code from the descriptor:
 
-- Exit 0 means the result file is validated. Its `format` must equal the
+- Exit 0 means the result is validated. An integrity or advisory result is
+  one file. A scenario result is every per-trial file in `{result_dir}`;
+  `thresholds.json` is not a result. Its `format` must equal the
   descriptor's `result`, and the major must be one the loader supports
   (major 1). A missing or invalid result is a failure.
 - A listed `refused` code means no result, plus a note with the evaluator's

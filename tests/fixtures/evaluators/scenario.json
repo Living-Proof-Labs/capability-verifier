@@ -1,0 +1,30 @@
+{
+  "format": "livingproof-evaluator-implementation/1",
+  "id": "livingproof-scenario",
+  "kind": "scenario",
+  "grading": "robot",
+  "package": {"name": "livingproof-evaluator-scenario"},
+  "runtime": {"python": "3.12"},
+  "entrypoint": {"module": "livingproof_evaluator_scenario"},
+  "arguments": [
+    "{evidence_manifest}",
+    "--thresholds",
+    "{thresholds}",
+    "--out",
+    "{result_dir}"
+  ],
+  "media": {
+    "module": "livingproof_evaluator_scenario.media",
+    "arguments": [
+      "{evidence_manifest}",
+      "{media_dir}",
+      "{result_dir}",
+      "--world",
+      "{world}",
+      "--identity",
+      "{identity}"
+    ]
+  },
+  "exit_codes": {"0": "result", "1": "refused"},
+  "result": "livingproof-evaluator-result/1.1.0"
+}

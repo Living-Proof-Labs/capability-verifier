@@ -24,8 +24,11 @@
 # (peeled to a commit; a branch of the same name is refused) or a 40-character
 # commit. Blank lines and lines starting with `#` are ignored. Empty, the
 # default, runs no evaluators in this workflow and writes no Run Integrity
-# card. This workflow does not run the loader; the caller runs
-# `python -m capability_verifier.evaluators` when the input is set.
+# card. When a line declares a scenario evaluator and the evidence is
+# walk-hallway, scenario-evaluator and scenario-media run that line through
+# `python -m capability_verifier.evaluators` and do not run the hardcoded
+# tools. A world-graded scenario keeps those tools. Other kinds are still
+# run by the caller, not by this workflow.
 # Optional inputs verifier-commit, verifier-image, reporter-image and evaluator-commit
 # supply a commit or image ref the caller resolved from a release tag. Empty leaves
 # the lock field unchanged. A set input replaces that field after a strict check.
@@ -128,8 +131,11 @@ on:
           ref is a release tag vMAJOR.MINOR.PATCH or a 40-character hexadecimal
           commit. Blank lines and lines starting with # are ignored. Empty,
           the default, runs no evaluators in this workflow and writes no Run
-          Integrity card. When set, the caller runs
-          python -m capability_verifier.evaluators. This workflow does not.
+          Integrity card. When a line declares a scenario evaluator and the
+          evidence is walk-hallway, this workflow runs that line through
+          python -m capability_verifier.evaluators and does not run the
+          hardcoded scenario tools. A world-graded scenario keeps those tools.
+          Other kinds are still run by the caller.
         type: string
         default: ''
     outputs:
@@ -810,7 +816,7 @@ jobs:
           path: evaluator
           persist-credentials: false
       - name: Workflow source for the evaluator pin
-        if: needs.plan.outputs.evaluator-commit != ''
+        if: needs.plan.outputs.evaluator-commit != '' || inputs.evaluators != ''
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ job.workflow_repository }}
@@ -819,10 +825,37 @@ jobs:
           persist-credentials: false
       - name: Scenario evaluator, one result file per trial
         env:
+          EVALUATORS: ${{ inputs.evaluators }}
           EVALUATOR_REPOSITORY: ${{ needs.plan.outputs.evaluator-repository }}
           EVALUATOR_COMMIT: ${{ needs.plan.outputs.evaluator-commit }}
           EVALUATOR_TAG: ${{ needs.plan.outputs.evaluator-tag }}
         run: |
+          # A declared walk-hallway scenario evaluator is the loader. Anything else
+          # keeps the wrapper below, including a world-graded scenario.
+          mode=wrapper
+          if [ -n "$EVALUATORS" ]; then
+            if [ -d workflow-src/src ]; then
+              route_src=workflow-src/src
+            else
+              route_src=src
+            fi
+            printf '%s\n' "$EVALUATORS" > evaluators.txt
+            mode=$(PYTHONPATH="$route_src" uv run --no-sync python -m capability_verifier.evaluators route \
+              --lines evaluators.txt \
+              --evidence-manifest evidence/manifest.json)
+          fi
+          if [ "$mode" = declared ]; then
+            # declared-scenario-evaluator
+            mkdir -p "${RUNNER_TEMP:-/tmp}/scenario-evaluator-work"
+            PYTHONPATH="$route_src" uv run --no-sync python -m capability_verifier.evaluators run \
+              --lines evaluators.txt \
+              --kind scenario \
+              --phase trial \
+              --evidence-manifest evidence/manifest.json \
+              --out evaluator-results \
+              --work "${RUNNER_TEMP:-/tmp}/scenario-evaluator-work"
+          else
+            # wrapper-scenario-evaluator
           # The tool is the one in the verifier checkout named by the selected lock.
           # The package import is that lock's evaluator pin when it has one; a robot
           # lock with no evaluators field keeps the package from that verifier checkout.
@@ -865,6 +898,7 @@ jobs:
           else
             PYTHONPATH=src uv run --no-sync python tools/run_scenario_evaluator.py \
               evidence/manifest.json evaluator-results/livingproof-scenario
+          fi
           fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
@@ -932,10 +966,41 @@ jobs:
           persist-credentials: false
       - name: Scenario evaluator on the recordings
         env:
+          EVALUATORS: ${{ inputs.evaluators }}
           EVALUATOR_REPOSITORY: ${{ needs.plan.outputs.evaluator-repository }}
           EVALUATOR_COMMIT: ${{ needs.plan.outputs.evaluator-commit }}
           EVALUATOR_TAG: ${{ needs.plan.outputs.evaluator-tag }}
         run: |
+          # A declared walk-hallway scenario evaluator is the loader. The media
+          # process runs only when a world document is present. Walk-hallway has
+          # none, so this phase writes no media result. A world-graded scenario
+          # keeps the wrapper below.
+          mode=wrapper
+          if [ -n "$EVALUATORS" ]; then
+            if [ -d workflow-src/src ]; then
+              route_src=workflow-src/src
+            else
+              route_src=src
+            fi
+            printf '%s\n' "$EVALUATORS" > evaluators.txt
+            mode=$(PYTHONPATH="$route_src" uv run --no-sync python -m capability_verifier.evaluators route \
+              --lines evaluators.txt \
+              --evidence-manifest evidence/manifest.json)
+          fi
+          if [ "$mode" = declared ]; then
+            # declared-scenario-media
+            mkdir -p media
+            mkdir -p "${RUNNER_TEMP:-/tmp}/scenario-media-work"
+            PYTHONPATH="$route_src" uv run --no-sync python -m capability_verifier.evaluators run \
+              --lines evaluators.txt \
+              --kind scenario \
+              --phase media \
+              --evidence-manifest evidence/manifest.json \
+              --media-dir media \
+              --out evaluator-results \
+              --work "${RUNNER_TEMP:-/tmp}/scenario-media-work"
+          else
+            # wrapper-scenario-media
           mkdir -p media
           if [ -d workflow-src/src ]; then
             pin_src=workflow-src/src
@@ -971,6 +1036,7 @@ jobs:
           uv run --no-sync python tools/run_scenario_media.py \
             evidence/manifest.json media evaluator-results/livingproof-scenario-media \
             --identity "git+https://github.com/${EVALUATOR_REPOSITORY}@${EVALUATOR_COMMIT}"
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

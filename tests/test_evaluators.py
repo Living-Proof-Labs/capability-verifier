@@ -146,8 +146,8 @@ def _no_branch(command, **kwargs):
 
 
 def _resolve(repository, tag):
-    if (repository, tag) == ("Living-Proof-Labs/livingproof-evaluator", "v1.10.0"):
-        return "d46062a9300611e32ad76749e67a8f035489ebce"
+    if (repository, tag) == ("Living-Proof-Labs/livingproof-evaluator", "v1.11.0"):
+        return "474dda56311fad6a03715fdba4cd957dc510d459"
     return COMMIT
 
 
@@ -223,9 +223,9 @@ def test_a_tag_without_a_same_name_branch_resolves_and_a_commit_is_used_as_is():
 
 def test_the_contract_tag_resolves_to_the_released_commit():
     pin = parse_lines(CONTRACT)[0]
-    assert pin.ref == "v1.10.0"
+    assert pin.ref == "v1.11.0"
     assert pin.repository == "Living-Proof-Labs/livingproof-evaluator"
-    assert resolve_tag(pin.repository, pin.ref) == "d46062a9300611e32ad76749e67a8f035489ebce"
+    assert resolve_tag(pin.repository, pin.ref) == "474dda56311fad6a03715fdba4cd957dc510d459"
 
 
 def test_the_loader_reads_the_format_from_the_schema():
@@ -708,11 +708,11 @@ def test_media_is_passed_only_when_media_json_is_present(tmp_path):
 
 def test_a_moved_contract_tag_is_refused():
     def resolve(repository, tag):
-        if (repository, tag) == ("Living-Proof-Labs/livingproof-evaluator", "v1.10.0"):
+        if (repository, tag) == ("Living-Proof-Labs/livingproof-evaluator", "v1.11.0"):
             return "b" * 40
         return COMMIT
 
-    with pytest.raises(Refusal, match="d46062a9300611e32ad76749e67a8f035489ebce"):
+    with pytest.raises(Refusal, match="474dda56311fad6a03715fdba4cd957dc510d459"):
         prepare(
             LINE + "\n",
             fetch=lambda url: _schema_fetch(url),
@@ -874,7 +874,7 @@ def _conclusions(bundle):
 
 
 def test_battery_thermal_fixture_matches_the_contract_example():
-    commit = "d46062a9300611e32ad76749e67a8f035489ebce"
+    commit = "474dda56311fad6a03715fdba4cd957dc510d459"
     files = {
         "result.json": (
             RESULT_SHA256,
