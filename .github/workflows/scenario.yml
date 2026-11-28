@@ -927,7 +927,10 @@ jobs:
     # manifest cannot give leaves its step NOT_EVALUATED. The pinned evaluator must have the media
     # runner (livingproof-evaluator-scenario v1.5.0 or later); an older pin leaves a note instead.
     needs: [plan, evidence, media]
-    if: ${{ !cancelled() && needs.evidence.result == 'success' && needs.plan.outputs.evaluator-commit != '' }}
+    # The declared path (inputs.evaluators) must run without the lock pin. The
+    # legacy evaluator-commit path is unchanged. An empty declaration and no pin
+    # still skips this job.
+    if: ${{ !cancelled() && needs.evidence.result == 'success' && (needs.plan.outputs.evaluator-commit != '' || inputs.evaluators != '') }}
     runs-on: ubuntu-24.04
     # The report waits for this job, so a hang (for example in uv sync) must not hold it for the
     # 6-hour default.
@@ -964,6 +967,7 @@ jobs:
       - name: Scenario catalog from the declared lock
         run: uv run --no-sync python tools/fetch_hallway_specs.py --from evidence/manifest.json
       - name: Scenario evaluator package at the locked pin
+        if: needs.plan.outputs.evaluator-commit != ''
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ needs.plan.outputs.evaluator-repository }}
@@ -971,6 +975,7 @@ jobs:
           path: evaluator
           persist-credentials: false
       - name: Workflow source for the evaluator pin
+        if: needs.plan.outputs.evaluator-commit != '' || inputs.evaluators != ''
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ job.workflow_repository }}
@@ -988,8 +993,9 @@ jobs:
           # declared or wrapper; any other output fails this step. The media
           # process runs only when a world document is present. Walk-hallway has
           # none, so this phase writes no media result. A world-graded scenario
-          # is wrapper. An invalid or comments-only evaluators file fails here,
-          # with route's refusal.
+          # is wrapper and needs evaluator-commit; without the pin this step
+          # fails rather than skipping the job. An invalid or comments-only
+          # evaluators file fails here, with route's refusal.
           mode=wrapper
           if [ -n "$EVALUATORS" ]; then
             if [ -d workflow-src/src ]; then
@@ -1017,6 +1023,10 @@ jobs:
               --work "${RUNNER_TEMP:-/tmp}/scenario-media-work"
           elif [ "$mode" = wrapper ]; then
             # wrapper-scenario-media
+          if [ -z "$EVALUATOR_COMMIT" ]; then
+            printf 'wrapper scenario-media needs evaluator-commit; a world-graded scenario cannot run without the lock pin\n' >&2
+            exit 1
+          fi
           mkdir -p media
           if [ -d workflow-src/src ]; then
             pin_src=workflow-src/src
