@@ -298,7 +298,10 @@ Empty, the default, runs no evaluators in this workflow and writes no Run
 Integrity card. The collector does not invent `integrity_not_run` when no
 integrity result was collected. When a line declares a scenario evaluator
 and the evidence is walk-hallway, `scenario-evaluator` and `scenario-media`
-run that line through the loader and do not run the hardcoded tools. The
+run that line through the loader and do not run the hardcoded tools.
+`scenario-media` runs when `inputs.evaluators` is set, even if
+`evaluator-commit` is empty; a world-graded wrapper run without that pin
+fails the job rather than skipping it. The
 trial writes one result file per trial into `{result_dir}`. `{result}` is
 never used on a scenario. The media run starts only when the loader has both
 a media directory and a world document; walk-hallway has no world document,
