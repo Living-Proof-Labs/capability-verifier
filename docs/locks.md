@@ -302,7 +302,10 @@ run that line through the loader and do not run the hardcoded tools. The
 trial writes one result file per trial into `{result_dir}`. `{result}` is
 never used on a scenario. The media run starts only when the loader has both
 a media directory and a world document; walk-hallway has no world document,
-so it writes no media result. A world-graded scenario, including walk-corner,
+so it writes no media result. Both jobs pass `--specs-root .specs-hallway`,
+the catalog the job fetched, because the loader package is the `workflow-src`
+checkout and would otherwise look for the parameter file there. A world-graded
+scenario, including walk-corner,
 keeps the hardcoded tools. At most one line may have `grading: robot`. Two
 are refused before anything is installed, and the error names both lines.
 Other kinds are still run by the caller with
