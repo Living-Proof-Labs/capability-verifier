@@ -92,7 +92,8 @@ def test_walk_hallway_forwards_both_inputs_and_has_no_own_media_gate():
     """walk-hallway.yml is a wrapper around scenario.yml; the gate lives there."""
     assert "scenario-media" not in yaml.dump(WALK["jobs"])
     forwarded = WALK["jobs"]["scenario"]["with"]
-    assert "evaluators" in forwarded and "evaluator-commit" in forwarded
+    assert forwarded["evaluators"] == "${{ inputs.evaluators }}"
+    assert forwarded["evaluator-commit"] == "${{ inputs.evaluator-commit }}"
 
 
 def test_the_declared_media_branch_runs_without_evaluator_commit(tmp_path):
@@ -107,7 +108,13 @@ def test_the_declared_media_branch_runs_without_evaluator_commit(tmp_path):
 def test_wrapper_media_without_evaluator_commit_fails_loudly(tmp_path):
     """A world-graded scenario still needs the pin; skipping the job hid that."""
     script = _script("scenario-media", "Scenario evaluator on the recordings")
-    done, log = _run_step(script, "wrapper", tmp_path / "wrapper", evaluator_commit="")
+    done, log = _run_step(
+        script,
+        "wrapper",
+        tmp_path / "wrapper",
+        evaluator_commit="",
+        manifest='{"plan": {"scenario": "walk-corner@0.1.0"}}\n',
+    )
     text = (done.stderr or "") + (done.stdout or "")
     assert done.returncode != 0, text or log
     assert "evaluator-commit" in text

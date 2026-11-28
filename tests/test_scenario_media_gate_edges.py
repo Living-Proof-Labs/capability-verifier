@@ -117,24 +117,20 @@ def test_route_sends_a_declaration_without_a_scenario_line_to_the_wrapper(tmp_pa
     assert evaluators.route_lines(RUN_INTEGRITY, manifest) == "wrapper"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "capability-verifier#278 head 6722739: a declaration with no scenario line and no "
-        "lock pin runs scenario-media, routes to wrapper and fails the job. v3.1.3 skipped "
-        "it. Remove this marker when the wrapper branch only fails for a world-graded run."
-    ),
-)
 def test_a_declaration_without_a_scenario_line_and_without_a_pin_does_not_fail_media(tmp_path):
     """The evidence manifest has no world document, so there is no media to lose."""
     script = _script("scenario-media", "Scenario evaluator on the recordings")
+    work = tmp_path / "integrity-only"
     done, log = _run_step(
         script,
         "",
-        tmp_path / "integrity-only",
+        work,
         evaluators=RUN_INTEGRITY,
         route_real=True,
         evaluator_commit="",
     )
     assert done.returncode == 0, done.stderr or done.stdout
     assert "run_scenario_media.py" not in log
+    notes = list((work / "evaluator-results").rglob("NO-MEDIA-RESULTS.txt"))
+    assert notes, "wrapper media with no world document must write a note for the upload"
+    assert "no world document" in notes[0].read_text(encoding="utf-8")
