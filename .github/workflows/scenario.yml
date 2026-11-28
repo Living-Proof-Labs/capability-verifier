@@ -994,8 +994,10 @@ jobs:
           # process runs only when a world document is present. Walk-hallway has
           # none, so this phase writes no media result. A world-graded scenario
           # is wrapper and needs evaluator-commit; without the pin this step
-          # fails rather than skipping the job. An invalid or comments-only
-          # evaluators file fails here, with route's refusal.
+          # fails rather than skipping the job. A wrapper run with no world
+          # document and no pin writes a note and exits 0, so a caller that
+          # declared only Run Integrity still reaches collect. An invalid or
+          # comments-only evaluators file fails here, with route's refusal.
           mode=wrapper
           if [ -n "$EVALUATORS" ]; then
             if [ -d workflow-src/src ]; then
@@ -1023,10 +1025,22 @@ jobs:
               --work "${RUNNER_TEMP:-/tmp}/scenario-media-work"
           elif [ "$mode" = wrapper ]; then
             # wrapper-scenario-media
-          if [ -z "$EVALUATOR_COMMIT" ]; then
-            printf 'wrapper scenario-media needs evaluator-commit; a world-graded scenario cannot run without the lock pin\n' >&2
-            exit 1
-          fi
+            if [ -z "$EVALUATOR_COMMIT" ]; then
+              if [ -d workflow-src/src ]; then
+                world_src=workflow-src/src
+              else
+                world_src=src
+              fi
+              if PYTHONPATH="$world_src" python3 -c 'from pathlib import Path; import json; from capability_verifier.scenario_parameters import uses_world; manifest = json.loads(Path("evidence/manifest.json").read_text(encoding="utf-8")); raise SystemExit(0 if uses_world(manifest) else 1)'; then
+                printf 'wrapper scenario-media needs evaluator-commit; a world-graded scenario cannot run without the lock pin\n' >&2
+                exit 1
+              fi
+              mkdir -p evaluator-results/livingproof-scenario-media
+              printf '%s\n' 'no world document, so no media run' \
+                > evaluator-results/livingproof-scenario-media/NO-MEDIA-RESULTS.txt
+              printf 'evaluator-results/livingproof-scenario-media/NO-MEDIA-RESULTS.txt: no world document, so no media run\n'
+              exit 0
+            fi
           mkdir -p media
           if [ -d workflow-src/src ]; then
             pin_src=workflow-src/src
