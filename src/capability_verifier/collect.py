@@ -18,6 +18,15 @@ also stores ``assessment.advisory_provenance[<id>]`` for each advisory record,
 and ``assessment.advisory_not_run[<id>]`` when that record failed or was
 refused. A bundle with no advisory evaluator has none of those three keys.
 
+A declared Scenario line runs in the trial job, away from this collection. The loader
+writes ``<evaluator id>.scenario-provenance.json`` beside the scenario results it
+uploads, and the collector stores that record at
+``assessment.scenario_provenance[<evaluator id>]``: ``line``, ``repo``, ``ref``,
+``commit``, ``descriptor_sha256``, ``package_name`` and ``installed_version``. The trial
+and media jobs write the same record, which is stored once; two different records for
+one evaluator fail the collection. The record does not grade. A bundle with no declared
+Scenario line has no ``scenario_provenance``.
+
 An advisory result may cite ``advisory.details_file``. The file at that
 relative path is copied into the report output, and its SHA-256 has to match
 the citation. A missing file, different bytes, a substituted path, or a path
@@ -54,9 +63,33 @@ from pathlib import Path, PurePosixPath
 
 RESULT_FORMAT = re.compile(r"^livingproof-evaluator-result/1\.\d+\.\d+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+SCENARIO_PROVENANCE_FORMAT = "livingproof-scenario-provenance/1.0.0"
+_SCENARIO_PROVENANCE_FAMILY = "livingproof-scenario-provenance/"
+SCENARIO_PROVENANCE_SUFFIX = ".scenario-provenance.json"
+_EVALUATOR_ID = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+_REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+_TAG = re.compile(r"^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
+_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_SCENARIO_PROVENANCE_FIELDS = (
+    "line",
+    "repo",
+    "ref",
+    "commit",
+    "descriptor_sha256",
+    "package_name",
+    "installed_version",
+)
 # Characters the Reporter rejects in an advisory not-run reason.
 _BAD_REASON = re.compile(r"[<>\x00-\x1f\x7f-\x9f\u2028\u2029]")
 _REASON_LIMIT = 2000
+# Control, bidi and markup characters refused in scenario provenance free text.
+_BAD_PROVENANCE_TEXT = re.compile(
+    r"[<>\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2028\u2029\u2066-\u2069]"
+)
+_PROVENANCE_TEXT_LIMIT = 2000
+_BIDI_CHARS = frozenset(
+    chr(c) for c in (0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A))
+)
 _THRESHOLDS_NAME = "thresholds.json"
 # Contract rule for advisory.details_file.uri. The schema states it; the
 # collector applies it again because a result file is not re-validated here.
@@ -87,6 +120,10 @@ class AdvisoryResultError(ValueError):
     """An advisory result breaks a rule the schema cannot express."""
 
 
+class ScenarioProvenanceError(ValueError):
+    """A scenario provenance record is malformed, or two records for one id differ."""
+
+
 def collect(
     bundle: dict,
     directory: Path,
@@ -114,6 +151,9 @@ def collect(
     A directory with no integrity result does not store ``integrity_not_run``.
     The loader records a missing declared evaluator separately.
 
+    A ``<id>.scenario-provenance.json`` file is stored at
+    ``assessment.scenario_provenance[<id>]`` and does not grade.
+
     ``counts``, when given, is filled with ``{evaluator id: {"appended": n,
     "skipped": m}}``.
     """
@@ -123,6 +163,7 @@ def collect(
     found = []
     problems: list[str] = []
     unusable: list[tuple[str, str, str]] = []  # (evaluator, file, reason)
+    scenario_provenance: dict[str, dict] = {}
     if directory.is_dir():
         for path in sorted(directory.rglob("*.json")):
             if not path.is_file() or path.is_symlink():
@@ -131,6 +172,20 @@ def collect(
                 document = json.loads(path.read_text(encoding="utf-8"))
             except ValueError as exc:  # truncated, invalid JSON or not UTF-8
                 _note(unusable, problems, path, directory, None, f"not valid JSON ({exc})")
+                continue
+            fmt = document.get("format") if isinstance(document, dict) else None
+            if isinstance(fmt, str) and fmt.startswith(_SCENARIO_PROVENANCE_FAMILY):
+                if fmt != SCENARIO_PROVENANCE_FORMAT:
+                    _note(
+                        unusable,
+                        problems,
+                        path,
+                        directory,
+                        document.get("evaluator"),
+                        f"unrecognised scenario provenance format {fmt!r}",
+                    )
+                    continue
+                _take_scenario_provenance(path, document, scenario_provenance)
                 continue
             if (
                 isinstance(document, dict)
@@ -194,6 +249,8 @@ def collect(
         entries.append(document)
     _attach_integrity(bundle, integrity_docs)
     _attach_advisory(bundle, advisory_docs)
+    for evaluator, provenance in scenario_provenance.items():
+        _attach_scenario_provenance(bundle, evaluator, provenance)
     if report_dir is not None:
         report = Path(report_dir)
         _write_thresholds(report, exports)
@@ -575,6 +632,76 @@ def _advisory_map(bundle: dict, field: str) -> dict:
 def _attach_advisory_provenance(bundle: dict, evaluator: str, provenance: dict) -> None:
     """Store one advisory record's provenance. It does not grade."""
     _advisory_map(bundle, "advisory_provenance")[_advisory_key(evaluator)] = provenance
+
+
+def scenario_provenance_record(record: object, where: str) -> dict:
+    """The checked record: exactly the seven fields, each well formed."""
+    if not isinstance(record, dict):
+        raise ScenarioProvenanceError(f"{where}: provenance is not an object")
+    extra = sorted(set(record) - set(_SCENARIO_PROVENANCE_FIELDS))
+    if extra:
+        raise ScenarioProvenanceError(f"{where}: unexpected field {extra[0]!r}")
+    missing = [name for name in _SCENARIO_PROVENANCE_FIELDS if name not in record]
+    if missing:
+        raise ScenarioProvenanceError(f"{where}: missing field {missing[0]!r}")
+
+    def text(name: str) -> str:
+        value = record[name]
+        if not isinstance(value, str) or not value.strip():
+            raise ScenarioProvenanceError(f"{where}: {name} is not a non-empty string")
+        return value
+
+    def classify(char: str) -> str:
+        if char in "<>":
+            return "markup"
+        if char in _BIDI_CHARS:
+            return "bidi"
+        return "control"
+
+    for name in ("line", "package_name", "installed_version"):
+        value = text(name)
+        bad = _BAD_PROVENANCE_TEXT.search(value)
+        if bad is not None:
+            kind = classify(bad.group(0))
+            raise ScenarioProvenanceError(f"{where}: {name} contains a {kind} character")
+        if len(value) > _PROVENANCE_TEXT_LIMIT:
+            raise ScenarioProvenanceError(
+                f"{where}: {name} is longer than {_PROVENANCE_TEXT_LIMIT} characters"
+            )
+    if _REPO.fullmatch(text("repo")) is None:
+        raise ScenarioProvenanceError(f"{where}: repo {record['repo']!r} is not owner/name")
+    ref = text("ref")
+    if _TAG.fullmatch(ref) is None and _COMMIT.fullmatch(ref) is None:
+        raise ScenarioProvenanceError(f"{where}: ref {ref!r} is not a vX.Y.Z tag or commit")
+    if _COMMIT.fullmatch(text("commit")) is None:
+        raise ScenarioProvenanceError(f"{where}: commit {record['commit']!r} is not 40 hex")
+    if _SHA256.fullmatch(text("descriptor_sha256")) is None:
+        raise ScenarioProvenanceError(f"{where}: descriptor_sha256 is not 64 lowercase hex")
+    return {name: record[name] for name in _SCENARIO_PROVENANCE_FIELDS}
+
+
+def _take_scenario_provenance(path: Path, document: dict, taken: dict[str, dict]) -> None:
+    where = path.name
+    evaluator = document.get("evaluator")
+    name = evaluator.get("id") if isinstance(evaluator, dict) else None
+    if not isinstance(name, str) or _EVALUATOR_ID.fullmatch(name) is None:
+        raise ScenarioProvenanceError(f"{where}: evaluator id {name!r} is not valid")
+    expected = name + SCENARIO_PROVENANCE_SUFFIX
+    if path.name != expected:
+        raise ScenarioProvenanceError(
+            f"{where}: evaluator id {name!r} does not match the filename {expected!r}"
+        )
+    record = scenario_provenance_record(document.get("provenance"), f"{where} ({name})")
+    if name in taken and taken[name] != record:
+        raise ScenarioProvenanceError(
+            f"{where}: two different scenario provenance records for evaluator {name}"
+        )
+    taken[name] = record
+
+
+def _attach_scenario_provenance(bundle: dict, evaluator: str, provenance: dict) -> None:
+    """Store one declared Scenario line's resolved pin. It does not grade."""
+    _advisory_map(bundle, "scenario_provenance")[evaluator] = provenance
 
 
 def _attach_advisory_not_run(bundle: dict, evaluator: str, outcome: str, reason: str) -> None:
@@ -1212,7 +1339,12 @@ def main(argv: list[str] | None = None) -> int:
             Path(args[2]),
             counts,
         )
-    except (ThresholdCitationError, DetailsCitationError, AdvisoryResultError) as exc:
+    except (
+        ThresholdCitationError,
+        DetailsCitationError,
+        AdvisoryResultError,
+        ScenarioProvenanceError,
+    ) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     trial_appended = counts.pop("_trial_appended", 0)

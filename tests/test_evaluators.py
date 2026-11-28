@@ -172,6 +172,9 @@ def _resolve(repository, tag):
         "acme/widgets@v1.2.3/widget.txt",
         "acme_widgets/repo@v1.2.3/a.json",
         "acme/widgets@v1.2.3/widget.json extra",
+        "acme/.github@v1.2.3/widget.json",
+        "acme/_foo@v1.2.3/widget.json",
+        "acme/-foo@v1.2.3/widget.json",
     ],
 )
 def test_a_line_outside_the_declaration_grammar_is_refused(line):
