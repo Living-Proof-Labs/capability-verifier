@@ -389,3 +389,20 @@ def test_an_unknown_scenario_provenance_format_is_noted_and_does_not_write_the_k
     assert "scenario_provenance" not in stored.get("assessment", {})
     problems = (tmp_path / "reports" / "evaluator-result-problems.txt").read_text(encoding="utf-8")
     assert "1.1.0" in problems and "unrecognised" in problems
+
+
+# --- L4: the record's evaluator id must match the filename --------------------------------
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["other.scenario-provenance.json", "unrelated.json", "livingproof-scenario.json"],
+)
+def test_a_record_whose_filename_does_not_match_the_evaluator_id_fails_the_collection(
+    tmp_path, name
+):
+    bundle, _ = _bundle(tmp_path)
+    _plant_file(tmp_path / "r", _provenance(descriptor_sha256="d" * 64), name=name)
+    with pytest.raises(ScenarioProvenanceError, match="filename"):
+        collect(bundle, tmp_path / "r")
+    assert "scenario_provenance" not in bundle["assessment"]
