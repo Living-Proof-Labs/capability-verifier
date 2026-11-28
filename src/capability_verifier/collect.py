@@ -81,6 +81,14 @@ _SCENARIO_PROVENANCE_FIELDS = (
 # Characters the Reporter rejects in an advisory not-run reason.
 _BAD_REASON = re.compile(r"[<>\x00-\x1f\x7f-\x9f\u2028\u2029]")
 _REASON_LIMIT = 2000
+# Control, bidi and markup characters refused in scenario provenance free text.
+_BAD_PROVENANCE_TEXT = re.compile(
+    r"[<>\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2028\u2029\u2066-\u2069]"
+)
+_PROVENANCE_TEXT_LIMIT = 2000
+_BIDI_CHARS = frozenset(
+    chr(c) for c in (0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A))
+)
 _THRESHOLDS_NAME = "thresholds.json"
 # Contract rule for advisory.details_file.uri. The schema states it; the
 # collector applies it again because a result file is not re-validated here.
@@ -631,8 +639,23 @@ def scenario_provenance_record(record: object, where: str) -> dict:
             raise ScenarioProvenanceError(f"{where}: {name} is not a non-empty string")
         return value
 
+    def classify(char: str) -> str:
+        if char in "<>":
+            return "markup"
+        if char in _BIDI_CHARS:
+            return "bidi"
+        return "control"
+
     for name in ("line", "package_name", "installed_version"):
-        text(name)
+        value = text(name)
+        bad = _BAD_PROVENANCE_TEXT.search(value)
+        if bad is not None:
+            kind = classify(bad.group(0))
+            raise ScenarioProvenanceError(f"{where}: {name} contains a {kind} character")
+        if len(value) > _PROVENANCE_TEXT_LIMIT:
+            raise ScenarioProvenanceError(
+                f"{where}: {name} is longer than {_PROVENANCE_TEXT_LIMIT} characters"
+            )
     if _REPO.fullmatch(text("repo")) is None:
         raise ScenarioProvenanceError(f"{where}: repo {record['repo']!r} is not owner/name")
     ref = text("ref")
