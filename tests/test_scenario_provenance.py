@@ -264,3 +264,57 @@ def test_the_reporter_still_renders_a_bundle_that_carries_the_record(tmp_path):
     manifest.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
     assert render(report_from_bundle(load_bundle(manifest)), "markdown") == plain
     assert render(report_from_bundle(load_bundle(manifest)), "html")
+
+
+# --- L1: free-text fields are evidence and must be plain, bounded text --------------------
+
+_TEXT_LIMIT = 2000
+_BAD_FREE_TEXT = (
+    ("ok\x00text", "control"),
+    ("ok\x1ftext", "control"),
+    ("ok\x7ftext", "control"),
+    ("ok\ntext", "control"),
+    ("ok\ttext", "control"),
+    ("ok\u2028text", "control"),
+    ("ok\u200etext", "bidi"),
+    ("ok\u200ftext", "bidi"),
+    ("ok\u202etext", "bidi"),
+    ("ok\u2066text", "bidi"),
+    ("ok\u2069text", "bidi"),
+    ("ok\u061ctext", "bidi"),
+    ("ok<text", "markup"),
+    ("ok>text", "markup"),
+)
+
+
+@pytest.mark.parametrize("field", ["line", "package_name", "installed_version"])
+@pytest.mark.parametrize(("value", "kind"), _BAD_FREE_TEXT)
+def test_control_bidi_or_markup_in_a_free_text_field_fails_the_collection(
+    tmp_path, field, value, kind
+):
+    bundle, _ = _bundle(tmp_path)
+    _plant_file(tmp_path / "r", _provenance(descriptor_sha256="d" * 64, **{field: value}))
+    with pytest.raises(ScenarioProvenanceError, match=f"{field}.*{kind}"):
+        collect(bundle, tmp_path / "r")
+    assert "scenario_provenance" not in bundle["assessment"]
+
+
+@pytest.mark.parametrize("field", ["line", "package_name", "installed_version"])
+def test_a_free_text_field_longer_than_2000_characters_fails_the_collection(tmp_path, field):
+    bundle, _ = _bundle(tmp_path)
+    _plant_file(
+        tmp_path / "r",
+        _provenance(descriptor_sha256="d" * 64, **{field: "a" * (_TEXT_LIMIT + 1)}),
+    )
+    with pytest.raises(ScenarioProvenanceError, match=f"{field}.*longer than {_TEXT_LIMIT}"):
+        collect(bundle, tmp_path / "r")
+    assert "scenario_provenance" not in bundle["assessment"]
+
+
+@pytest.mark.parametrize("field", ["line", "package_name", "installed_version"])
+def test_a_free_text_field_of_2000_plain_characters_is_accepted(tmp_path, field):
+    bundle, _ = _bundle(tmp_path)
+    value = "a" * _TEXT_LIMIT
+    _plant_file(tmp_path / "r", _provenance(descriptor_sha256="d" * 64, **{field: value}))
+    collect(bundle, tmp_path / "r")
+    assert bundle["assessment"]["scenario_provenance"][EVALUATOR][field] == value
