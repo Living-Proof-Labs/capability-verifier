@@ -996,7 +996,10 @@ jobs:
           # is wrapper and needs evaluator-commit; without the pin this step
           # fails rather than skipping the job. A wrapper run with no world
           # document and no pin writes a note and exits 0, so a caller that
-          # declared only Run Integrity still reaches collect. An invalid or
+          # declared only Run Integrity still reaches collect. The world check
+          # exits 10 for a world document and 11 for none; any other outcome
+          # (an unreadable manifest, or python3 that cannot import the package)
+          # fails the job rather than writing the note. An invalid or
           # comments-only evaluators file fails here, with route's refusal.
           mode=wrapper
           if [ -n "$EVALUATORS" ]; then
@@ -1031,15 +1034,48 @@ jobs:
               else
                 world_src=src
               fi
-              if PYTHONPATH="$world_src" python3 -c 'from pathlib import Path; import json; from capability_verifier.scenario_parameters import uses_world; manifest = json.loads(Path("evidence/manifest.json").read_text(encoding="utf-8")); raise SystemExit(0 if uses_world(manifest) else 1)'; then
-                printf 'wrapper scenario-media needs evaluator-commit; a world-graded scenario cannot run without the lock pin\n' >&2
-                exit 1
-              fi
-              mkdir -p evaluator-results/livingproof-scenario-media
-              printf '%s\n' 'no world document, so no media run' \
-                > evaluator-results/livingproof-scenario-media/NO-MEDIA-RESULTS.txt
-              printf 'evaluator-results/livingproof-scenario-media/NO-MEDIA-RESULTS.txt: no world document, so no media run\n'
-              exit 0
+              set +e
+              PYTHONPATH="$world_src" python3 -c "$(printf '%s\n' \
+                'import json, sys' \
+                'from pathlib import Path' \
+                'try:' \
+                '    from capability_verifier.scenario_parameters import uses_world' \
+                'except ImportError as exc:' \
+                '    print("could not import uses_world:", exc, file=sys.stderr)' \
+                '    raise SystemExit(2)' \
+                'try:' \
+                '    manifest = json.loads(Path("evidence/manifest.json").read_text(encoding="utf-8"))' \
+                'except Exception as exc:' \
+                '    print("could not read evidence/manifest.json:", exc, file=sys.stderr)' \
+                '    raise SystemExit(2)' \
+                'if not isinstance(manifest, dict):' \
+                '    print("evidence/manifest.json is not an object", file=sys.stderr)' \
+                '    raise SystemExit(2)' \
+                'try:' \
+                '    world = uses_world(manifest)' \
+                'except Exception as exc:' \
+                '    print("could not tell whether the evidence has a world document:", exc, file=sys.stderr)' \
+                '    raise SystemExit(2)' \
+                'raise SystemExit(10 if world else 11)')"
+              status=$?
+              set -e
+              case "$status" in
+                10)
+                  printf 'wrapper scenario-media needs evaluator-commit; a world-graded scenario cannot run without the lock pin\n' >&2
+                  exit 1
+                  ;;
+                11)
+                  mkdir -p evaluator-results/livingproof-scenario-media
+                  printf '%s\n' 'no world document, so no media run' \
+                    > evaluator-results/livingproof-scenario-media/NO-MEDIA-RESULTS.txt
+                  printf 'evaluator-results/livingproof-scenario-media/NO-MEDIA-RESULTS.txt: no world document, so no media run\n'
+                  exit 0
+                  ;;
+                *)
+                  printf 'could not tell whether the evidence has a world document (exit %s)\n' "$status" >&2
+                  exit 1
+                  ;;
+              esac
             fi
           mkdir -p media
           if [ -d workflow-src/src ]; then
