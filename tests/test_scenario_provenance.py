@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from test_collect_counts import PATTERN, _layout, _result
 from test_collect_integrity import _bundle, _robot_grades, _write
 from test_evaluators import COMMIT, ROOT, _no_branch, _plant, _resolve, _schema_fetch
 
@@ -343,3 +344,48 @@ def test_a_repo_starting_with_dot_underscore_or_hyphen_is_refused_before_the_tri
             fetch=fetch,
             run=run,
         )
+
+
+# --- L3: a broken record is noted, not skipped silently, and does not write the key ------
+
+
+def test_a_truncated_scenario_provenance_file_is_noted_and_does_not_write_the_key(
+    tmp_path, capsys, monkeypatch
+):
+    """Rivet: an explicit note, no key, collection continues."""
+    monkeypatch.setenv("EVALUATOR_RESULTS_PATTERN", PATTERN)
+    args, manifest, _original = _layout(
+        tmp_path, ["playground-seed-01"], [_result("playground-seed-01")]
+    )
+    (tmp_path / "evaluator-results" / "trial").mkdir()
+    (tmp_path / "evaluator-results" / "trial" / FILE).write_text(
+        '{"format": "livingproof-scenario-provenance/1.0.0"',
+        encoding="utf-8",
+    )
+    assert collector.main(args) == 0
+    err = capsys.readouterr().err
+    assert FILE in err and "not valid JSON" in err
+    stored = json.loads(manifest.read_text(encoding="utf-8"))
+    assert "scenario_provenance" not in stored.get("assessment", {})
+    problems = (tmp_path / "reports" / "evaluator-result-problems.txt").read_text(encoding="utf-8")
+    assert FILE in problems and "not valid JSON" in problems
+
+
+def test_an_unknown_scenario_provenance_format_is_noted_and_does_not_write_the_key(
+    tmp_path, capsys, monkeypatch
+):
+    """Rivet: an unknown version is also an explicit note, not a silent skip."""
+    monkeypatch.setenv("EVALUATOR_RESULTS_PATTERN", PATTERN)
+    args, manifest, _original = _layout(
+        tmp_path, ["playground-seed-01"], [_result("playground-seed-01")]
+    )
+    document = _provenance(descriptor_sha256="d" * 64)
+    document["format"] = "livingproof-scenario-provenance/1.1.0"
+    _plant_file(tmp_path / "evaluator-results" / "trial", document)
+    assert collector.main(args) == 0
+    err = capsys.readouterr().err
+    assert "1.1.0" in err and "unrecognised" in err
+    stored = json.loads(manifest.read_text(encoding="utf-8"))
+    assert "scenario_provenance" not in stored.get("assessment", {})
+    problems = (tmp_path / "reports" / "evaluator-result-problems.txt").read_text(encoding="utf-8")
+    assert "1.1.0" in problems and "unrecognised" in problems
