@@ -20,7 +20,7 @@ from test_evaluators import COMMIT, ROOT, _no_branch, _plant, _resolve, _schema_
 
 from capability_verifier import collect as collector
 from capability_verifier.collect import ScenarioProvenanceError, collect
-from capability_verifier.evaluators import run_lines
+from capability_verifier.evaluators import Refusal, run_lines
 
 SCENARIO = ROOT / "tests" / "fixtures" / "evaluators" / "scenario.json"
 LINE = "acme/widgets@v1.2.3/scenario.json"
@@ -318,3 +318,28 @@ def test_a_free_text_field_of_2000_plain_characters_is_accepted(tmp_path, field)
     _plant_file(tmp_path / "r", _provenance(descriptor_sha256="d" * 64, **{field: value}))
     collect(bundle, tmp_path / "r")
     assert bundle["assessment"]["scenario_provenance"][EVALUATOR][field] == value
+
+
+@pytest.mark.parametrize("repo", [".github", "_foo", "-foo"])
+def test_a_repo_starting_with_dot_underscore_or_hyphen_is_refused_before_the_trial(tmp_path, repo):
+    """The line grammar matches the provenance grammar, so the trial never starts."""
+
+    def fetch(url):
+        raise AssertionError(f"fetch must not run: {url}")
+
+    def run(command, **kwargs):
+        raise AssertionError(f"run must not run: {command}")
+
+    evidence = tmp_path / "manifest.json"
+    evidence.write_text('{"lock": {"content": {"scenario": "walk-hallway@0.1.0"}}}\n')
+    with pytest.raises(Refusal, match="declaration line"):
+        run_lines(
+            f"acme/{repo}@v1.2.3/scenario.json\n",
+            evidence=evidence,
+            out=tmp_path / "out",
+            work=tmp_path / "work",
+            phase="trial",
+            kind="scenario",
+            fetch=fetch,
+            run=run,
+        )
