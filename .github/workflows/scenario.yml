@@ -24,10 +24,13 @@
 # (peeled to a commit; a branch of the same name is refused) or a 40-character
 # commit. Blank lines and lines starting with `#` are ignored. Empty, the
 # default, runs no evaluators in this workflow and writes no Run Integrity
-# card. When a line declares a scenario evaluator and the evidence is
+# card. A non-empty value with no declaration lines, or a line outside that
+# grammar, fails scenario-evaluator and scenario-media and names the expected
+# line. When a line declares a scenario evaluator and the evidence is
 # walk-hallway, scenario-evaluator and scenario-media run that line through
 # `python -m capability_verifier.evaluators` and do not run the hardcoded
-# tools. A world-graded scenario keeps those tools. Other kinds are still
+# tools. route prints `declared` or `wrapper`; any other output fails the
+# step. A world-graded scenario keeps those tools. Other kinds are still
 # run by the caller, not by this workflow.
 # Optional inputs verifier-commit, verifier-image, reporter-image and evaluator-commit
 # supply a commit or image ref the caller resolved from a release tag. Empty leaves
@@ -131,11 +134,14 @@ on:
           ref is a release tag vMAJOR.MINOR.PATCH or a 40-character hexadecimal
           commit. Blank lines and lines starting with # are ignored. Empty,
           the default, runs no evaluators in this workflow and writes no Run
-          Integrity card. When a line declares a scenario evaluator and the
-          evidence is walk-hallway, this workflow runs that line through
-          python -m capability_verifier.evaluators and does not run the
-          hardcoded scenario tools. A world-graded scenario keeps those tools.
-          Other kinds are still run by the caller.
+          Integrity card. A non-empty value with no declaration lines, or a
+          line outside that grammar, fails scenario-evaluator and
+          scenario-media and names the expected line. When a line declares a
+          scenario evaluator and the evidence is walk-hallway, this workflow
+          runs that line through python -m capability_verifier.evaluators and
+          does not run the hardcoded scenario tools. route prints declared or
+          wrapper; any other output fails those steps. A world-graded scenario
+          keeps those tools. Other kinds are still run by the caller.
         type: string
         default: ''
     outputs:
@@ -830,8 +836,10 @@ jobs:
           EVALUATOR_COMMIT: ${{ needs.plan.outputs.evaluator-commit }}
           EVALUATOR_TAG: ${{ needs.plan.outputs.evaluator-tag }}
         run: |
-          # A declared walk-hallway scenario evaluator is the loader. Anything else
-          # keeps the wrapper below, including a world-graded scenario.
+          # A declared walk-hallway scenario evaluator is the loader. route prints
+          # declared or wrapper; any other output fails this step. A world-graded
+          # scenario is wrapper. An invalid or comments-only evaluators file fails
+          # here, with route's refusal.
           mode=wrapper
           if [ -n "$EVALUATORS" ]; then
             if [ -d workflow-src/src ]; then
@@ -854,7 +862,7 @@ jobs:
               --evidence-manifest evidence/manifest.json \
               --out evaluator-results \
               --work "${RUNNER_TEMP:-/tmp}/scenario-evaluator-work"
-          else
+          elif [ "$mode" = wrapper ]; then
             # wrapper-scenario-evaluator
           # The tool is the one in the verifier checkout named by the selected lock.
           # The package import is that lock's evaluator pin when it has one; a robot
@@ -899,6 +907,9 @@ jobs:
             PYTHONPATH=src uv run --no-sync python tools/run_scenario_evaluator.py \
               evidence/manifest.json evaluator-results/livingproof-scenario
           fi
+          else
+            printf 'unknown route mode: "%s" (expected declared or wrapper)\n' "$mode" >&2
+            exit 1
           fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
@@ -971,10 +982,12 @@ jobs:
           EVALUATOR_COMMIT: ${{ needs.plan.outputs.evaluator-commit }}
           EVALUATOR_TAG: ${{ needs.plan.outputs.evaluator-tag }}
         run: |
-          # A declared walk-hallway scenario evaluator is the loader. The media
+          # A declared walk-hallway scenario evaluator is the loader. route prints
+          # declared or wrapper; any other output fails this step. The media
           # process runs only when a world document is present. Walk-hallway has
           # none, so this phase writes no media result. A world-graded scenario
-          # keeps the wrapper below.
+          # is wrapper. An invalid or comments-only evaluators file fails here,
+          # with route's refusal.
           mode=wrapper
           if [ -n "$EVALUATORS" ]; then
             if [ -d workflow-src/src ]; then
@@ -999,7 +1012,7 @@ jobs:
               --media-dir media \
               --out evaluator-results \
               --work "${RUNNER_TEMP:-/tmp}/scenario-media-work"
-          else
+          elif [ "$mode" = wrapper ]; then
             # wrapper-scenario-media
           mkdir -p media
           if [ -d workflow-src/src ]; then
@@ -1036,6 +1049,9 @@ jobs:
           uv run --no-sync python tools/run_scenario_media.py \
             evidence/manifest.json media evaluator-results/livingproof-scenario-media \
             --identity "git+https://github.com/${EVALUATOR_REPOSITORY}@${EVALUATOR_COMMIT}"
+          else
+            printf 'unknown route mode: "%s" (expected declared or wrapper)\n' "$mode" >&2
+            exit 1
           fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()

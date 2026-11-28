@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Loader and wrapper scenario verdicts on recorded G1 evidence.
 
-The loader installs the released scenario descriptor,
+The loader reads the committed descriptor
 ``Living-Proof-Labs/livingproof-evaluator-scenario@v1.6.0/livingproof-evaluator.json``
-(commit 5eb435ac42d121708e668ceb049abfd2519b42ab). The implementation contract
-is livingproof-evaluator v1.11.0.
+and runs the evaluator installed in this environment. A fetch, a tag resolve,
+or a git install fails the test. The scenario catalog still comes from
+``tools/fetch_hallway_specs.py``; without that checkout the test names the command.
 """
 
 from __future__ import annotations
@@ -12,10 +13,14 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
+
+from test_evaluators import COMMIT, _no_branch, _plant, _resolve, _schema_fetch
 
 ROOT = Path(__file__).parents[1]
 EVIDENCE = ROOT / "tests" / "fixtures" / "lpv-run-43402628666" / "unitree-g1-stock" / "evidence"
@@ -117,10 +122,68 @@ def _wrapper_media(manifest: Path, media: Path, out: Path) -> None:
     assert done.returncode == 0, done.stderr or done.stdout
 
 
+def _offline(command, **kwargs):
+    """Branch checks and the install stay on this machine. git and uv do not run."""
+    argv = [str(part) for part in command]
+    if argv[:2] == ["git", "ls-remote"]:
+        return _no_branch(argv, **kwargs)
+    if argv[:2] == ["uv", "venv"]:
+        venv = Path(argv[-1])
+        bindir = venv / "bin"
+        bindir.mkdir(parents=True)
+        python = bindir / "python"
+        quoted = shlex.quote(sys.executable)
+        python.write_text(f'#!/bin/sh\nexec {quoted} "$@"\n', encoding="utf-8")
+        python.chmod(0o755)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    if argv[:2] == ["uv", "pip"]:
+        if "--python" not in argv:
+            raise AssertionError(f"unexpected install command: {argv}")
+        venv = Path(argv[argv.index("--python") + 1])
+        _plant(venv, "livingproof-evaluator-scenario", "1.5.3", COMMIT)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    if argv[:1] == ["git"] or argv[:1] == ["uv"]:
+        raise AssertionError(f"the compare test contacted the network: {argv}")
+    return subprocess.run(argv, check=kwargs.pop("check", False), **kwargs)
+
+
+def _refuse_network(*_args, **_kwargs):
+    raise AssertionError("the compare test contacted the network")
+
+
+class _LoaderSubprocess:
+    """The loader's ``subprocess`` name. Network commands fail; other lookups stay real."""
+
+    def __init__(self, run):
+        self.run = run
+
+    def __getattr__(self, name):
+        return getattr(subprocess, name)
+
+
 def test_the_loader_matches_the_wrapper_on_recorded_g1_evidence(tmp_path, monkeypatch):
     """G1 still grades FAIL, and the loader's scenario verdicts match the wrapper."""
+    from capability_verifier import evaluators
     from capability_verifier.collect import collect
-    from capability_verifier.evaluators import run_lines
+
+    monkeypatch.setattr(evaluators, "fetch_bytes", _refuse_network)
+    monkeypatch.setattr(evaluators, "resolve_tag", _refuse_network)
+    monkeypatch.setattr(urllib.request, "urlopen", _refuse_network)
+
+    def refuse_subprocess(command, **kwargs):
+        argv = [str(part) for part in command]
+        if argv[:1] == ["git"] or argv[:2] in (["uv", "pip"], ["uv", "venv"]):
+            raise AssertionError(f"the compare test contacted the network: {argv}")
+        return subprocess.run(command, check=kwargs.pop("check", False), **kwargs)
+
+    monkeypatch.setattr(evaluators, "subprocess", _LoaderSubprocess(refuse_subprocess))
+    run_lines = evaluators.run_lines
+    offline = {
+        "fetch": _schema_fetch,
+        "resolve": _resolve,
+        "run": _offline,
+        "injected": {LINE: (ROOT / "tests/fixtures/evaluators/scenario.json").read_bytes()},
+    }
 
     bundle = _grade(tmp_path, monkeypatch)
     manifest = tmp_path / "evidence" / "manifest.json"
@@ -137,6 +200,7 @@ def test_the_loader_matches_the_wrapper_on_recorded_g1_evidence(tmp_path, monkey
         phase="trial",
         kind="scenario",
         work=tmp_path / "loader-work",
+        **offline,
     )
     assert records[0].outcome == "result", records[0].note
     loader_docs = _documents(loader)
@@ -156,6 +220,7 @@ def test_the_loader_matches_the_wrapper_on_recorded_g1_evidence(tmp_path, monkey
         phase="media",
         kind="scenario",
         work=tmp_path / "loader-media-work",
+        **offline,
     )
     assert media_records[0].outcome == "skipped"
     assert _documents(wrapper_media) == _documents(loader_media) == {}

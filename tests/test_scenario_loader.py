@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -249,8 +250,13 @@ _UV_STUB = r"""#!/bin/sh
 printf '%s\n' "$*" >> "$UV_LOG"
 case "$*" in
   *"capability_verifier.evaluators route"*)
+    if [ -n "$ROUTE_REAL" ]; then
+      PYTHONPATH="$ROUTE_PYTHONPATH" exec "$ROUTE_PYTHON" -m capability_verifier.evaluators route \
+        --lines evaluators.txt \
+        --evidence-manifest evidence/manifest.json
+    fi
     printf '%s\n' "$ROUTE_MODE"
-    exit 0
+    exit "${ROUTE_STATUS:-0}"
     ;;
 esac
 if [ "$1" = sync ]; then
@@ -285,8 +291,21 @@ exit 1
 """
 
 
-def _run_step(script: str, mode: str, work: Path) -> str:
-    """Run one workflow step with a stub uv. ``mode`` is what route prints."""
+def _run_step(
+    script: str,
+    mode: str,
+    work: Path,
+    *,
+    route_status: int = 0,
+    evaluators: str = "Living-Proof-Labs/example@v1.2.3/livingproof-evaluator.json",
+    route_real: bool = False,
+    shell: str = "bash",
+) -> tuple[subprocess.CompletedProcess, str]:
+    """Run one workflow step with a stub uv.
+
+    ``mode`` is what route prints, and ``route_status`` is its exit code.
+    ``route_real`` runs the installed loader for route instead of the stub.
+    """
     work.mkdir(parents=True)
     bindir = work / "bin"
     bindir.mkdir()
@@ -303,20 +322,25 @@ def _run_step(script: str, mode: str, work: Path) -> str:
     env["PATH"] = f"{bindir}{os.pathsep}/usr/bin{os.pathsep}/bin"
     env["UV_LOG"] = str(log)
     env["ROUTE_MODE"] = mode
-    env["EVALUATORS"] = "Living-Proof-Labs/example@v1.2.3/livingproof-evaluator.json"
+    env["ROUTE_STATUS"] = str(route_status)
+    if route_real:
+        env["ROUTE_REAL"] = "1"
+        env["ROUTE_PYTHON"] = sys.executable
+        env["ROUTE_PYTHONPATH"] = str(ROOT / "src")
+    env["EVALUATORS"] = evaluators
     env["EVALUATOR_REPOSITORY"] = "Living-Proof-Labs/livingproof-evaluator-scenario"
     env["EVALUATOR_TAG"] = "v1.2.3"
     env["EVALUATOR_COMMIT"] = "c" * 40
     done = subprocess.run(
-        ["bash", "-e", "-c", script],
+        [shell, "-e", "-c", script],
         cwd=work,
         env=env,
         capture_output=True,
         text=True,
         check=False,
     )
-    assert done.returncode == 0, done.stderr or done.stdout
-    return log.read_text(encoding="utf-8")
+    text = log.read_text(encoding="utf-8") if log.is_file() else ""
+    return done, text
 
 
 def _assert_split(log: str, mode: str, phase: str, tool: str) -> None:
@@ -334,7 +358,8 @@ def test_a_declared_scenario_does_not_also_run_the_hardcoded_trial(tmp_path):
     """The trial step runs the loader or the wrapper, not both."""
     script = _script("scenario-evaluator", "Scenario evaluator, one result file per trial")
     for mode in ("declared", "wrapper"):
-        log = _run_step(script, mode, tmp_path / mode)
+        done, log = _run_step(script, mode, tmp_path / mode)
+        assert done.returncode == 0, done.stderr or done.stdout
         _assert_split(log, mode, "trial", "run_scenario_evaluator.py")
 
 
@@ -371,5 +396,81 @@ def test_a_declared_scenario_does_not_also_run_the_hardcoded_media_job(tmp_path)
     """The media step runs the loader or the wrapper, not both."""
     script = _script("scenario-media", "Scenario evaluator on the recordings")
     for mode in ("declared", "wrapper"):
-        log = _run_step(script, mode, tmp_path / mode)
+        done, log = _run_step(script, mode, tmp_path / mode)
+        assert done.returncode == 0, done.stderr or done.stdout
         _assert_split(log, mode, "media", "run_scenario_media.py")
+
+
+_STEPS = (
+    (
+        "scenario-evaluator",
+        "Scenario evaluator, one result file per trial",
+        "run_scenario_evaluator.py",
+    ),
+    (
+        "scenario-media",
+        "Scenario evaluator on the recordings",
+        "run_scenario_media.py",
+    ),
+)
+
+
+def _tools_ran(log: str, tool: str) -> bool:
+    return "capability_verifier.evaluators run" in log or tool in log
+
+
+def test_a_failing_route_runs_neither_tool(tmp_path):
+    """``mode=$(route) || mode=wrapper`` would run the wrapper and pass.
+
+    The container step's shell is sh. Both sh -e and bash -e must stop.
+    """
+    for shell in ("bash", "sh"):
+        for job, name, tool in _STEPS:
+            script = _script(job, name)
+            done, log = _run_step(
+                script,
+                "declared",
+                tmp_path / f"{shell}-{job}",
+                route_status=1,
+                shell=shell,
+            )
+            assert done.returncode != 0, (shell, job, done.stderr)
+            assert "capability_verifier.evaluators route" in log
+            assert not _tools_ran(log, tool), log
+
+
+def test_an_unknown_route_mode_fails_both_steps(tmp_path):
+    """Any exit-0 output other than declared or wrapper used to run the wrapper."""
+    for index, mode in enumerate(("", "garbage", "declared ")):
+        for job, name, tool in _STEPS:
+            script = _script(job, name)
+            done, log = _run_step(script, mode, tmp_path / f"{job}-{index}")
+            assert done.returncode != 0, (job, mode, done.stderr)
+            assert "expected declared or wrapper" in done.stderr
+            assert not _tools_ran(log, tool), log
+
+
+def test_a_bad_evaluators_input_fails_both_steps_with_a_clear_error(tmp_path):
+    """An invalid or comments-only evaluators value names the line and the next command."""
+    cases = (
+        ("# only a comment", "no declaration lines"),
+        ("not-a-line", "is not a declaration line"),
+    )
+    hint = "acme/widgets@v1.2.3/evaluator.json"
+    command = "python -m capability_verifier.evaluators check --lines FILE"
+    for evaluators, detail in cases:
+        for job, name, tool in _STEPS:
+            script = _script(job, name)
+            done, log = _run_step(
+                script,
+                "",
+                tmp_path / f"{job}-{detail.split()[0]}",
+                evaluators=evaluators,
+                route_real=True,
+            )
+            assert done.returncode != 0, (job, evaluators, done.stderr)
+            assert "refused:" in done.stderr
+            assert detail in done.stderr
+            assert hint in done.stderr
+            assert command in done.stderr
+            assert not _tools_ran(log, tool), log
