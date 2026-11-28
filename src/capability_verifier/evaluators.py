@@ -42,7 +42,7 @@ from capability_verifier.repin import resolve as resolve_tag
 
 LINE = re.compile(
     r"^(?P<owner>[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/"
-    r"(?P<repo>[A-Za-z0-9._-]+)@"
+    r"(?P<repo>[A-Za-z0-9][A-Za-z0-9._-]*)@"
     r"(?P<ref>v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)|[0-9a-f]{40})/"
     r"(?P<path>[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*\.json)$"
 )

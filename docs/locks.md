@@ -290,7 +290,7 @@ Living-Proof-Labs/livingproof-evaluator-scenario@v1.6.0/livingproof-evaluator.js
 `ref` is a release tag `vMAJOR.MINOR.PATCH` or a 40-character hexadecimal
 commit. A tag is peeled to the commit it names. A branch of the same name is
 refused, as are a short commit, `latest`, a missing ref, a URL, another host,
-a `.` or `..` path segment, and any other character outside the line grammar.
+a `.` or `..` path segment, a repo name that does not start with a letter or digit, and any other character outside the line grammar.
 Blank lines and lines that start with `#` are ignored. An input with no
 declaration lines is an error when the loader reads it.
 
