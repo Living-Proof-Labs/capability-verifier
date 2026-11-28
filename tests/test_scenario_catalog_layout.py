@@ -11,6 +11,7 @@ fetched catalog to the loader as ``--specs-root``.
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -135,8 +136,10 @@ def test_both_declared_branches_pass_the_fetched_catalog(tmp_path, job, name, ph
     done, log = _run_step(script, "declared", tmp_path / job)
     assert done.returncode == 0, done.stderr or done.stdout
     run = next(line for line in log.splitlines() if "capability_verifier.evaluators run" in line)
+    words = shlex.split(run)
     assert f"--phase {phase}" in run
-    assert "--specs-root .specs-hallway" in run
+    # Token match so a typo or suffix (.specs-hallways) fails; a substring check would pass.
+    assert words[words.index("--specs-root") + 1] == ".specs-hallway"
     document = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = document["jobs"][job]["steps"]
     fetch = [s for s in steps if "fetch_hallway_specs.py" in (s.get("run") or "")]
