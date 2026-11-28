@@ -7,6 +7,7 @@ Walk-hallway only. A world-graded scenario keeps the existing wrapper.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -244,23 +245,97 @@ def _script(job: str, name: str) -> str:
     return step["run"]
 
 
-def _branches(script: str, declared: str, wrapper: str) -> tuple[str, str]:
-    start = script.index(declared)
-    middle = script.index(wrapper)
-    return script[start:middle], script[middle:]
+_UV_STUB = r"""#!/bin/sh
+printf '%s\n' "$*" >> "$UV_LOG"
+case "$*" in
+  *"capability_verifier.evaluators route"*)
+    printf '%s\n' "$ROUTE_MODE"
+    exit 0
+    ;;
+esac
+if [ "$1" = sync ]; then
+  mkdir -p evaluator/.venv/bin
+  cat > evaluator/.venv/bin/python << 'EOF'
+#!/bin/sh
+printf '%s\n' /tmp/site-packages
+EOF
+  chmod +x evaluator/.venv/bin/python
+  exit 0
+fi
+case "$*" in
+  *"livingproof_evaluator_scenario as package"*)
+    printf '%s\n' /tmp/evaluator/src/livingproof_evaluator_scenario/__init__.py
+    exit 0
+    ;;
+  *importlib.metadata*)
+    printf '%s\n' "${EVALUATOR_TAG#v}"
+    exit 0
+    ;;
+esac
+exit 0
+"""
+
+_PYTHON_STUB = r"""#!/bin/sh
+if [ "$1" = -m ] && [ "$2" = capability_verifier.evaluator_pin ]; then
+  printf '%s\n' "${EVALUATOR_TAG#v}"
+  exit 0
+fi
+printf 'unexpected python3 %s\n' "$*" >&2
+exit 1
+"""
 
 
-def test_a_declared_scenario_does_not_also_run_the_hardcoded_trial():
-    """Putting the hardcoded tool in the declared branch fails this test."""
-    script = _script("scenario-evaluator", "Scenario evaluator, one result file per trial")
-    declared, wrapper = _branches(
-        script, "# declared-scenario-evaluator", "# wrapper-scenario-evaluator"
+def _run_step(script: str, mode: str, work: Path) -> str:
+    """Run one workflow step with a stub uv. ``mode`` is what route prints."""
+    work.mkdir(parents=True)
+    bindir = work / "bin"
+    bindir.mkdir()
+    uv = bindir / "uv"
+    uv.write_text(_UV_STUB)
+    uv.chmod(0o755)
+    python3 = bindir / "python3"
+    python3.write_text(_PYTHON_STUB)
+    python3.chmod(0o755)
+    (work / "evidence").mkdir()
+    (work / "evidence" / "manifest.json").write_text("{}\n", encoding="utf-8")
+    log = work / "uv.log"
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}/usr/bin{os.pathsep}/bin"
+    env["UV_LOG"] = str(log)
+    env["ROUTE_MODE"] = mode
+    env["EVALUATORS"] = "Living-Proof-Labs/example@v1.2.3/livingproof-evaluator.json"
+    env["EVALUATOR_REPOSITORY"] = "Living-Proof-Labs/livingproof-evaluator-scenario"
+    env["EVALUATOR_TAG"] = "v1.2.3"
+    env["EVALUATOR_COMMIT"] = "c" * 40
+    done = subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=work,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    assert "capability_verifier.evaluators run" in declared
-    assert "--phase trial" in declared
-    assert "run_scenario_evaluator.py" not in declared
-    assert "run_scenario_evaluator.py" in wrapper
-    assert "capability_verifier.evaluators run" not in wrapper
+    assert done.returncode == 0, done.stderr or done.stdout
+    return log.read_text(encoding="utf-8")
+
+
+def _assert_split(log: str, mode: str, phase: str, tool: str) -> None:
+    loader = "capability_verifier.evaluators run" in log and f"--phase {phase}" in log
+    hardcoded = tool in log
+    if mode == "declared":
+        assert loader, log
+        assert not hardcoded, log
+    else:
+        assert hardcoded, log
+        assert not loader, log
+
+
+def test_a_declared_scenario_does_not_also_run_the_hardcoded_trial(tmp_path):
+    """The trial step runs the loader or the wrapper, not both."""
+    script = _script("scenario-evaluator", "Scenario evaluator, one result file per trial")
+    for mode in ("declared", "wrapper"):
+        log = _run_step(script, mode, tmp_path / mode)
+        _assert_split(log, mode, "trial", "run_scenario_evaluator.py")
 
 
 SCENARIO_LINE = "Living-Proof-Labs/livingproof-evaluator-scenario@v1.6.0/livingproof-evaluator.json"
@@ -292,12 +367,9 @@ def test_the_scenario_declaration_line_is_the_v1_6_0_release():
     assert released == (ROOT / "tests/fixtures/evaluators/scenario.json").read_bytes()
 
 
-def test_a_declared_scenario_does_not_also_run_the_hardcoded_media_job():
-    """Putting the hardcoded media tool in the declared branch fails this test."""
+def test_a_declared_scenario_does_not_also_run_the_hardcoded_media_job(tmp_path):
+    """The media step runs the loader or the wrapper, not both."""
     script = _script("scenario-media", "Scenario evaluator on the recordings")
-    declared, wrapper = _branches(script, "# declared-scenario-media", "# wrapper-scenario-media")
-    assert "capability_verifier.evaluators run" in declared
-    assert "--phase media" in declared
-    assert "run_scenario_media.py" not in declared
-    assert "run_scenario_media.py" in wrapper
-    assert "capability_verifier.evaluators run" not in wrapper
+    for mode in ("declared", "wrapper"):
+        log = _run_step(script, mode, tmp_path / mode)
+        _assert_split(log, mode, "media", "run_scenario_media.py")

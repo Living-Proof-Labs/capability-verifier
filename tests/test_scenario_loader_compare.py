@@ -31,11 +31,11 @@ def _without_stamps(value):
     return value
 
 
-def _verdicts(directory: Path) -> list[dict]:
-    """Per-trial scenario verdicts and the summary text of each step."""
-    rows = []
+def _documents(directory: Path) -> dict[str, dict]:
+    """Result documents keyed by trial id, without timestamps or version stamps."""
+    found: dict[str, dict] = {}
     if not directory.is_dir():
-        return rows
+        return found
     for path in sorted(directory.rglob("*.json")):
         if path.name == "thresholds.json" or not path.is_file():
             continue
@@ -45,25 +45,19 @@ def _verdicts(directory: Path) -> list[dict]:
         if not str(document.get("format", "")).startswith("livingproof-evaluator-result/"):
             continue
         scenario = document.get("scenario")
-        if not isinstance(scenario, dict):
+        trial_id = scenario.get("trial_id") if isinstance(scenario, dict) else None
+        if not isinstance(trial_id, str) or not trial_id:
             continue
-        rows.append(
-            _without_stamps(
-                {
-                    "trial_id": scenario.get("trial_id"),
-                    "steps": [
-                        {
-                            "id": step.get("id"),
-                            "verdict": step.get("verdict"),
-                            "summary": step.get("summary"),
-                            "reason": step.get("reason"),
-                        }
-                        for step in scenario.get("steps") or []
-                    ],
-                }
-            )
-        )
-    return rows
+        found[trial_id] = _without_stamps(document)
+    return found
+
+
+def _placed(bundle: dict) -> list:
+    return [
+        _without_stamps(result.get("evaluator_results"))
+        for result in bundle["results"]
+        if isinstance(result, dict)
+    ]
 
 
 def _grade(tmp_path: Path, monkeypatch) -> dict:
@@ -132,9 +126,8 @@ def test_the_loader_matches_the_wrapper_on_recorded_g1_evidence(tmp_path, monkey
     manifest = tmp_path / "evidence" / "manifest.json"
     wrapper = tmp_path / "wrapper"
     _wrapper(manifest, wrapper)
-    wrapper_verdicts = _verdicts(wrapper)
-    assert wrapper_verdicts, "the wrapper wrote no scenario verdicts"
-    assert any(step["verdict"] == "FAIL" for row in wrapper_verdicts for step in row["steps"])
+    wrapper_docs = _documents(wrapper)
+    assert wrapper_docs, "the wrapper wrote no scenario results"
 
     loader = tmp_path / "loader"
     records = run_lines(
@@ -146,8 +139,9 @@ def test_the_loader_matches_the_wrapper_on_recorded_g1_evidence(tmp_path, monkey
         work=tmp_path / "loader-work",
     )
     assert records[0].outcome == "result", records[0].note
-    loader_verdicts = _verdicts(loader)
-    assert loader_verdicts == wrapper_verdicts
+    loader_docs = _documents(loader)
+    assert set(loader_docs) == set(wrapper_docs)
+    assert loader_docs == wrapper_docs
 
     media = tmp_path / "media"
     media.mkdir()
@@ -164,9 +158,13 @@ def test_the_loader_matches_the_wrapper_on_recorded_g1_evidence(tmp_path, monkey
         work=tmp_path / "loader-media-work",
     )
     assert media_records[0].outcome == "skipped"
-    assert _verdicts(wrapper_media) == _verdicts(loader_media) == []
+    assert _documents(wrapper_media) == _documents(loader_media) == {}
 
-    collect(bundle, loader)
-    grades = [run["grade"] for run in bundle["assessment"]["runs"]]
-    assert grades == ["FAIL"]
-    assert bundle["results"][0].get("evaluator_results"), "scenario results were not placed"
+    wrapper_bundle = json.loads(json.dumps(bundle))
+    loader_bundle = json.loads(json.dumps(bundle))
+    collect(wrapper_bundle, wrapper)
+    collect(loader_bundle, loader)
+    placed = _placed(loader_bundle)
+    assert placed == _placed(wrapper_bundle)
+    assert any(entry for entry in placed)
+    assert [run["grade"] for run in loader_bundle["assessment"]["runs"]] == ["FAIL"]
