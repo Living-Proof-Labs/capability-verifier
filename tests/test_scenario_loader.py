@@ -286,6 +286,10 @@ if [ "$1" = -m ] && [ "$2" = capability_verifier.evaluator_pin ]; then
   printf '%s\n' "${EVALUATOR_TAG#v}"
   exit 0
 fi
+# The no-pin wrapper branch calls python3 to ask uses_world.
+if [ -n "$REAL_PYTHON" ]; then
+  exec "$REAL_PYTHON" "$@"
+fi
 printf 'unexpected python3 %s\n' "$*" >&2
 exit 1
 """
@@ -300,11 +304,15 @@ def _run_step(
     evaluators: str = "Living-Proof-Labs/example@v1.2.3/livingproof-evaluator.json",
     route_real: bool = False,
     shell: str = "bash",
+    evaluator_commit: str = "c" * 40,
+    manifest: str = "{\n}",
 ) -> tuple[subprocess.CompletedProcess, str]:
     """Run one workflow step with a stub uv.
 
     ``mode`` is what route prints, and ``route_status`` is its exit code.
     ``route_real`` runs the installed loader for route instead of the stub.
+    ``evaluator_commit`` is ``EVALUATOR_COMMIT`` (empty: no lock pin).
+    ``manifest`` is written to ``evidence/manifest.json`` (default: empty object).
     """
     work.mkdir(parents=True)
     bindir = work / "bin"
@@ -315,11 +323,15 @@ def _run_step(
     python3 = bindir / "python3"
     python3.write_text(_PYTHON_STUB)
     python3.chmod(0o755)
+    src = work / "src"
+    if not src.exists():
+        src.symlink_to(ROOT / "src")
     (work / "evidence").mkdir()
-    (work / "evidence" / "manifest.json").write_text("{}\n", encoding="utf-8")
+    (work / "evidence" / "manifest.json").write_text(manifest, encoding="utf-8")
     log = work / "uv.log"
     env = os.environ.copy()
     env["PATH"] = f"{bindir}{os.pathsep}/usr/bin{os.pathsep}/bin"
+    env["REAL_PYTHON"] = sys.executable
     env["UV_LOG"] = str(log)
     env["ROUTE_MODE"] = mode
     env["ROUTE_STATUS"] = str(route_status)
@@ -330,7 +342,7 @@ def _run_step(
     env["EVALUATORS"] = evaluators
     env["EVALUATOR_REPOSITORY"] = "Living-Proof-Labs/livingproof-evaluator-scenario"
     env["EVALUATOR_TAG"] = "v1.2.3"
-    env["EVALUATOR_COMMIT"] = "c" * 40
+    env["EVALUATOR_COMMIT"] = evaluator_commit
     done = subprocess.run(
         [shell, "-e", "-c", script],
         cwd=work,
