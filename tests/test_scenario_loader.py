@@ -300,11 +300,13 @@ def _run_step(
     evaluators: str = "Living-Proof-Labs/example@v1.2.3/livingproof-evaluator.json",
     route_real: bool = False,
     shell: str = "bash",
+    evaluator_commit: str = "c" * 40,
 ) -> tuple[subprocess.CompletedProcess, str]:
     """Run one workflow step with a stub uv.
 
     ``mode`` is what route prints, and ``route_status`` is its exit code.
     ``route_real`` runs the installed loader for route instead of the stub.
+    ``evaluator_commit`` is ``EVALUATOR_COMMIT`` (empty: no lock pin).
     """
     work.mkdir(parents=True)
     bindir = work / "bin"
@@ -330,7 +332,7 @@ def _run_step(
     env["EVALUATORS"] = evaluators
     env["EVALUATOR_REPOSITORY"] = "Living-Proof-Labs/livingproof-evaluator-scenario"
     env["EVALUATOR_TAG"] = "v1.2.3"
-    env["EVALUATOR_COMMIT"] = "c" * 40
+    env["EVALUATOR_COMMIT"] = evaluator_commit
     done = subprocess.run(
         [shell, "-e", "-c", script],
         cwd=work,
