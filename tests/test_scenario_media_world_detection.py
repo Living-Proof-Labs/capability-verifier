@@ -20,11 +20,6 @@ WORLD = '{"plan": {"scenario": "walk-corner@0.1.0"}}\n'
 WORLD_FROM_LOCK = '{"lock": {"content": {"scenario": "walk-corner@0.1.0"}}}\n'
 WALK_HALLWAY = '{"plan": {"scenario": "walk-hallway@0.1.0"}}\n'
 HALLWAY_EVIDENCE = '{"format": "livingproof-hallway-evidence/2.0.0"}\n'
-FAIL_OPEN = (
-    "capability-verifier#278 head d163da7: the step runs `if python3 -c '...uses_world...'; then "
-    "fail; fi`, so an exception (exit 1) is read as 'no world document' and the job exits 0 with "
-    "a note. Remove this marker when the step tells 'not world' from 'could not tell'."
-)
 
 
 def _media(tmp_path: Path, manifest: str, name: str = "media"):
@@ -50,7 +45,6 @@ def test_walk_hallway_evidence_without_a_pin_writes_the_note_and_exits_0(tmp_pat
     assert "no world document" in _notes(tmp_path)[0].read_text(encoding="utf-8")
 
 
-@pytest.mark.xfail(strict=True, reason=FAIL_OPEN)
 @pytest.mark.parametrize(
     "manifest", ["", '{"plan": ', "[]"], ids=["empty", "truncated-json", "not-an-object"]
 )
@@ -62,7 +56,6 @@ def test_an_unreadable_evidence_manifest_is_not_reported_as_no_world_document(tm
     assert not _notes(tmp_path)
 
 
-@pytest.mark.xfail(strict=True, reason=FAIL_OPEN)
 def test_a_world_graded_run_without_a_pin_still_fails_when_the_interpreter_cannot_import_it(
     tmp_path, monkeypatch
 ):
