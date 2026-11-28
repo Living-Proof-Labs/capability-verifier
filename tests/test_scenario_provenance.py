@@ -49,6 +49,14 @@ def _run(calls: list):
     return run
 
 
+@pytest.fixture(autouse=True)
+def _thresholds(monkeypatch):
+    monkeypatch.setattr(
+        "capability_verifier.evaluators._hallway_thresholds",
+        lambda manifest: {"time_limit": 1, "lateral_limit": 1, "half_width": 1, "fall_height": 1},
+    )
+
+
 def _loader(tmp_path, phase="trial", world=False, line=LINE, **extra):
     evidence = tmp_path / "manifest.json"
     scenario = "walk-corner@0.1.0" if world else "walk-hallway@0.1.0"
@@ -246,10 +254,13 @@ def test_the_command_reports_a_bad_record_and_leaves_the_manifest_unchanged(tmp_
 
 def test_the_reporter_still_renders_a_bundle_that_carries_the_record(tmp_path):
     from livingproof_capability_report.assessed import report_from_bundle
-    from livingproof_capability_report.core import render
+    from livingproof_capability_report.core import load_bundle, render
 
-    bundle, _dest = _bundle(tmp_path)
-    plain = render(report_from_bundle(copy.deepcopy(bundle)), "markdown")
+    bundle, dest = _bundle(tmp_path)
+    manifest = dest / "manifest.json"
+    plain = render(report_from_bundle(load_bundle(manifest)), "markdown")
     _plant_file(tmp_path / "r", _provenance(descriptor_sha256="d" * 64))
     collect(bundle, tmp_path / "r")
-    assert render(report_from_bundle(bundle), "markdown") == plain
+    manifest.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
+    assert render(report_from_bundle(load_bundle(manifest)), "markdown") == plain
+    assert render(report_from_bundle(load_bundle(manifest)), "html")

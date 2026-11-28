@@ -352,6 +352,17 @@ that evaluator alone: `advisory_not_run[<id>]` is
 omitted from `advisory_results` and `advisory_provenance`. The grade,
 conclusions, and integrity results are unchanged, and the command keeps
 going. The same check during result collection still fails that collection.
+A declared scenario line runs in the trial job, away from collect. The loader
+writes `<evaluator id>.scenario-provenance.json` beside the results it uploads,
+and the collector stores its record at `assessment.scenario_provenance[<id>]`:
+`line`, `repo`, `ref`, `commit`, `descriptor_sha256`, `package_name` and
+`installed_version`, checked like an advisory record (`repo` is `owner/name`,
+`ref` a `vX.Y.Z` tag or a 40-character commit, `commit` 40 lowercase hex,
+`descriptor_sha256` 64 lowercase hex). The trial and the media job write the
+same record, so it is stored once; two different records for one id fail the
+collection, and so does a malformed one. It does not grade. A bundle with no
+declared scenario line has no `scenario_provenance`. A media run that skips
+because there is no world document writes no file.
 The loader also refuses an advisory `trials` list that repeats an index, compared
 as numbers so `1` and `1.0` are the same index, and a result with a duplicate
 JSON object key at any depth.

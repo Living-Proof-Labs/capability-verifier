@@ -1101,6 +1101,32 @@ def _write_provenance(out: Path, records: list[Record]) -> None:
     (out / "evaluators-provenance.json").write_text(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8"
     )
+    for record in records:
+        provenance = _scenario_provenance(record)
+        if provenance is not None:
+            document = {
+                "format": collect.SCENARIO_PROVENANCE_FORMAT,
+                "evaluator": {"id": record.evaluator_id},
+                "provenance": provenance,
+            }
+            name = record.evaluator_id + collect.SCENARIO_PROVENANCE_SUFFIX
+            (out / name).write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+
+
+def _scenario_provenance(record: Record) -> dict | None:
+    """A declared Scenario line's resolved pin, or None when it never installed.
+
+    It leaves out the exit code and the outcome, which differ between the trial and the
+    media job, so both jobs write the same record.
+    """
+    if record.kind != "scenario" or not isinstance(record.installed_version, str):
+        return None
+    payload = record.as_dict()
+    payload = {name: payload[name] for name in collect._SCENARIO_PROVENANCE_FIELDS}
+    try:
+        return collect.scenario_provenance_record(payload, f"scenario {record.evaluator_id}")
+    except collect.ScenarioProvenanceError as exc:
+        raise Refusal(str(exc)) from exc
 
 
 def _advisory_provenance(record: Record) -> dict:
@@ -1126,6 +1152,9 @@ def _place(bundle_path: Path, records: list[Record]) -> None:
             # invent an integrity card.
             if record.documents:
                 _attach_scenario(bundle, record.documents)
+            provenance = _scenario_provenance(record)
+            if provenance is not None:
+                collect._attach_scenario_provenance(bundle, record.evaluator_id, provenance)
             continue
         if record.kind == "advisory" and record.record_provenance:
             collect._attach_advisory_provenance(
