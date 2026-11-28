@@ -29,9 +29,10 @@
 # line. When a line declares a scenario evaluator and the evidence is
 # walk-hallway, scenario-evaluator and scenario-media run that line through
 # `python -m capability_verifier.evaluators` and do not run the hardcoded
-# tools. route prints `declared` or `wrapper`; any other output fails the
-# step. A world-graded scenario keeps those tools. Other kinds are still
-# run by the caller, not by this workflow.
+# tools. They pass the catalog fetched into this checkout as --specs-root, because
+# the loader package is the workflow-src checkout. route prints `declared` or
+# `wrapper`; any other output fails the step. A world-graded scenario keeps
+# those tools. Other kinds are still run by the caller, not by this workflow.
 # Optional inputs verifier-commit, verifier-image, reporter-image and evaluator-commit
 # supply a commit or image ref the caller resolved from a release tag. Empty leaves
 # the lock field unchanged. A set input replaces that field after a strict check.
@@ -859,6 +860,7 @@ jobs:
               --lines evaluators.txt \
               --kind scenario \
               --phase trial \
+              --specs-root .specs-hallway \
               --evidence-manifest evidence/manifest.json \
               --out evaluator-results \
               --work "${RUNNER_TEMP:-/tmp}/scenario-evaluator-work"
@@ -1008,6 +1010,7 @@ jobs:
               --lines evaluators.txt \
               --kind scenario \
               --phase media \
+              --specs-root .specs-hallway \
               --evidence-manifest evidence/manifest.json \
               --media-dir media \
               --out evaluator-results \

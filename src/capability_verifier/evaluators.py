@@ -708,6 +708,16 @@ def _fresh_output(out: Path, evaluator_id: str) -> Path:
     return target
 
 
+def scenario_catalog(specs_root: Path | None):
+    """Read scenario parameters from ``specs_root`` while a scenario runs.
+
+    None keeps the lookup next to the imported package.
+    """
+    from capability_verifier.scenario_parameters import checkout
+
+    return checkout(specs_root)
+
+
 def _uses_world(manifest: dict) -> bool:
     from capability_verifier.scenario_parameters import uses_world
 
@@ -1027,11 +1037,16 @@ def run_lines(
     injected: dict[str, bytes] | None = None,
     kind: str | None = None,
     phase: str = "both",
+    specs_root: Path | None = None,
 ) -> list[Record]:
     """Validate, install, and run every selected line. Writes provenance under ``out``.
 
     ``kind`` limits which descriptors are executed. The one-grading check still
     sees the whole list, and it runs before anything is installed.
+
+    ``specs_root`` is the scenario catalog the caller fetched. A scenario run reads
+    its parameter file from there. Without it the file is looked up next to the
+    imported package, which is wrong when the package is a separate checkout.
     """
     if phase not in PHASES:
         raise Refusal(f"scenario phase {phase!r} is not trial, media, or both")
@@ -1047,18 +1062,19 @@ def run_lines(
     records = []
     for item in selected:
         if item.document.get("kind") == "scenario":
-            records.append(
-                _execute_scenario(
-                    item,
-                    evidence=evidence,
-                    media_dir=media_dir,
-                    out=out,
-                    work=workspace,
-                    timeout=timeout,
-                    run=run,
-                    phase=phase,
+            with scenario_catalog(specs_root):
+                records.append(
+                    _execute_scenario(
+                        item,
+                        evidence=evidence,
+                        media_dir=media_dir,
+                        out=out,
+                        work=workspace,
+                        timeout=timeout,
+                        run=run,
+                        phase=phase,
+                    )
                 )
-            )
             continue
         if phase == "media":
             continue
@@ -1185,6 +1201,14 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="scratch directory for the install and the thresholds file (default: OUT/work)",
     )
+    run.add_argument(
+        "--specs-root",
+        type=Path,
+        help=(
+            "the scenario catalog the caller fetched (tools/fetch_hallway_specs.py writes "
+            ".specs-hallway); default: next to the imported package"
+        ),
+    )
     run.add_argument("--bundle", type=Path, help="verified bundle manifest to attach results to")
     run.add_argument(
         "--report-dir",
@@ -1218,6 +1242,7 @@ def main(argv: list[str] | None = None) -> int:
             work=args.work,
             kind=args.kind,
             phase=args.phase,
+            specs_root=args.specs_root,
         )
     except Refusal as exc:
         print(f"refused: {exc}", file=sys.stderr)
