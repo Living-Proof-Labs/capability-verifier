@@ -303,7 +303,10 @@ run that line through the loader and do not run the hardcoded tools.
 `evaluator-commit` is empty; a world-graded wrapper run without that pin
 fails the job rather than skipping it. A wrapper run with no world
 document and no pin writes a `NO-MEDIA-RESULTS.txt` note and exits 0,
-so a caller that declared only Run Integrity still reaches collect. The
+so a caller that declared only Run Integrity still reaches collect.
+The world check exits 10 when the evidence has a world document and 11
+when it does not; any other outcome fails the job rather than writing
+the note. The
 trial writes one result file per trial into `{result_dir}`. `{result}` is
 never used on a scenario. The media run starts only when the loader has both
 a media directory and a world document; walk-hallway has no world document,
